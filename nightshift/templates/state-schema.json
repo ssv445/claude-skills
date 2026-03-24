@@ -1,0 +1,42 @@
+{
+  "startedAt": "ISO timestamp",
+  "date": "2026-03-03",
+  "nightshiftBranch": "nightshift/2026-03-03-user-avatar",
+  "defaultBranch": "main",
+  "issues": {
+    "50": {
+      "status": "in_progress|completed|blocked",
+      "currentStep": 1,
+      "branch": "feat/50-user-avatar",
+      "prNumber": null,
+      "prUrl": null,
+      "mergedToNightshift": false,
+      "steps": {
+        "1": { "status": "pending", "attempts": 0, "maxAttempts": 2, "lastResult": null },
+        "2": { "status": "pending", "attempts": 0, "maxAttempts": 3, "lastResult": null },
+        "3": { "status": "pending", "attempts": 0, "maxAttempts": 5, "lastResult": null },
+        "4": { "status": "pending", "attempts": 0, "maxAttempts": 7, "lastResult": null },
+        "5": { "status": "pending", "attempts": 0, "maxAttempts": 5, "lastResult": null },
+        "6": { "status": "pending", "attempts": 0, "maxAttempts": 1, "lastResult": null }
+      },
+      "expertDecisions": 0,
+      "issueCommentsPosted": 0
+    }
+  },
+  "_lastResult_values": [
+    "null — step not yet attempted",
+    "worker_done_pending_review — worker finished, review gate hasn't run yet",
+    "review_rejected — review gate rejected, needs retry",
+    "passed — step fully passed (worker + review gate)",
+    "skipped — step skipped by adaptive pipeline"
+  ],
+  "_state_transitions": [
+    "Worker finishes → lastResult: worker_done_pending_review",
+    "Review gate passes → lastResult: passed, status: passed",
+    "Review gate rejects → lastResult: review_rejected"
+  ],
+  "_supervised_mode_fields": {
+    "supervisedMode": true,
+    "checkpoint": { "step": 2, "waitingSince": "ISO timestamp", "resolved": false }
+  }
+}
