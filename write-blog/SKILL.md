@@ -83,7 +83,7 @@ Phase 0: Audience Definition (if not provided) ──►
 Phase 1: Research + SEO/GSC Keyword Analysis ──► Phase 2: Outline ──► [APPROVAL GATE 1] ──►
 Phase 3: Draft ──► [APPROVAL GATE 2] ──► Phase 4: Adversarial Fact Check ──►
 Phase 5: Polish, Lint & Humanize ──► Phase 6: Generate Header Image (Gemini) ──►
-Phase 7: Write File ──► Phase 8: Optional Commit
+Phase 7: Write File ──► Phase 8: Visual Testing (Chrome) ──► Phase 9: Optional Commit
 ```
 
 ---
@@ -798,7 +798,68 @@ Write to: content/posts/[slug].md
 Content: [Full markdown with frontmatter]
 ```
 
-### 6.3 Final Output Summary
+### 6.3 Visual Testing (MANDATORY)
+
+**Every blog post must be visually verified before publishing.** Markdown rendering issues, broken images, and formatting problems are invisible in the source file.
+
+#### Step 1: Ensure dev server is running
+
+```bash
+# Check if dev server is already running
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3021/ || npm run dev &
+```
+
+Wait for the server to be ready.
+
+#### Step 2: Open the blog post in Chrome
+
+Use Chrome browser automation tools:
+
+1. Get tab context: `mcp__claude-in-chrome__tabs_context_mcp`
+2. Create a new tab: `mcp__claude-in-chrome__tabs_create_mcp`
+3. Navigate to: `http://localhost:3021/[slug]`
+
+#### Step 3: Visual inspection checklist
+
+Take a screenshot and verify each of these. Scroll down the page taking screenshots at each viewport-height to check the full post:
+
+**Layout & Structure:**
+- [ ] Header image loads and displays correctly (not broken/missing)
+- [ ] Title renders properly (no markdown leaking)
+- [ ] All H2/H3 headings render as headings (not plain text)
+- [ ] No raw markdown visible (**, ##, ```, etc.)
+
+**Code Blocks:**
+- [ ] All code blocks render with syntax highlighting (not plain text)
+- [ ] Code blocks don't overflow horizontally (readable without scrolling)
+- [ ] No broken code fences (unclosed ``` showing raw content)
+
+**Images & Media:**
+- [ ] All inline images load (no broken image icons)
+- [ ] SVG diagrams render correctly
+- [ ] Images are reasonably sized (not tiny or overflowing)
+
+**Content:**
+- [ ] Tables render as tables (not pipe-separated text)
+- [ ] Links are clickable (blue/underlined, not raw URLs)
+- [ ] Bold/italic text renders correctly
+- [ ] Lists render as lists (not plain text with dashes)
+
+**Spacing:**
+- [ ] No huge gaps between sections
+- [ ] No sections jammed together without breathing room
+- [ ] Code blocks have proper margins
+
+#### Step 4: Fix and re-verify
+
+If any issues are found:
+1. Fix the markdown source
+2. Refresh the page in Chrome (navigate to same URL again)
+3. Re-check the fixed section
+
+**If Chrome browser tools are unavailable:** Ask the user to preview at `http://localhost:3021/[slug]` and confirm it looks correct before committing.
+
+### 6.4 Final Output Summary
 
 Present to user:
 
