@@ -1,14 +1,14 @@
 ---
 name: write-blog
-version: 3.0.0
+version: 4.0.0
 description: |
-  Write a complete blog post with two approval gates, adversarial fact-checking,
-  GSC keyword research, automated image generation, and mandatory humanization.
-  Performs competitive analysis, web research, codebase exploration, and SEO
-  validation. Uses APP formula and Cialdini's persuasion principles.
-  v3: Added GSC keyword analysis, adversarial fact-check with 3 subagents
-  (skeptic, devil's advocate, consistency checker), Gemini image generation,
-  and multi-pass humanization with voice calibration.
+  Write a complete blog post with expert persona reviews, adversarial fact-checking,
+  GSC keyword research, automated image generation, visual testing, and mandatory
+  humanization. Every outline and draft is reviewed by 3 topic-relevant tech writer
+  personas (e.g., Simon Willison, Julia Evans, Swyx) who evaluate shareability.
+  The bar: at least 2/3 experts would share the post before it proceeds.
+  v4: Added expert persona reviews at outline AND draft stages, with
+  topic-matched expert selection and "would they share it" quality gate.
 allowed-tools:
   - Read
   - Write
@@ -80,8 +80,11 @@ Example inputs:
 
 ```
 Phase 0: Audience Definition (if not provided) ──►
-Phase 1: Research + SEO/GSC Keyword Analysis ──► Phase 2: Outline ──► [APPROVAL GATE 1] ──►
-Phase 3: Draft ──► [APPROVAL GATE 2] ──► Phase 4: Adversarial Fact Check ──►
+Phase 1: Research + GSC Keywords ──► Phase 2: Outline ──► [APPROVAL GATE 1] ──►
+Phase 2.3: Expert Outline Review (3 personas) ──►
+Phase 3: Draft ──► [APPROVAL GATE 2] ──►
+Phase 4.5: Adversarial Fact Check (3 subagents) ──►
+Phase 4.7: Expert Draft Review (3 personas, 2/3 must "would share") ──►
 Phase 5: Polish, Lint & Humanize ──► Phase 6: Generate Header Image (Gemini) ──►
 Phase 7: Write File ──► Phase 8: Visual Testing (Chrome) ──► Phase 9: Optional Commit
 ```
@@ -379,6 +382,73 @@ Ask: "Here's the outline for [AUDIENCE]. Does this structure
 
 This saves significant time - better to revise a 200-word outline than a 1500-word draft.
 
+### 2.3 Expert Persona Review: Outline
+
+**After user approves the outline, get it reviewed by 3 expert personas before writing.**
+
+Pick 3 experts relevant to the blog topic. These should be real, well-known tech writers/influencers whose perspective matches the subject matter. Spawn them as parallel subagents.
+
+**How to pick the 3 experts:**
+
+Choose based on the blog's subject. Match the expert to what they're actually known for:
+
+| Subject Area | Good Expert Picks |
+|---|---|
+| AI/LLM tooling | Simon Willison, Swyx, Andrej Karpathy |
+| React/Frontend | Dan Abramov, Kent C. Dodds, Guillermo Rauch |
+| DevOps/Infrastructure | Charity Majors, Kelsey Hightower, Julia Evans |
+| Systems/Performance | Thorsten Ball, Julia Evans, Dan Luu |
+| Business/SaaS | Patrick McKenzie (patio11), Sahil Lavingia, Swyx |
+| Security | Troy Hunt, tptacek (Thomas Ptacek), Julia Evans |
+| Developer experience | Swyx, Cassidy Williams, Guillermo Rauch |
+
+Don't force-fit. If the topic is about MCP servers, don't pick a React expert. Pick people who would actually have an opinion on the topic.
+
+**Subagent prompt template (for each expert):**
+
+```
+You are [Expert Name], known for [what they're known for] and writing at [their blog/site].
+
+Review this blog post OUTLINE. The target audience is [audience]. Be specific and direct.
+
+Focus on:
+- Would you click on this title? Why or why not?
+- Is the structure compelling or does it feel like a listicle?
+- What's the strongest section idea? Weakest?
+- Would this get shared on Twitter/HN? What would help?
+- Is anything missing that a reader would expect?
+- Any structural or pacing concerns?
+
+[Insert outline here]
+```
+
+**Synthesize feedback and present to user before proceeding:**
+
+```markdown
+## Expert Outline Review
+
+### [Expert 1 Name]
+- [Key feedback point]
+- [Key feedback point]
+
+### [Expert 2 Name]
+- [Key feedback point]
+- [Key feedback point]
+
+### [Expert 3 Name]
+- [Key feedback point]
+- [Key feedback point]
+
+### Where all 3 agree (high confidence):
+- [consensus point]
+
+### Actionable changes recommended:
+1. [specific change]
+2. [specific change]
+```
+
+Apply agreed-upon changes to the outline. Present revised outline to user for final approval.
+
 ---
 
 ## Phase 3: Write First Draft
@@ -632,6 +702,69 @@ After all 3 subagents return, compile a single report:
 **Fix all "Must Fix" items before proceeding.** Present "Should Fix" items to the user for decision.
 
 If any subagent flags the same issue, it's almost certainly real. If only one flags it, use judgment.
+
+---
+
+## Phase 4.7: Expert Persona Review: Full Draft
+
+**After fact-check fixes, before polishing.** Use the same 3 experts chosen during the outline review (Phase 2.3). They now review the complete draft.
+
+**Subagent prompt template (for each expert):**
+
+```
+You are [Expert Name], known for [what they're known for] and writing at [their blog/site].
+
+Review this COMPLETE blog post. The target audience is [audience]. Be direct and specific.
+
+Focus on:
+- Does the opening earn the reader's attention in the first 3 sentences?
+- What's the strongest section? Weakest?
+- Would you share this with your audience? Why or why not?
+- Would this get shared on Twitter/Hacker News? What's missing for that?
+- Any sections where the author is hand-waving instead of being specific?
+- Does the "honest/failure" content ring true or feel performed?
+- Is the technical depth right for the target audience?
+- Are the claims credible and well-supported?
+- Any structural or pacing issues?
+
+Be harsh. A mediocre blog post that gets published is worse than a good one that gets delayed.
+
+[Insert full draft here]
+```
+
+**Synthesize and present:**
+
+```markdown
+## Expert Draft Review
+
+### [Expert 1] — Would they share it? [YES/NO]
+- Strongest: [section]
+- Weakest: [section]
+- Key feedback: [1-2 actionable points]
+
+### [Expert 2] — Would they share it? [YES/NO]
+- Strongest: [section]
+- Weakest: [section]
+- Key feedback: [1-2 actionable points]
+
+### [Expert 3] — Would they share it? [YES/NO]
+- Strongest: [section]
+- Weakest: [section]
+- Key feedback: [1-2 actionable points]
+
+### Consensus (all 3 agree):
+- [point]
+
+### Must fix before publishing:
+1. [actionable fix]
+
+### The "would they share it" test:
+- 3/3 would share → proceed to polish
+- 2/3 would share → fix the weak points, then proceed
+- 1/3 or 0/3 → stop, discuss with user, may need structural rewrite
+```
+
+**The bar: at least 2 out of 3 experts would share this post.** If not, the draft needs more work before polishing.
 
 ---
 
