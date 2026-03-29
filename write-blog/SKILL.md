@@ -1,13 +1,14 @@
 ---
 name: write-blog
-version: 2.2.0
+version: 3.0.0
 description: |
-  Write a complete blog post with two approval gates (outline + draft), automated
-  linting, and direct file creation. Performs competitive analysis, web research,
-  codebase exploration, humanization, and SEO validation. Based on Joe Karlsson's
-  systematized content creation workflow.
-  Uses APP formula (Agree-Promise-Preview) for hooks and Cialdini's persuasion
-  principles. ALWAYS humanizes content. Image prompts are human/realistic, never sci-fi.
+  Write a complete blog post with two approval gates, adversarial fact-checking,
+  GSC keyword research, automated image generation, and mandatory humanization.
+  Performs competitive analysis, web research, codebase exploration, and SEO
+  validation. Uses APP formula and Cialdini's persuasion principles.
+  v3: Added GSC keyword analysis, adversarial fact-check with 3 subagents
+  (skeptic, devil's advocate, consistency checker), Gemini image generation,
+  and multi-pass humanization with voice calibration.
 allowed-tools:
   - Read
   - Write
@@ -79,9 +80,10 @@ Example inputs:
 
 ```
 Phase 0: Audience Definition (if not provided) ──►
-Phase 1: Research ──► Phase 2: Outline ──► [APPROVAL GATE 1] ──►
-Phase 3: Draft ──► [APPROVAL GATE 2] ──► Phase 4: Polish, Lint & Humanize ──►
-Phase 5: Generate Header Image (Gemini) ──► Phase 6: Write File ──► Phase 7: Optional Commit
+Phase 1: Research + SEO/GSC Keyword Analysis ──► Phase 2: Outline ──► [APPROVAL GATE 1] ──►
+Phase 3: Draft ──► [APPROVAL GATE 2] ──► Phase 4: Adversarial Fact Check ──►
+Phase 5: Polish, Lint & Humanize ──► Phase 6: Generate Header Image (Gemini) ──►
+Phase 7: Write File ──► Phase 8: Optional Commit
 ```
 
 ---
@@ -153,7 +155,62 @@ Key constraints to extract:
 - URL format requirements
 ```
 
-### 1.2 Audience-Focused Competitive Analysis
+### 1.2 SEO Keyword Research via GSC (if MCP available)
+
+Use Google Search Console MCP tools to inform title, URL, and content angle. This is data-driven, not guesswork.
+
+**Step 1: Find what the site already ranks for related to this topic**
+
+```
+mcp__gsc__enhanced_search_analytics:
+  siteUrl: [site URL from SEO rules or project config]
+  startDate: [90 days ago]
+  endDate: [today]
+  dimensions: "query"
+  queryFilter: [topic keyword]
+  filterOperator: "contains"
+  rowLimit: 50
+```
+
+**Step 2: Find quick wins (ranking 4-10, low CTR)**
+
+```
+mcp__gsc__enhanced_search_analytics:
+  siteUrl: [site URL]
+  startDate: [90 days ago]
+  endDate: [today]
+  dimensions: "query"
+  queryFilter: [topic keyword]
+  filterOperator: "contains"
+  enableQuickWins: true
+```
+
+Quick wins are queries where the site already ranks but doesn't get clicks. These are ideal title/heading candidates because Google already associates the site with these terms.
+
+**Step 3: Compile SEO insights**
+
+```markdown
+## GSC Keyword Analysis
+
+**Existing rankings for this topic:**
+| Query | Impressions | Clicks | CTR | Position |
+|-------|------------|--------|-----|----------|
+| [from GSC data] | | | | |
+
+**Quick wins (rank 4-10, low CTR — use in title/headings):**
+- [query 1] — position X, Y impressions, Z% CTR
+- [query 2] — ...
+
+**Title recommendations (based on actual search data):**
+1. [title using highest-impression query] ([X] chars)
+2. [title using quick-win query] ([X] chars)
+
+**Slug recommendation:** [slug using primary keyword]
+```
+
+**If GSC MCP is not available:** Skip this step and rely on competitive analysis and web search for keyword insights.
+
+### 1.3 Audience-Focused Competitive Analysis
 
 Search for content targeting YOUR SPECIFIC AUDIENCE:
 
@@ -177,21 +234,21 @@ For top 3-5 results, analyze FROM YOUR AUDIENCE'S PERSPECTIVE:
 |---------|---------------------|-------------------|--------------|
 | [URL 1] | [prereqs assumed] | [what they skip] | [what YOUR audience needs] |
 
-### 1.3 Audience-Relevant Fact Research
+### 1.4 Audience-Relevant Fact Research
 
 Search for data that matters TO YOUR AUDIENCE:
 - Statistics relevant to their situation (team size, budget, scale)
 - Benchmarks at their experience level
 - Case studies from similar contexts
 
-### 1.4 Codebase Research (if provided)
+### 1.5 Codebase Research (if provided)
 
 Explore user's repository for RELATABLE examples:
 - Challenges your audience would face
 - Solutions at their complexity level
 - Metrics they'd care about
 
-### 1.5 Compile Research Notes
+### 1.6 Compile Research Notes
 
 ```markdown
 ## Target Audience Reminder
@@ -500,6 +557,81 @@ Ask: "Here's the complete draft. Ready to polish and save,
 ```
 
 **Do NOT proceed to file creation until user approves draft.**
+
+---
+
+## Phase 4.5: Adversarial Fact Check (MANDATORY)
+
+**After draft approval, before polishing.** This catches exaggeration, unsupported claims, and internal inconsistencies that the author and AI both tend to overlook.
+
+### Spawn 3 adversarial subagents in parallel
+
+Each subagent gets the full draft and a different adversarial role. They work independently and don't see each other's findings.
+
+**Subagent 1: The Skeptic (Fact Checker)**
+```
+You are a skeptical technical editor. Read this blog post and challenge every factual claim.
+
+For EACH claim, mark it as:
+- VERIFIED: You can confirm it from the code/config/data provided
+- UNVERIFIABLE: Claimed but no evidence in the post
+- SUSPICIOUS: Seems exaggerated or misleading
+
+Pay special attention to:
+- Numbers (process counts, percentages, time savings, costs)
+- "Before/after" comparisons (are both sides measured the same way?)
+- Implied causation (did X really cause Y, or just correlate?)
+- Claims about what "most people" do or don't do
+```
+
+**Subagent 2: The Devil's Advocate (Exaggeration Detector)**
+```
+You are a senior editor who hates hype. Read this blog post and flag every instance of:
+
+- EXAGGERATION: Claims that stretch beyond what the evidence supports
+- MISSING CONTEXT: Important caveats or limitations not mentioned
+- CHERRY PICKING: Only showing best-case results, hiding failures
+- FALSE PRECISION: Specific numbers that imply more accuracy than exists
+- OVERSELLING: Making something sound easier/better than it is
+
+For each finding, suggest a more honest alternative phrasing.
+```
+
+**Subagent 3: The Consistency Checker**
+```
+You are a copy editor focused on internal consistency. Read this blog post and check:
+
+- Do numbers match between sections? (e.g., "15 issues" in intro vs body)
+- Do claims in the opening match what's actually delivered in the content?
+- Are there contradictions between sections?
+- Does the title/meta description accurately represent the content?
+- Are there promises made in early sections that aren't delivered later?
+- Do code examples match the prose that describes them?
+```
+
+### Synthesize findings
+
+After all 3 subagents return, compile a single report:
+
+```markdown
+## Adversarial Fact Check Results
+
+### Must Fix (claims that are wrong or misleading)
+- [finding] — flagged by [which subagent(s)]
+
+### Should Fix (exaggerations or missing context)
+- [finding] — suggested fix: [alternative phrasing]
+
+### Internal Inconsistencies
+- [section X says A, section Y says B]
+
+### Passed (no issues found in these areas)
+- [areas that all 3 subagents agreed were accurate]
+```
+
+**Fix all "Must Fix" items before proceeding.** Present "Should Fix" items to the user for decision.
+
+If any subagent flags the same issue, it's almost certainly real. If only one flags it, use judgment.
 
 ---
 
