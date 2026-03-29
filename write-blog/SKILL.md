@@ -80,8 +80,8 @@ Example inputs:
 ```
 Phase 0: Audience Definition (if not provided) ──►
 Phase 1: Research ──► Phase 2: Outline ──► [APPROVAL GATE 1] ──►
-Phase 3: Draft ──► [APPROVAL GATE 2] ──► Phase 4: Polish & Lint ──►
-Phase 5: Write File ──► Phase 6: Optional Commit
+Phase 3: Draft ──► [APPROVAL GATE 2] ──► Phase 4: Polish, Lint & Humanize ──►
+Phase 5: Generate Header Image (Gemini) ──► Phase 6: Write File ──► Phase 7: Optional Commit
 ```
 
 ---
@@ -549,48 +549,92 @@ npm run lint
 
 Report any lint errors to user for awareness.
 
-### 5.3 Generate Image Prompts (HUMAN/REALISTIC ONLY)
+### 5.3 Generate and Add Header Image (MANDATORY)
+
+**Every blog post MUST have a header image. This is not optional.**
 
 **CRITICAL: No sci-fi, no abstract AI art, no futuristic imagery.**
 
-Create 2-3 header image options that are HUMAN and REALISTIC:
+#### Step 1: Create the prompt
 
+Write a photorealistic image prompt. Rules:
+
+**REQUIRED:**
+- Real humans or real workspaces, natural settings
+- Authentic workplace environments
+- Natural lighting
+- Relatable, candid moments
+- MacBook Pro and/or iPhone 16 Pro Max if devices are shown
+- "No text overlays" at the end of every prompt
+
+**BANNED:**
+- Sci-fi / futuristic elements
+- Abstract geometric shapes, glowing/neon effects
+- Robots or AI imagery, isometric illustrations
+- "Digital" or "cyber" aesthetics, floating UI elements
+- Generic stock photo cliches (handshakes, pointing at screens)
+
+#### Step 2: Generate via Gemini
+
+Use the Chrome browser automation tools to generate the image:
+
+1. Open Gemini (`https://gemini.google.com/app`) in a new tab
+2. Click the "Create image" tool button (not the mode picker)
+3. Enter the prompt in the text input
+4. Click "Send message"
+5. Wait 15-20 seconds for generation
+
+#### Step 3: Download the image
+
+Use JavaScript to download from the Gemini page:
+
+```javascript
+const img = document.querySelector('img[alt=", AI generated"]');
+const canvas = document.createElement('canvas');
+canvas.width = img.naturalWidth;
+canvas.height = img.naturalHeight;
+canvas.getContext('2d').drawImage(img, 0, 0);
+const a = document.createElement('a');
+a.href = canvas.toDataURL('image/png');
+a.download = '[slug]-header.png';
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
 ```
-Option 1 (Real Workplace):
-A developer at a desk [doing specific action related to topic]
-Natural lighting, realistic office/home office setting
-Real person (not illustrated), candid moment
-No text, 16:9 aspect ratio
 
-Option 2 (Hands-on):
-Close-up of hands on keyboard/whiteboard/notebook
-Real objects, real environment
-Could be stock photo style but natural
-No text, 16:9 aspect ratio
-
-Option 3 (Team/Collaboration - if relevant):
-Small team discussing around screen/whiteboard
-Real office environment, natural poses
-Casual professional attire
-No text, 16:9 aspect ratio
+Then find the downloaded file:
+```bash
+find ~/Downloads -name "[slug]-header*" -mmin -5
 ```
 
-**BANNED from image prompts:**
-- ❌ Sci-fi / futuristic elements
-- ❌ Abstract geometric shapes
-- ❌ Glowing/neon effects
-- ❌ Robots or AI imagery
-- ❌ Isometric illustrations
-- ❌ "Digital" or "cyber" aesthetics
-- ❌ Floating UI elements
-- ❌ Generic stock photo clichés (handshakes, pointing at screens)
+#### Step 4: Crop watermark and optimize
 
-**REQUIRED in image prompts:**
-- ✅ Real humans in natural settings
-- ✅ Authentic workplace environments
-- ✅ Natural lighting
-- ✅ Relatable, candid moments
-- ✅ Something your audience would see themselves in
+Copy to the blog images directory and crop the Gemini watermark (bottom-right corner):
+
+```bash
+# Create image directory
+mkdir -p public/images/posts/[slug]/
+
+# Copy image
+cp ~/Downloads/tmp/[slug]-header.png public/images/posts/[slug]/header.png
+
+# Crop watermark (60px from bottom-right)
+sips --cropToHeightWidth [height-60] [width-60] public/images/posts/[slug]/header.png
+
+# Optimize
+npm run optimize-images
+```
+
+Verify the image looks clean (watermark removed) by reading it with the Read tool.
+
+#### Step 5: Update frontmatter
+
+Ensure the frontmatter references the correct path:
+```yaml
+feature_image: /images/posts/[slug]/header.png
+```
+
+**If Chrome browser tools are unavailable:** Copy the prompt to clipboard with `pbcopy`, ask the user to generate the image manually in Gemini, and provide the crop/optimize commands.
 
 ---
 
