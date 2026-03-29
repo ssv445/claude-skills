@@ -507,11 +507,20 @@ Ask: "Here's the complete draft. Ready to polish and save,
 
 ### 5.1 Humanization Pass (ALWAYS RUN - NOT OPTIONAL)
 
-**This is MANDATORY. Never skip humanization.**
+**This is MANDATORY. Never skip humanization. The post must sound like the author, not like AI.**
 
-Either:
-1. Run the `/humanizer` skill on the draft, OR
-2. Apply these patterns manually:
+#### Voice calibration (before humanizing)
+Read 2-3 of the author's existing blog posts to internalize their voice. Match their sentence length patterns, humor style, level of directness, and how they handle transitions.
+
+#### Humanization process
+1. **Per-section pass:** Run the `/humanizer` skill on each section individually after drafting
+2. **Full-post pass:** Run `/humanizer` on the complete assembled draft at least **twice**
+3. **Read aloud test:** If any sentence sounds like a press release or LinkedIn post, rewrite it
+
+#### Red flags to catch
+These words/phrases almost never appear in human writing: "In today's...", "It's worth noting...", "This approach not only X but also Y", "Let's dive in", "Ultimately", "In conclusion", "Moreover", "Furthermore", "leverage", "streamline", "robust", "comprehensive", "journey" (as metaphor), "game-changing", "revolutionize".
+
+#### Manual patterns to apply (if not using /humanizer):
 
 **Remove AI patterns:**
 - "A common concern:" → "This comes up a lot."
