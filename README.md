@@ -20,7 +20,7 @@ Custom skills for [Claude Code](https://claude.ai/code).
 | [commit](./commit/) | Commit staged changes following repo conventions. Simple and focused. |
 | [brainstorm](./brainstorm/) | One-question-at-a-time ideation to build detailed specs. Inspired by [obra/superpowers](https://github.com/obra/superpowers) by Jesse Vincent. |
 | [ship](./ship/) | Ship a task end-to-end: GitHub issue, branch, implement, test, PR. |
-| [handoff-context](./handoff-context/) | Compress conversation state to `./.tmp/context-<timestamp>.md` in caveman format and copy a kickoff line to clipboard, so work resumes cleanly after `/clear`. |
+| [handoff](./handoff/) | Save/resume context across `/clear` boundaries. Compresses conversation to `.tmp/handoff/`, symlinks latest, and auto-starts next items on resume. |
 | [caveman-distillate](./caveman-distillate/) | Ultra-compressed communication mode (~65% fewer tokens). Based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) by Julius Brussee. |
 | [run-detached](./run-detached/) | Run any slash command or prompt in a fresh `claude -p` subprocess inside a detached tmux session with a live stream-json formatter. Escapes nested-subagent limits; sessions (`detached-run-claude-<id>`) show up in `tmux ls` and claude-wormhole. |
 
