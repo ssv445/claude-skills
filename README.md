@@ -23,6 +23,7 @@ Custom skills for [Claude Code](https://claude.ai/code).
 | [handoff](./handoff/) | Save/resume context across `/clear` boundaries. Compresses conversation to `.tmp/handoff/`, symlinks latest, and auto-starts next items on resume. |
 | [caveman-distillate](./caveman-distillate/) | Ultra-compressed communication mode (~65% fewer tokens). Based on [JuliusBrussee/caveman](https://github.com/JuliusBrussee/caveman) by Julius Brussee. |
 | [run-detached](./run-detached/) | Run any slash command or prompt in a fresh `claude -p` subprocess inside a detached tmux session with a live stream-json formatter. Escapes nested-subagent limits; sessions (`detached-run-claude-<id>`) show up in `tmux ls` and claude-wormhole. |
+| [usage-check](./usage-check/) | Check Claude.ai usage limits (session/weekly) via Chrome in a subagent so main context stays clean. Optional threshold arg warns when any limit exceeds %. |
 
 ## Installation
 
