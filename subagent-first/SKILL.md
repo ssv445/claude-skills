@@ -1,87 +1,92 @@
 ---
 name: subagent-first
-description: "Use at the start of any multi-step task, and before running any Bash/Grep/Read that could be delegated. Keeps main-agent context clean by routing real work (exploration, commands, MCP calls, review, browser, research) to specialized subagents. Triggers: subagent-first, delegate, keep context clean, offload, orchestrator mode"
+description: "Best-effort guidance: prefer delegating exploration, long-running commands, MCP calls, reviews, and research to specialized subagents to keep main-agent context clean. Heuristic, not a hard rule — use judgment. Triggers: subagent-first, delegate, keep context clean, offload, orchestrator mode, orchestrate"
 ---
 
-# Subagent-First Policy
+# Subagent-First (Best-Effort Guidance)
 
-Main agent = thin orchestrator. Real work = subagents. **Default: delegate.**
+**Heuristic, not law.** Prefer delegation when the goal is to reduce noise in main. Skip when following the rule would hurt more than help.
 
-Every token spent in main is a token you don't have for the final answer. Subagents give you the result without the raw noise.
+Main guiding idea: **delegate reads whose output is an answer. Keep reads whose output is the file itself.** Subagents give you signal; they can't replace context you need for precise edits.
 
-## Decision Tree
+## When Delegation Usually Pays Off
 
-### ALWAYS delegate (never run in main)
+Not a "must" — a nudge. If any of these match, consider spawning a subagent:
 
-| Task | Subagent |
+| Situation | Likely subagent |
 |------|----------|
-| Any Bash >20 lines output (build/test/lint, find, grep pipeline, log tail, curl dump) | `execute` |
-| Multi-file exploration ("where is X used", "how does Y work", unfamiliar codebase) | `Explore` (quick/medium/very thorough) |
-| MCP calls w/ large payloads (GA, GSC, Slack search, playwright, ahrefs) | `mcp-fetch` |
-| Code review on any dimension (security, perf, arch, dead-code, error-handling, etc.) | matching `review/*` agent or `team-review` |
-| Browser automation, QA flows, dogfooding | `dogfood` skill / `test-stories` / `agent-browser` |
-| Bug investigation w/ ≥2 competing hypotheses | `team-debug` |
+| Bash command expected to spew >20 lines (build, test, lint, long find/grep, log tail, curl dump) | `commands/execute` |
+| Exploring unfamiliar code — "where is X used?", "how does Y work?" | `Explore` |
+| MCP call that returns large payload (GA, GSC, Slack search, playwright, ahrefs) | `mcp-fetch` |
+| Dedicated code-review task on any dimension | matching `review/*` agent or `team-review` |
+| Browser automation, QA flows, dogfooding | `dogfood` / `test-stories` / `agent-browser` |
+| Bug investigation with ≥2 competing hypotheses | `team-debug` |
 | Research spanning docs + code + git history | `team-research` |
-| Feature planning requiring deep codebase understanding | `feature-dev:code-architect` |
+| Feature planning needing deep codebase understanding | `feature-dev:code-architect` |
 
-### Main agent only does
+## When Main Agent Should Just Do It
 
-- Read 1–3 *known* files (not fishing)
-- Edit/Write to those files
-- Cheap git: `status`, `log -5`, `diff --stat`, `rev-parse`, `branch --show-current`
-- Compose final user-facing answer
-- Spawn subagents + synthesize their output into decisions
-- Ask clarifying questions
+Delegating these usually costs more than it saves:
 
-### Red Flags — if you catch yourself, stop and delegate
+- Reading a file you're about to **edit** — Edit tool needs exact strings, precision over context budget
+- Reading 1–3 files you've already touched this session
+- Cheap git ops: `status`, `log -5`, `diff --stat`, `rev-parse`, `branch --show-current`
+- Trivial one-liners: `pwd`, `ls`, single-file `cat`, known-path reads
+- Interactive back-and-forth with the user
+- Synthesis — thinking about subagent output is the main agent's job
+- Anything inside another subagent's execution (don't recurse this policy)
 
-| Thought | Delegate to |
-|---------|-------------|
-| "Let me grep for…" | `Explore` |
-| "Let me run the build / tests / lint…" | `execute` |
-| "Let me check that Slack channel / GA dashboard…" | `mcp-fetch` |
-| Reading 5+ files to understand a system | `Explore` |
-| Running `rg`, `find`, `jq`, `awk`, `curl` pipelines | `execute` |
-| Comparing multiple approaches/hypotheses | `team-debug` or `team-research` |
-| Reviewing >100 lines of code | matching `review/*` agent |
-| Writing a test plan for a feature | `testing` agent |
+## Soft Red Flags
 
-## Prompt Discipline for Subagents
+These are prompts to pause and ask "would a subagent serve better?" — not hard stops:
 
-Since subagents run cold, give them enough to judge:
+- "Let me grep across the repo for…" → often `Explore`
+- "Let me run the build / tests / lint…" → often `commands/execute`
+- "Let me check that Slack channel / GA dashboard / GSC…" → often `mcp-fetch`
+- Reading to *find or understand* something (regardless of length) → often `Explore`
+- `rg`, `find`, `jq`, `awk`, `curl` pipelines with large output → often `commands/execute`
+- Comparing multiple approaches or hypotheses → often `team-debug` / `team-research`
+- Dedicated code-review pass → often `review/*` agent
+
+None of these are absolute. If the task is small, the context budget is fine, or delegation adds more friction than it saves — just do it.
+
+## When to Skip This Policy Entirely
+
+- Already running as a subagent (don't recurse)
+- Inside skills that have their own orchestration (e.g., `nightshift`, `quality-loop`, `test-stories`) — follow that skill's pattern
+- User explicitly asks to do it inline
+- Emergency / time-critical fixes where subagent spin-up overhead hurts
+- Simple, single-file changes that don't need exploration
+
+## Prompt Discipline (When You Do Delegate)
+
+Subagents run cold. Brief them like a new colleague:
 
 - **What**: one-line goal
-- **Why**: context — what the result will be used for
+- **Why**: what the result will be used for
 - **Success criteria**: what "done" looks like
 - **Length cap**: e.g., "report under 200 words"
-- **Hand over exact commands for lookups**; hand over the *question* for investigations
+- **Lookup tasks** — hand over exact commands. **Investigations** — hand over the question, not prescribed steps.
 
-Bad prompt: `"check the build"` → generic noise back.
-Good prompt: `"Run npm test, report only failing tests + first line of each error. Under 150 words."`
+Bad: `"check the build"` → generic noise back.
+Good: `"Run npm test, report only failing tests + first line of each error. Under 150 words."`
 
 ## Parallelism
 
-Independent delegations = single message with multiple Agent calls. Never serialize independent work.
+Independent delegations → single message with multiple Agent calls. Don't serialize work that has no dependency.
 
-## When to Break the Rule
+## Anti-Patterns (What Actually Goes Wrong)
 
-- **Trivial one-liners** (`git status`, `pwd`, `ls`, reading one known config) — just run.
-- **Interactive back-and-forth with user** — don't delegate the conversation itself.
-- **Synthesis step** — main agent does the thinking once subagents return.
+- **Over-delegating trivia.** Spawning an agent for `cat one-file.json` wastes more time than it saves.
+- **Serial chain where parallel would do.** A then B then C, when A/B/C are independent.
+- **Vague prompts.** "investigate X" with no context → vague result → re-spawn. One good prompt > three bad ones.
+- **Moving noise instead of removing it.** Subagent dumps 5K tokens of raw output back into main. Always ask for a summary with a length cap.
+- **Delegating edits.** Subagent can't Edit a file precisely without the content being in the main agent's context. Keep edit-path reads in main.
 
-## Anti-Patterns
+## How to Judge in the Moment
 
-- **Serial subagent chain**: spawning A, waiting, spawning B based on A's output, when A+B were independent. Parallelize.
-- **Over-delegation of trivia**: spawning an agent for `cat one-file.json`. Main agent handles this.
-- **Under-specified prompt**: "investigate X" with no context. Agent returns vague result → you re-spawn. One good prompt > three bad ones.
-- **Ignoring the output cap**: subagent returns 5K tokens of raw tool output → you just moved the noise. Tell it to summarize, give a word limit.
+Ask: *"Will the subagent's return value be smaller and more useful than the raw work would be in main?"*
 
-## Checklist Before Any Action
-
-1. Is this >20 lines of output? → delegate.
-2. Does this need >3 Read or >2 Grep? → delegate.
-3. Am I about to read code I don't know? → delegate.
-4. Am I running a build/test/lint? → delegate.
-5. Am I calling an MCP that returns lots of data? → delegate.
-
-If any yes → spawn subagent. If all no → proceed in main.
+- Yes → delegate.
+- No (you need the raw content, e.g., for an edit) → don't.
+- Unsure → try delegating; if it costs more than it saves, you've learned for next time.
