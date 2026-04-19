@@ -16,154 +16,118 @@ allowed-tools:
   - AskUserQuestion
 ---
 
-# Test Stories — AI-Driven User Story Testing
+# Test Stories
 
-Execute user story acceptance criteria as intelligent browser tests.
+Execute user story acceptance criteria as browser tests via subagents.
 
 ## Usage
 
-The user invokes this skill with an optional filter argument:
-
 | Input | Behavior |
 |-------|----------|
-| (none) | Run all stories in `docs/user-stories/` |
-| `02-feed` | Run `docs/user-stories/02-feed.md` |
-| `FEED-05` | Run only story ID `FEED-05` from its parent file |
-| `docs/user-stories/` | Run all `.md` files in that folder |
-| `docs/some-subfolder/` | Run all `.md` files in that folder |
+| (none) | All stories in `docs/user-stories/` |
+| `02-feed` | `docs/user-stories/02-feed.md` |
+| `FEED-05` | Only story ID `FEED-05` from its parent file |
+| `docs/user-stories/` | All `.md` files in that folder |
+| `docs/some-subfolder/` | All `.md` files in that folder |
 
-## Prerequisites Check
+## Prerequisites
 
-Before running tests, verify dev servers are up:
+Curl both before starting — if either fails, STOP and tell user:
 
-1. Use Bash to curl `http://ecomitram.localhost:1355` — if it fails, tell user: "Start web server: `pnpm --filter @ecomitram/web dev`"
-2. Use Bash to curl `http://api.ecomitram.localhost:1355/health` — if it fails, tell user: "Start API server: `pnpm --filter @ecomitram/api dev`"
+1. `http://ecomitram.localhost:1355` — "Start web server: `pnpm --filter @ecomitram/web dev`"
+2. `http://api.ecomitram.localhost:1355/health` — "Start API server: `pnpm --filter @ecomitram/api dev`"
 
-If either server is down, STOP and ask the user to start them. Do not proceed.
+## Step 1: Resolve Target Files
 
-## Step 1: Resolve Target Story Files
+Parse argument:
 
-Parse the user's argument to determine which files to test:
+1. **No arg**: Glob `docs/user-stories/*.md`, sort by filename
+2. **Looks like filename** (lowercase, digits, e.g. `02-feed`): Try `docs/user-stories/{arg}.md`, fallback `docs/user-stories/*{arg}*.md`
+3. **Looks like story ID** (uppercase+hyphen+digits, e.g. `FEED-05`): Grep `docs/user-stories/` for `## {arg}:`, use matching file, pass ID as filter
+4. **Looks like folder** (ends with `/` or contains `/`): Glob `{path}/*.md`
 
-1. **No argument**: Glob `docs/user-stories/*.md` — collect all files, sort by filename
-2. **Looks like a file name** (e.g., `02-feed`, no uppercase, has digits): Try `docs/user-stories/{arg}.md`. If not found, try `docs/user-stories/*{arg}*.md`
-3. **Looks like a story ID** (e.g., `FEED-05` — uppercase letters, hyphen, digits): Grep all files in `docs/user-stories/` for `## {arg}:`. Use the matching file, pass the story ID as filter.
-4. **Looks like a folder path** (ends with `/` or contains `/`): Glob `{path}/*.md`
-
-Store:
-- `storyFiles`: list of absolute file paths
-- `storyIdFilter`: specific story ID to test, or `null` for all stories in each file
+Store: `storyFiles` (absolute paths), `storyIdFilter` (specific ID or `null`)
 
 ## Step 2: Load Agent Instructions
 
-Read the file `~/.claude/skills/test-stories/AGENT.md` into a variable. This is the complete instruction set for each testing subagent.
+Read `~/.claude/skills/test-stories/AGENT.md` into variable.
 
 ## Step 3: Create Run Folder
 
-Before dispatching subagents:
-
-1. Generate a timestamp: `YYYY-MM-DD-HHmm` (e.g., `2026-03-06-1430`) using `date +%Y-%m-%d-%H%M`
-2. Create the screenshot directory: `mkdir -p test-results/stories/{timestamp}/`
-3. Store:
-   - `runTimestamp`: the timestamp string
-   - `screenshotDir`: absolute path to `test-results/stories/{timestamp}/`
-   - `reportPath`: `test-results/stories/{timestamp}.md`
+1. Timestamp: `date +%Y-%m-%d-%H%M` → `YYYY-MM-DD-HHmm`
+2. `mkdir -p test-results/stories/{timestamp}/`
+3. Store: `runTimestamp`, `screenshotDir` (absolute), `reportPath`: `test-results/stories/{timestamp}.md`
 
 ## Step 4: Dispatch Subagents (Sequential)
 
-For each story file in `storyFiles`:
+For each story file:
 
-1. Read the story file content
-2. Derive a `fileSlug` from the filename (e.g., `01-auth` from `01-auth.md`)
-3. Spawn a **general-purpose subagent** with this prompt:
+1. Read file content
+2. Derive `fileSlug` from filename (e.g. `01-auth` from `01-auth.md`)
+3. Spawn general-purpose subagent:
 
 ```
 You are a QA testing agent. Follow the AGENT INSTRUCTIONS below exactly.
 
 ## AGENT INSTRUCTIONS
-
 {contents of AGENT.md}
 
 ## STORY TO TEST
-
-{contents of the story markdown file}
+{story markdown content}
 
 ## CONFIGURATION
-
 - Base URL: http://ecomitram.localhost:1355
 - API URL: http://api.ecomitram.localhost:1355
 - Story ID filter: {storyIdFilter or "ALL"}
-- Screenshot dir: {absolute path to screenshotDir}
+- Screenshot dir: {screenshotDir}
 - File slug: {fileSlug}
 - Run timestamp: {runTimestamp}
 
 Execute the tests now and return your report.
 ```
 
-**Subagent settings:**
-- `subagent_type`: `general-purpose`
-- `model`: `sonnet` (faster than opus for execution)
-- `description`: `Test {filename}` (e.g., "Test 02-feed.md")
+Settings: `subagent_type: general-purpose`, `model: sonnet`, `description: Test {filename}`
 
-3. Wait for subagent to complete
-4. Store the returned report text
-
-**If a subagent fails/crashes:** Record `"## {filename}: AGENT ERROR\n{error message}"` and continue.
+4. Wait for completion, store report
+5. **If subagent crashes:** Record `"## {filename}: AGENT ERROR\n{error}"`, continue
 
 ## Step 5: Write Report & Print Summary
 
-After all subagents complete:
-
-### 5a. Build the report content
-
-Assemble a markdown report with this structure:
+### 5a. Build Report
 
 ```markdown
 # Test Stories Report — {YYYY-MM-DD HH:mm}
 
-**Scope:** {comma-separated list of story files tested}
+**Scope:** {story files tested}
 **Summary:** X passed, Y failed, Z skipped
 
-## {filename} (e.g., 01-auth.md)
+## {filename}
 
 ### {STORY-ID}: {Title} {overall_icon}
-  {icon} {criterion text} — {evidence}
-  {icon} {criterion text} — {evidence}
+  {icon} {criterion} — {evidence}
 ![{STORY-ID}](./{runTimestamp}/{fileSlug}-{STORY-ID}.png)
-
-### {STORY-ID}: {Title} {overall_icon}
-  {icon} {criterion text} — {evidence}
-![{STORY-ID} FAIL](./{runTimestamp}/{fileSlug}-{STORY-ID}-FAIL.png)
 
 ---
 
 ## Failures Summary
 1. **{STORY-ID}**: {one-line description}
-...
 
 ## Learnings
 - {patterns or observations}
 ```
 
-Count totals across all reports:
-- Total passed (lines starting with `✓`)
-- Total failed (lines starting with `✗`)
-- Total skipped (lines starting with `⊘`)
+Count totals: `✓` = passed, `✗` = failed, `⊘` = skipped
 
-Analyze learnings by scanning all reports for patterns:
-- Same failure text across multiple stories → "Systemic: {description}"
-- Console errors mentioned → "Frontend/API errors detected"
-- Network failures mentioned → "API endpoints failing"
-- "UNBLOCKED" mentions → "Issues potentially fixed: {list}"
+Analyze learnings:
+- Same failure across stories → "Systemic: {description}"
+- Console errors → "Frontend/API errors detected"
+- Network failures → "API endpoints failing"
+- UNBLOCKED mentions → "Issues potentially fixed: {list}"
 - Missing data-testid → "Components missing test IDs: {list}"
 
-### 5b. Write report file
-
-Use the `Write` tool to save the report to `{reportPath}` (i.e., `test-results/stories/{runTimestamp}.md`).
+### 5b. Write report to `{reportPath}`
 
 ### 5c. Print brief summary to chat
-
-Print only a short summary to chat (not the full report):
 
 ```
 Test report saved: test-results/stories/{runTimestamp}.md
@@ -171,12 +135,12 @@ Screenshots: test-results/stories/{runTimestamp}/
 Summary: X passed, Y failed, Z skipped
 ```
 
-If there are failures, list them briefly (one line each).
+List failures briefly if any (one line each).
 
 ## Rules
 
 - Do NOT open browser yourself — subagents handle all browser interaction
-- Do NOT modify any files — this is diagnosis only, never fix anything
+- Do NOT modify any files — diagnosis only
 - Do NOT dispatch subagents in parallel — sequential to avoid browser conflicts
-- Keep main context clean — only store the report text from each subagent
-- If all servers are up, proceed without asking — don't ask "should I start testing?"
+- Keep main context clean — only store report text from each subagent
+- If servers up, proceed without asking

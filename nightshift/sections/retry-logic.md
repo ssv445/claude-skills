@@ -1,29 +1,26 @@
 # Retry Logic
 
-## Retry Limits Per Step
+## Retry Limits
 
-Different steps need different amounts of iteration. Harder steps get more retries.
+| Step | Name | Max Retries |
+|------|------|-------------|
+| 1 | UNDERSTAND | 2 |
+| 2 | PLAN | 3 |
+| 3 | TEST | 5 |
+| 4 | CODE | 7 |
+| 5 | VERIFY | 5 |
+| 6 | SHIP | 1 |
 
-| Step | Name | Max Retries | Rationale |
-|------|------|-------------|-----------|
-| 1 | UNDERSTAND | 2 | Low complexity — if you can't understand after 2 retries, it's a bad issue |
-| 2 | PLAN | 3 | Medium — plans can be refined |
-| 3 | TEST | 5 | High — writing good tests is iterative |
-| 4 | CODE | 7 | Highest — implementation has the most failure modes |
-| 5 | VERIFY | 5 | High — fixing lint/type/test/build failures is iterative |
-| 6 | SHIP | 1 | Just push and PR — if this fails it's a git/gh issue, ask expert panel |
+## Ralph Loop (Retry on Rejection)
 
-## Ralph Loop Logic (Retry on Rejection)
-
-When a review gate rejects a step:
+When review gate rejects:
 
 ```
-step_max = maxAttempts for this step (from the retry limits table)
+step_max = maxAttempts for this step
 attempt = current_attempt + 1
 
 if attempt > step_max:
-    mark issue as BLOCKED
-    # Post detailed blocking comment on the issue
+    mark issue BLOCKED
     gh issue comment <N> --body "## Nightshift — BLOCKED
 
     **Blocked at:** Step <STEP> (<STEP_NAME>)
@@ -34,21 +31,20 @@ if attempt > step_max:
     - <reviewer3>: <feedback>
 
     **Expert panel consulted:** <yes/no>
-    **Suggested resolution:** <what you think a human should do>
+    **Suggested resolution:** <what human should do>
 
     Full artifacts: .claude/nightshift/issue-<N>/"
 
-    git checkout $NIGHTSHIFT_BRANCH  # return to parent branch
+    git checkout $NIGHTSHIFT_BRANCH  # return to parent
     move to next issue
 else:
-    # Post retry comment on the issue
     gh issue comment <N> --body "## Nightshift — Step <STEP> Retry (attempt <attempt>/<step_max>)
     Reviewer feedback being addressed:
     - <reviewer1>: <feedback>
     - <reviewer2>: <feedback>
     - <reviewer3>: <feedback>"
 
-    re-run the worker agent with enhanced prompt:
+    re-run worker with enhanced prompt:
 
     "PREVIOUS ATTEMPT REJECTED (attempt <attempt>/<step_max>).
 
@@ -57,30 +53,25 @@ else:
     - <reviewer2>: <feedback>
     - <reviewer3>: <feedback>
 
-    Read the issue comments for full history: gh issue view <N> --comments
+    Read issue comments for full history: gh issue view <N> --comments
 
-    CRITICAL: Do not assume your previous approach was close.
-    Re-examine the evidence. If reviewers said your root cause analysis
-    was wrong, go back and investigate again — don't just tweak the fix.
+    CRITICAL: Do not assume previous approach was close.
+    Re-examine evidence. If reviewers said root cause was wrong,
+    investigate again — don't tweak the fix.
 
-    Fix the issues raised above and try again.
-    Read your previous output at .claude/nightshift/issue-<N>/<step-file>.md
-    and improve it based on the feedback.
+    Fix issues above. Read previous output at
+    .claude/nightshift/issue-<N>/<step-file>.md and improve.
 
     <original step prompt>"
 ```
 
 ## Anti-Loop Protection
 
-Before starting any retry:
-1. Read previous attempt's output and the rejection feedback
-2. Read ALL issue comments to see the full history of attempts
-3. If feedback is about the SAME issue as previous rejection → worker is looping
-4. On loop detection: **convene expert panel** with the dilemma:
-   "The worker keeps failing on the same issue. Here's the feedback: <feedback>.
-   Here's what was tried: <previous attempts>.
-   Here's the issue comment history: <comments>.
-   What's the right approach?"
-5. Apply the panel's decision to the next retry prompt
-6. Post the expert panel decision as an issue comment
-7. If max retries exhausted after expert panel help → BLOCKED
+Before any retry:
+1. Read previous attempt output + rejection feedback
+2. Read ALL issue comments for full history
+3. Same feedback as previous rejection → worker is looping
+4. Loop detected → **expert panel**: "Worker keeps failing same issue. Feedback: <feedback>. Tried: <attempts>. Comments: <history>. Right approach?"
+5. Apply panel decision to next retry
+6. Post panel decision as issue comment
+7. Max retries exhausted after panel help → BLOCKED

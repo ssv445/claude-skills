@@ -5,49 +5,28 @@ description: Set up and use portless for named local dev server URLs (e.g. http:
 
 # Portless
 
-Replace port numbers with stable, named .localhost URLs. For humans and agents.
-
-## Why portless
-
-- **Port conflicts** -- `EADDRINUSE` when two projects default to the same port
-- **Memorizing ports** -- which app is on 3001 vs 8080?
-- **Refreshing shows the wrong app** -- stop one server, start another on the same port, stale tab shows wrong content
-- **Monorepo multiplier** -- every problem scales with each service in the repo
-- **Agents test the wrong port** -- AI agents guess or hardcode the wrong port
-- **Cookie/storage clashes** -- cookies on `localhost` bleed across apps; localStorage lost when ports shift
-- **Hardcoded ports in config** -- CORS allowlists, OAuth redirects, `.env` files break when ports change
-- **Sharing URLs with teammates** -- "what port is that on?" becomes a Slack question
-- **Browser history is useless** -- `localhost:3000` history is a mix of unrelated projects
+Replace port numbers w/ stable, named `.localhost` URLs.
 
 ## Installation
 
-portless is a global CLI tool. Do NOT add it as a project dependency (no `npm install portless` or `pnpm add portless` in a project). Do NOT use `npx`.
-
-Install globally:
+Global CLI only. No project dependency, no `npx`.
 
 ```bash
 npm install -g portless
 ```
 
-## Quick Start
+## Usage
 
 ```bash
-# Install globally
-npm install -g portless
-
-# Start the proxy (once, no sudo needed)
-portless proxy start
-
-# Run your app (auto-starts the proxy if needed)
-portless myapp next dev
-# -> http://myapp.localhost:1355
+portless proxy start                # start proxy (port 1355, no sudo)
+portless myapp next dev             # -> http://myapp.localhost:1355
+portless api.myapp pnpm start       # -> http://api.myapp.localhost:1355
+portless docs.myapp next dev        # -> http://docs.myapp.localhost:1355
 ```
 
-The proxy auto-starts when you run an app. You can also start it explicitly with `portless proxy start`.
+Proxy auto-starts when you run an app.
 
-## Integration Patterns
-
-### package.json scripts
+### package.json integration
 
 ```json
 {
@@ -57,33 +36,19 @@ The proxy auto-starts when you run an app. You can also start it explicitly with
 }
 ```
 
-The proxy auto-starts when you run an app. Or start it explicitly: `portless proxy start`.
+### Bypass
 
-### Multi-app setups with subdomains
-
-```bash
-portless myapp next dev          # http://myapp.localhost:1355
-portless api.myapp pnpm start    # http://api.myapp.localhost:1355
-portless docs.myapp next dev     # http://docs.myapp.localhost:1355
-```
-
-### Bypassing portless
-
-Set `PORTLESS=0` or `PORTLESS=skip` to run the command directly without the proxy:
-
-```bash
-PORTLESS=0 pnpm dev   # Bypasses proxy, uses default port
-```
+`PORTLESS=0` or `PORTLESS=skip` → runs command directly without proxy.
 
 ## How It Works
 
-1. `portless proxy start` starts an HTTP reverse proxy on port 1355 as a background daemon (configurable with `-p` / `--port` or the `PORTLESS_PORT` env var). The proxy also auto-starts when you run an app.
-2. `portless <name> <cmd>` assigns a random free port (4000-4999) via the `PORT` env var and registers the app with the proxy
-3. The browser hits `http://<name>.localhost:1355` on the proxy port; the proxy forwards to the app's assigned port
+1. `portless proxy start` → HTTP reverse proxy on port 1355 (configurable w/ `-p` or `PORTLESS_PORT`)
+2. `portless <name> <cmd>` → assigns random free port (4000-4999) via `PORT` env var, registers w/ proxy
+3. Browser hits `http://<name>.localhost:1355` → proxy forwards to app's port
 
-`.localhost` domains resolve to `127.0.0.1` natively on macOS and Linux -- no `/etc/hosts` editing needed.
+`.localhost` resolves to `127.0.0.1` natively on macOS/Linux — no `/etc/hosts` needed.
 
-Most frameworks (Next.js, Express, Nuxt, etc.) respect the `PORT` env var automatically. For frameworks that ignore `PORT` (Vite, Astro, React Router, Angular), portless auto-injects the correct `--port` and `--host` CLI flags.
+Most frameworks respect `PORT`. For those that don't (Vite, Astro, React Router, Angular), portless auto-injects `--port` and `--host` flags.
 
 ## CLI Reference
 
@@ -92,25 +57,18 @@ Most frameworks (Next.js, Express, Nuxt, etc.) respect the `PORT` env var automa
 | `portless <name> <cmd> [args...]`   | Run app at `http://<name>.localhost:1355` (auto-starts proxy) |
 | `portless list`                     | Show active routes                                            |
 | `portless trust`                    | Add local CA to system trust store (for HTTPS)                |
-| `portless proxy start`              | Start the proxy as a daemon (port 1355, no sudo)              |
-| `portless proxy start --https`      | Start with HTTP/2 + TLS (auto-generates certs)                |
-| `portless proxy start -p <number>`  | Start the proxy on a custom port                              |
-| `portless proxy start --foreground` | Start the proxy in foreground (for debugging)                 |
-| `portless proxy stop`               | Stop the proxy                                                |
-| `portless <name> --force <cmd>`     | Override an existing route registered by another process      |
+| `portless proxy start`              | Start proxy as daemon (port 1355, no sudo)                    |
+| `portless proxy start --https`      | Start w/ HTTP/2 + TLS (auto-generates certs)                  |
+| `portless proxy start -p <number>`  | Start proxy on custom port                                    |
+| `portless proxy start --foreground` | Start proxy in foreground (debugging)                         |
+| `portless proxy stop`               | Stop proxy                                                    |
+| `portless <name> --force <cmd>`     | Override existing route from another process                  |
 | `portless --help` / `-h`            | Show help                                                     |
 | `portless --version` / `-v`         | Show version                                                  |
 
 ## Troubleshooting
 
-### Proxy not running
-The proxy auto-starts when you run an app. If it doesn't start, start it manually: `portless proxy start`
-
-### Port already in use
-Use a different port: `portless proxy start -p 8080`
-
-### Framework not respecting PORT
-Portless auto-injects flags for Vite, Astro, React Router, Angular. For others, pass `--port $PORT` manually.
-
-### Proxy loop (508 Loop Detected)
-Set `changeOrigin: true` in proxy config when dev server proxies to another portless app.
+- **Proxy not running** — auto-starts w/ app. Manual: `portless proxy start`
+- **Port in use** — `portless proxy start -p 8080`
+- **Framework ignoring PORT** — portless auto-injects for Vite/Astro/React Router/Angular. Others: pass `--port $PORT` manually.
+- **508 Loop Detected** — set `changeOrigin: true` in proxy config when dev server proxies to another portless app.

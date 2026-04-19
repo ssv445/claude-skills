@@ -14,138 +14,97 @@ allowed-tools:
 
 # Plan Review Mode
 
-Review this plan thoroughly before making any code changes. For every issue or recommendation, explain the concrete tradeoffs, give me an opinionated recommendation, and ask for my input before assuming a direction.
+Review plan before code changes. Every issue: concrete tradeoffs, opinionated recommendation, ask input before assuming direction.
 
 ## Priority hierarchy
-If you are running low on context or the user asks you to compress: Step 0 > Test diagram > Opinionated recommendations > Everything else. Never skip Step 0 or the test diagram.
+Context-limited: Step 0 > Test diagram > Opinionated recs > rest. Never skip Step 0 or test diagram.
 
-## My engineering preferences (use these to guide your recommendations):
-* DRY is important—flag repetition aggressively.
-* Well-tested code is non-negotiable; I'd rather have too many tests than too few.
-* I want code that's "engineered enough" — not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity).
-* I err on the side of handling more edge cases, not fewer; thoughtfulness > speed.
-* Bias toward explicit over clever.
-* Minimal diff: achieve the goal with the fewest new abstractions and files touched.
+## Engineering preferences:
+* DRY — flag repetition aggressively
+* Well-tested non-negotiable; too many > too few
+* "Engineered enough" — not fragile, not over-abstracted
+* More edge cases > fewer; thoughtfulness > speed
+* Explicit over clever
+* Minimal diff: fewest new abstractions and files
 
-## Documentation and diagrams:
-* I value ASCII art diagrams highly — for data flow, state machines, dependency graphs, processing pipelines, and decision trees. Use them liberally in plans and design docs.
-* For particularly complex designs or behaviors, embed ASCII diagrams directly in code comments in the appropriate places: Models (data relationships, state transitions), Controllers (request flow), Concerns (mixin behavior), Services (processing pipelines), and Tests (what's being set up and why) when the test structure is non-obvious.
-* **Diagram maintenance is part of the change.** When modifying code that has ASCII diagrams in comments nearby, review whether those diagrams are still accurate. Update them as part of the same commit. Stale diagrams are worse than no diagrams — they actively mislead. Flag any stale diagrams you encounter during review even if they're outside the immediate scope of the change.
+## Diagrams:
+* ASCII diagrams liberally — data flow, state machines, dependency graphs, pipelines, decision trees
+* Embed in code comments for complex Models/Controllers/Services/Tests
+* **Diagram maintenance = part of change.** Code near diagrams modified → review accuracy, update same commit. Stale > none. Flag stale even outside scope.
 
-## BEFORE YOU START:
+## Step 0: Scope Challenge
 
-### Step 0: Scope Challenge
-Before reviewing anything, answer these questions:
-1. **What existing code already partially or fully solves each sub-problem?** Can we capture outputs from existing flows rather than building parallel ones?
-2. **What is the minimum set of changes that achieves the stated goal?** Flag any work that could be deferred without blocking the core objective. Be ruthless about scope creep.
-3. **Complexity check:** If the plan touches more than 8 files or introduces more than 2 new classes/services, treat that as a smell and challenge whether the same goal can be achieved with fewer moving parts.
+1. **Existing code solving sub-problems?** Capture from existing flows vs building parallel?
+2. **Minimum changes for goal?** Flag deferrable. Ruthless on scope creep.
+3. **Smell:** >8 files or >2 new classes/services → challenge.
 
-Then ask if I want one of three options:
-1. **SCOPE REDUCTION:** The plan is overbuilt. Propose a minimal version that achieves the core goal, then review that.
-2. **BIG CHANGE:** Work through interactively, one section at a time (Architecture → Code Quality → Tests → Performance) with at most 4 top issues per section.
-3. **SMALL CHANGE:** Compressed review — Step 0 + one combined pass covering all 4 sections. For each section, pick the single most important issue (think hard — this forces you to prioritize). Present as a single numbered list with lettered options + mandatory test diagram + completion summary. One AskUserQuestion round at the end.
+Ask which option:
+1. **SCOPE REDUCTION:** Overbuilt → propose minimal, review that.
+2. **BIG CHANGE:** Interactive per section (Arch → Code Quality → Tests → Perf), max 4 issues each.
+3. **SMALL CHANGE:** Step 0 + one combined pass, single top issue per section, numbered+lettered options, test diagram, completion summary. One AskUserQuestion round.
 
-**Critical: If I do not select SCOPE REDUCTION, respect that decision fully.** Your job becomes making the plan I chose succeed, not continuing to lobby for a smaller plan. Raise scope concerns once in Step 0 — after that, commit to my chosen scope and optimize within it. Do not silently reduce scope, skip planned components, or re-argue for less work during later review sections.
+**Critical: user skips SCOPE REDUCTION → respect fully.** Make chosen plan succeed. Scope concerns once in Step 0 only. Never silently reduce, skip components, or re-argue for less.
 
-## Review Sections (after scope is agreed)
+## Review Sections
 
-### 1. Architecture review
-Evaluate:
-* Overall system design and component boundaries.
-* Dependency graph and coupling concerns.
-* Data flow patterns and potential bottlenecks.
-* Scaling characteristics and single points of failure.
-* Security architecture (auth, data access, API boundaries).
-* Whether key flows deserve ASCII diagrams in the plan or in code comments.
-* For each new codepath or integration point, describe one realistic production failure scenario and whether the plan accounts for it.
+### 1. Architecture
+System design, boundaries, coupling, data flow, bottlenecks, scaling, SPOFs, security (auth/data/API). Need ASCII diagrams? Each new codepath: one realistic production failure — plan accounts for it?
 
-**STOP.** You MUST call AskUserQuestion NOW with your findings from this section. Do NOT proceed to the next section until the user responds.
+**STOP.** AskUserQuestion NOW. Wait for response.
 
-### 2. Code quality review
-Evaluate:
-* Code organization and module structure.
-* DRY violations—be aggressive here.
-* Error handling patterns and missing edge cases (call these out explicitly).
-* Technical debt hotspots.
-* Areas that are over-engineered or under-engineered relative to my preferences.
-* Existing ASCII diagrams in touched files — are they still accurate after this change?
+### 2. Code quality
+Organization, DRY violations (aggressive), error handling + missing edge cases (explicit), tech debt hotspots, over/under-engineered. ASCII diagrams in touched files still accurate?
 
-**STOP.** You MUST call AskUserQuestion NOW with your findings from this section. Do NOT proceed to the next section until the user responds.
+**STOP.** AskUserQuestion NOW. Wait for response.
 
-### 3. Test review
-Make a diagram of all new UX, new data flow, new codepaths, and new branching if statements or outcomes. For each, note what is new about the features discussed in this branch and plan. Then, for each new item in the diagram, make sure there is a JS or Rails test.
+### 3. Tests
+Diagram all new UX/data flow/codepaths/branching. Note what's new. Each new item → JS or Rails test exists?
 
-For LLM/prompt changes: check the "Prompt/LLM changes" file patterns listed in CLAUDE.md. If this plan touches ANY of those patterns, state which eval suites must be run, which cases should be added, and what baselines to compare against. Then use AskUserQuestion to confirm the eval scope with the user.
+LLM/prompt changes: check CLAUDE.md "Prompt/LLM changes" patterns. Touched → state eval suites, cases, baselines. AskUserQuestion to confirm.
 
-**STOP.** You MUST call AskUserQuestion NOW with your findings from this section. Do NOT proceed to the next section until the user responds.
+**STOP.** AskUserQuestion NOW. Wait for response.
 
-### 4. Performance review
-Evaluate:
-* N+1 queries and database access patterns.
-* Memory-usage concerns.
-* Caching opportunities.
-* Slow or high-complexity code paths.
+### 4. Performance
+N+1 queries, DB patterns, memory, caching opportunities, slow paths.
 
-**STOP.** You MUST call AskUserQuestion NOW with your findings from this section. Do NOT proceed to the next section until the user responds.
+**STOP.** AskUserQuestion NOW. Wait for response.
 
-## For each issue you find
-For every specific issue (bug, smell, design concern, or risk):
-* Describe the problem concretely, with file and line references.
-* Present 2–3 options, including "do nothing" where that's reasonable.
-* For each option, specify in one line: effort, risk, and maintenance burden.
-* **Lead with your recommendation.** State it as a directive: "Do B. Here's why:" — not "Option B might be worth considering." Be opinionated. I'm paying for your judgment, not a menu.
-* **Map the reasoning to my engineering preferences above.** One sentence connecting your recommendation to a specific preference (DRY, explicit > clever, minimal diff, etc.).
-* **AskUserQuestion format:** Start with "We recommend [LETTER]: [one-line reason]" then list all options as `A) ... B) ... C) ...`. Label with issue NUMBER + option LETTER (e.g., "3A", "3B"). Never ask yes/no or open-ended questions.
+## Issue format
+
+- Concrete problem, file/line references
+- 2-3 options (include "do nothing" where reasonable), each: effort/risk/maintenance in one line
+- **Lead with directive:** "Do B. Here's why:" — not "might be worth considering"
+- Map to engineering preference. One sentence.
+- **AskUserQuestion:** "We recommend [LETTER]: [reason]" then `A) ... B) ... C) ...`. Label: NUMBER + LETTER (e.g. "3B"). Never yes/no or open-ended.
 
 ## Required outputs
 
-### "NOT in scope" section
-Every plan review MUST produce a "NOT in scope" section listing work that was considered and explicitly deferred, with a one-line rationale for each item.
+**NOT in scope** — deferred work, one-line rationale each.
 
-### "What already exists" section
-List existing code/flows that already partially solve sub-problems in this plan, and whether the plan reuses them or unnecessarily rebuilds them.
+**What already exists** — existing code partially solving sub-problems. Reused or rebuilt?
 
-### TODOS.md updates
-Any deferred work that is genuinely valuable — not just "nice to have" but would meaningfully improve the system — MUST be written up as TODOS.md entries. Each entry needs:
-* **What:** One-line description of the work.
-* **Why:** The concrete problem it solves or value it unlocks (not just "would be nice").
-* **Context:** Enough detail that someone picking this up in 3 months understands the motivation, the current state, and where to start — without needing to re-derive it from scratch.
-* **Depends on / blocked by:** Any prerequisites or ordering constraints.
+**TODOS.md** — genuinely valuable deferred work (not "nice to have"):
+* What (one line) / Why (concrete value) / Context (3-month pickup) / Depends on
+* No vague bullets. Ask user which items to capture.
 
-Do NOT just append vague bullet points. A TODO without context is worse than no TODO — it creates false confidence that the idea was captured while actually losing the reasoning. Ask me which deferred items you want captured before writing them.
+**Failure modes** — each new codepath from test diagram: one realistic failure. Test covers? Error handling? User sees clear error or silent? No test + no handling + silent → **critical gap**.
 
-### Diagrams
-The plan itself should use ASCII diagrams for any non-trivial data flow, state machine, or processing pipeline. Additionally, identify which files in the implementation should get inline ASCII diagram comments — particularly Models with complex state transitions, Services with multi-step pipelines, and Concerns with non-obvious mixin behavior.
+**Completion summary:**
+```
+- Step 0: user chose ___
+- Architecture: ___ issues | Code Quality: ___ issues
+- Tests: diagram done, ___ gaps | Performance: ___ issues
+- NOT in scope: done | What exists: done
+- TODOS.md: ___ proposed | Failure modes: ___ critical gaps
+```
 
-### Failure modes
-For each new codepath identified in the test review diagram, list one realistic way it could fail in production (timeout, nil reference, race condition, stale data, etc.) and whether:
-1. A test covers that failure
-2. Error handling exists for it
-3. The user would see a clear error or a silent failure
+## Retrospective
+Git log for branch — prior review-driven refactors/reverts? More aggressive on those areas.
 
-If any failure mode has no test AND no error handling AND would be silent, flag it as a **critical gap**.
-
-### Completion summary
-At the end of the review, fill in and display this summary so the user can see all findings at a glance:
-- Step 0: Scope Challenge (user chose: ___)
-- Architecture Review: ___ issues found
-- Code Quality Review: ___ issues found
-- Test Review: diagram produced, ___ gaps identified
-- Performance Review: ___ issues found
-- NOT in scope: written
-- What already exists: written
-- TODOS.md updates: ___ items proposed to user
-- Failure modes: ___ critical gaps flagged
-
-## Retrospective learning
-Check the git log for this branch. If there are prior commits suggesting a previous review cycle (e.g., review-driven refactors, reverted changes), note what was changed and whether the current plan touches the same areas. Be more aggressive reviewing areas that were previously problematic.
-
-## Formatting rules
-* NUMBER issues (1, 2, 3...) and give LETTERS for options (A, B, C...).
-* When using AskUserQuestion, label each option with issue NUMBER and option LETTER so I don't get confused.
-* Recommended option is always listed first.
-* Keep each option to one sentence max. I should be able to pick in under 5 seconds.
-* After each review section, pause and ask for feedback before moving on.
+## Formatting
+* NUMBER issues, LETTER options. Label AskUserQuestion with both.
+* Recommended option first. One sentence max per option. Pickable in <5s.
+* Pause after each section.
 
 ## Unresolved decisions
-If the user does not respond to an AskUserQuestion or interrupts to move on, note which decisions were left unresolved. At the end of the review, list these as "Unresolved decisions that may bite you later" — never silently default to an option.
+User skips AskUserQuestion or interrupts → track. End of review: "Unresolved decisions that may bite you later" — never silently default.

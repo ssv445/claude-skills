@@ -5,21 +5,14 @@ description: "Check Claude.ai usage limits (hourly/weekly) via Chrome browser. R
 
 # Usage Check
 
-Check Claude.ai plan usage limits via browser automation. Runs entirely in a subagent.
+Check Claude.ai usage limits via browser. **Always run in subagent** — never pollute main context.
 
-## Trigger
 - `/usage-check` — report current usage
 - `/usage-check <threshold>` — report + warn if any limit exceeds threshold %
 
-## Execution
+## Subagent Prompt
 
-**Always run in a subagent.** Never pollute main context with browser tool results.
-
-Spawn a subagent with this prompt (fill in threshold from `$ARGUMENTS`, default 80 if blank):
-
----
-
-### Subagent Prompt
+Spawn subagent with this (fill threshold from `$ARGUMENTS`, default 80):
 
 ```
 You are checking Claude.ai usage limits. Report in caveman style (no articles, minimal words).
@@ -50,26 +43,13 @@ or:
 If page not loaded or not logged in, say: "Can't read usage page. Login to claude.ai first."
 ```
 
----
-
 ## Subagent Config
 
 - **type**: `mcp-fetch` (has browser MCP access)
-- **tools needed**: `mcp__claude-in-chrome__tabs_context_mcp`, `mcp__claude-in-chrome__tabs_create_mcp`, `mcp__claude-in-chrome__get_page_text`
-- **isolation**: none (needs existing browser session)
+- **tools**: `mcp__claude-in-chrome__tabs_context_mcp`, `mcp__claude-in-chrome__tabs_create_mcp`, `mcp__claude-in-chrome__get_page_text`
 
-## Example Output
+## Gotchas
 
-```
-SESSION: 5% used | resets 3 hr 29 min
-WEEKLY (all): 10% used | resets Sun 8:30 AM
-WEEKLY (sonnet): 15% used | resets 5 hr 29 min
-EXTRA: $16.70/$50 | balance $183.29
-
-✓ All limits below 80%
-```
-
-## Common Mistakes
-- Running browser tools in main agent — always subagent
-- Not checking if usage page tab already exists — reuse it
-- Forgetting extra usage section — include if visible
+- Always subagent — never browser tools in main
+- Reuse existing usage page tab if open
+- Include extra usage section if visible

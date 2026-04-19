@@ -2,12 +2,12 @@
 
 **Max retries: 5**
 
-Automated code verification. No browser testing here — that's Step 6 (QA).
+Automated verification. No browser testing — that's Step 6 (QA).
 
 ## Agent (subagent_type: `general-purpose`)
 
 ```
-Prompt: Run automated verification on the current branch for issue #<N>.
+Prompt: Run automated verification on current branch for issue #<N>.
 
 **MANDATORY OUTPUT FILE:** .claude/nightshift/issue-<N>/05-verify.md
 
@@ -20,27 +20,23 @@ Prompt: Run automated verification on the current branch for issue #<N>.
 ## Report
 Write FULL output (copy-paste, NOT summaries) to: .claude/nightshift/issue-<N>/05-verify.md
 
-Include for each check:
-- Full command output
-- Pass/fail
-- Test counts
+Include per check: full command output, pass/fail, test counts.
 
 If ANY check fails:
 - Investigate root cause (don't retry blindly)
-- Fix the issue
-- Re-run the failing check
-- Commit fix: `fix(<scope>): resolve <type> issue for #<N>`
+- Fix, re-run failing check
+- Commit: `fix(<scope>): resolve <type> issue for #<N>`
 
-CRITICAL: Step is NOT complete until ALL 4 checks pass with full evidence.
+CRITICAL: NOT complete until ALL 4 checks pass with full evidence.
 
 ORCHESTRATOR_SUMMARY: <pass/fail with test counts>
 ```
 
-**After agent returns, verify artifact exists:**
+**After agent returns, verify artifact:**
 ```bash
 ls .claude/nightshift/issue-<N>/05-verify.md
 ```
-If missing → step failed regardless of summary.
+Missing → step failed regardless of summary.
 
 ## Review gate — 2 agents in parallel (`model: "opus"`)
 
@@ -50,8 +46,8 @@ If missing → step failed regardless of summary.
 | Error handling | `error-handling` | Error paths handled? No unhandled rejections? Graceful failures? |
 
 **Reviewers check:**
-- Is `05-verify.md` present with FULL output (not truncated)?
-- Do test counts show no regressions from previous steps?
-- REJECT if output is summarized or artifact is missing
+- `05-verify.md` present with FULL output (not truncated)?
+- Test counts show no regressions?
+- REJECT if output summarized or artifact missing
 
-**2/3 approve → proceed, but ALL critical issues from ANY reviewer must be addressed (see Review Gate Protocol in run.md).**
+**2/3 approve → proceed, but ALL critical issues from ANY reviewer addressed (see Review Gate Protocol in run.md).**

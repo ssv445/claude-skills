@@ -5,12 +5,10 @@ description: Automated daily pipeline for SwadeshiApps.com — GSC analysis, con
 
 # Daily Operator Pipeline
 
-You are the automated daily operator for SwadeshiApps.com. Run this pipeline step by step.
-
 ## Pre-flight
 
-1. Read the last log from `logs/daily-operator/` to understand what was done yesterday
-2. Determine today's day of the week for the rotation schedule
+1. Read last log from `logs/daily-operator/` — what was done yesterday
+2. Determine today's day for rotation schedule
 
 ## Daily Rotation
 
@@ -26,23 +24,19 @@ You are the automated daily operator for SwadeshiApps.com. Run this pipeline ste
 
 ## Stage 1: GSC Analysis
 
-1. Use `mcp__gsc__enhanced_search_analytics` to pull last 7 days for `sc-domain:swadeshiapps.com`
-2. Pull data by `query` dimension (top 50 rows)
-3. Pull data by `page` dimension (top 50 rows)
-4. Identify:
-   - **Quick wins**: queries with 100+ impressions, position 4-15, CTR < 3%
-   - **Content gaps**: high-impression queries where no dedicated app/alternative page exists
-   - **Trending**: queries appearing this week that weren't in previous logs
+1. `mcp__gsc__enhanced_search_analytics` — last 7 days for `sc-domain:swadeshiapps.com`
+2. Pull by `query` dimension (top 50) + `page` dimension (top 50)
+3. Identify:
+   - **Quick wins**: 100+ impressions, position 4-15, CTR < 3%
+   - **Content gaps**: high-impression queries w/ no dedicated page
+   - **Trending**: new queries not in previous logs
 
-## Stage 2: Content Expansion (based on rotation)
+## Stage 2: Content Expansion (per rotation)
 
-### If "New app entry" day:
+### New app entry day:
 1. Pick highest-impact content gap from Stage 1
-2. Use WebSearch to research the Indian app:
-   - Official website for company info, pricing, features
-   - App store reviews for rating, pros, cons
-   - Reddit/Twitter/forums for user complaints
-3. Create JSON file in `data/categories/[category]/[slug].json` following the exact format:
+2. WebSearch — official site (company, pricing, features), app store reviews (rating, pros, cons), Reddit/Twitter/forums (complaints)
+3. Create `data/categories/[category]/[slug].json`:
    ```json
    {
      "name": "App Name",
@@ -62,25 +56,24 @@ You are the automated daily operator for SwadeshiApps.com. Run this pipeline ste
      "lastVerified": "YYYY-MM-DD"
    }
    ```
-4. Run `pnpm validate` to verify
+4. `pnpm validate` — must pass
 
-### If "New alternatives page" day:
-- Alternatives pages are auto-generated from the `alternatives` field in app JSONs
-- To create a new alternatives page, ensure at least 1 app lists the international tool in its `alternatives` array
-- If needed, add the international tool to existing apps' `alternatives` arrays
+### New alternatives page day:
+- Auto-generated from `alternatives` field in app JSONs
+- Ensure ≥1 app lists international tool in `alternatives` array
 
-### If "Blog post" day (Wed = research, Thu = write):
-- **Wednesday**: Research the target topic using WebSearch, gather data, save outline to the daily log
-- **Thursday**: Write the full blog post as markdown in `content/blog/[slug].md`
-- Follow the content philosophy: honest pros/cons, user complaints, "watch out for" sections
-- Interlink to existing app pages and alternatives pages
-- Keep the tone practical and unbiased
+### Blog post day (Wed = research, Thu = write):
+- **Wed**: WebSearch target topic, gather data, save outline to daily log
+- **Thu**: Write full post as `content/blog/[slug].md`
+- Honest pros/cons, user complaints, "watch out for" sections
+- Interlink existing app + alternatives pages
+- Practical, unbiased tone
 
 ## Stage 3: Affiliate Research (Tue/Fri)
 
-1. Pick 3-5 listed apps that don't have affiliate entries yet
-2. Use WebSearch to search for "[app name] affiliate program" or "[app name] partner program"
-3. If found, add entry to `data/affiliates.json`:
+1. Pick 3-5 apps without affiliate entries
+2. WebSearch "[app name] affiliate program" / "partner program"
+3. If found, add to `data/affiliates.json`:
    ```json
    {
      "app-slug": {
@@ -92,22 +85,23 @@ You are the automated daily operator for SwadeshiApps.com. Run this pipeline ste
      }
    }
    ```
-4. If no affiliate program exists, note it in the daily log to avoid re-checking
+4. No program found → note in daily log to avoid re-checking
 
 ## Stage 4: SEO Optimization
 
-For quick-win pages identified in Stage 1:
-1. Read the current JSON file for the app
-2. Improve the `description` field to better match high-impression queries
-3. Ensure `alternatives` array includes all relevant international tools
-4. Update `lastVerified` date
+For quick-win pages from Stage 1:
+1. Read app JSON
+2. Improve `description` to match high-impression queries
+3. Ensure `alternatives` array covers all relevant international tools
+4. Update `lastVerified`
 
 ## Stage 5: Ship It
 
-1. Run `pnpm validate` — must pass with 0 errors
-2. Run `pnpm build` — must succeed
-3. Commit all changes with a descriptive message summarizing today's work
+1. `pnpm validate` — 0 errors
+2. `pnpm build` — must succeed
+3. Commit w/ descriptive message
 4. Push to main
+5. If validate/build fails → fix before proceeding
 
 ## Stage 6: Write Daily Log
 
@@ -137,10 +131,6 @@ Create `logs/daily-operator/YYYY-MM-DD.md`:
 ## Guard Rails
 
 - NEVER delete existing content — only add or improve
-- NEVER modify files outside the project directory
-- Max 2 new app entries per day
-- Max 1 blog post per week
-- Always run `pnpm validate` before committing
-- Always run `pnpm build` before pushing
-- If validation or build fails, fix the issue before proceeding
-- If unsure about a content decision, note it in the log and skip
+- NEVER modify files outside project directory
+- Max 2 new app entries/day, max 1 blog post/week
+- Unsure about content decision → note in log, skip

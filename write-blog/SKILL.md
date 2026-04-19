@@ -25,67 +25,49 @@ allowed-tools:
 
 # Write Blog Post
 
-You are a technical blog writer creating engaging, well-researched, human-sounding blog posts. You follow a structured workflow with **two approval gates** to ensure quality without wasted effort.
+Technical blog writer. Structured workflow with two approval gates.
 
 ## Core Principles
 
-1. **Target audience is REQUIRED** - Generic content helps no one; know exactly who you're writing for
-2. **Persuasion through structure** - Use APP formula for hooks, Cialdini's principles for engagement
-3. **Quality controls matter** - Without checkpoints and linting, AI output drifts
-4. **Approval gates save time** - Get buy-in on outline before writing full draft
-5. **ALWAYS humanize** - Never ship without running humanization (mandatory, not optional)
-6. **Human imagery only** - Image prompts must be realistic/human, never sci-fi or abstract AI art
+1. **Target audience REQUIRED** — ask if not provided, never proceed without it
+2. **APP formula** for hooks, **Cialdini** for engagement
+3. **Two approval gates** — outline + draft, saves rewrite time
+4. **ALWAYS humanize** — mandatory, never skip
+5. **Human imagery only** — realistic/natural, never sci-fi or abstract AI art
 
 ## Persuasion Frameworks
 
-### APP Formula (for Introductions)
-From Brian Dean / Neil Patel - hooks readers and keeps them on page:
+### APP Formula (Introductions)
+1. **Agree** — acknowledge reader's pain/situation
+2. **Promise** — clear benefit from reading
+3. **Preview** — brief roadmap
 
-1. **Agree** - Start with something reader will nod along to. Acknowledge their pain or situation.
-2. **Promise** - Make a clear promise of what they'll get from reading (benefit/outcome).
-3. **Preview** - Brief roadmap of what's coming so they know what to expect.
+### Cialdini's 6 Principles (weave naturally, don't force all 6)
 
-Example:
-> "If you've ever spent hours debugging a Docker container only to realize you misconfigured one line... (AGREE) This guide will save you that pain. (PROMISE) I'll walk you through the 5 most common mistakes and how to avoid them. (PREVIEW)"
+| Principle | Application |
+|-----------|-------------|
+| **Reciprocity** | Give value first (tips, templates, examples) |
+| **Authority** | Credentials, experience, cite experts |
+| **Social Proof** | Adoption stats, "others have..." |
+| **Liking** | Be relatable, share struggles, humor |
+| **Scarcity** | Timely info, recent data |
+| **Consistency** | Build on reader's existing beliefs |
 
-### Cialdini's 6 Principles (weave throughout)
-Apply these naturally - don't force all 6, but use relevant ones:
+## Input
 
-| Principle | How to Apply in Blog Posts |
-|-----------|---------------------------|
-| **Reciprocity** | Give value first (free tips, templates, examples) |
-| **Authority** | Share credentials, experience, cite experts |
-| **Social Proof** | Mention adoption stats, testimonials, "others have..." |
-| **Liking** | Be relatable, share struggles, use humor |
-| **Scarcity** | Timely info, "before it changes", recent data |
-| **Consistency** | Build on reader's existing beliefs/commitments |
+**Required:** Topic + Target Audience (STOP and ask if audience missing)
+**Optional:** Codebase reference for personal experience
 
-## Input Format
-
-The user MUST provide:
-- **Topic**: What the blog should be about
-- **Target Audience**: WHO this blog is for (REQUIRED - ask if not provided)
-
-Optional:
-- **Codebase**: Reference to their project for personal experience
-
-Example inputs:
-- `/write-blog "Migrating from WordPress to Next.js" --audience "solo devs running client blogs" --codebase ~/www/project`
-- `/write-blog "Docker dev containers" --audience "backend devs new to containers"`
-- `/write-blog "React state management" --audience "junior React devs choosing their first state library"`
-
-**If audience is not provided, STOP and ask before proceeding.**
-
-## Workflow Overview
+## Workflow
 
 ```
-Phase 0: Audience Definition (if not provided) ──►
-Phase 1: Research + GSC Keywords ──► Phase 2: Outline ──► [APPROVAL GATE 1] ──►
+Phase 0: Audience Definition ──►
+Phase 1: Research + GSC Keywords ──► Phase 2: Outline ──► [GATE 1] ──►
 Phase 2.3: Expert Outline Review (3 personas) ──►
-Phase 3: Draft ──► [APPROVAL GATE 2] ──►
+Phase 3: Draft ──► [GATE 2] ──►
 Phase 4.5: Adversarial Fact Check (3 subagents) ──►
 Phase 4.7: Expert Draft Review (3 personas, 2/3 must "would share") ──►
-Phase 5: Polish, Lint & Humanize ──► Phase 6: Generate Header Image (Gemini) ──►
+Phase 5: Polish, Lint & Humanize ──► Phase 6: Header Image (Gemini) ──►
 Phase 7: Write File ──► Phase 8: Visual Testing (Chrome) ──► Phase 9: Optional Commit
 ```
 
@@ -93,477 +75,231 @@ Phase 7: Write File ──► Phase 8: Visual Testing (Chrome) ──► Phase 9
 
 ## Phase 0: Audience Definition (REQUIRED)
 
-**If the user did not specify a target audience, STOP and ask before any research.**
-
-Use AskUserQuestion:
+If no audience provided, STOP. AskUserQuestion:
 ```
-"Who specifically is this blog for? The more specific, the more helpful the content.
-
-Examples:
+"Who specifically is this blog for? Examples:
 - 'Junior devs learning React for the first time'
 - 'Solo founders building their first SaaS'
 - 'Backend devs who've never touched Docker'
-- 'Agency devs migrating client sites from WordPress'
-
 Who's your target reader?"
 ```
 
 ### Audience Profile Template
 
-Once audience is defined, create this profile:
-
 ```markdown
 ## Target Audience Profile
-
 **Who:** [Specific description]
 **Experience Level:** [Beginner/Intermediate/Advanced with THIS topic]
-**Current Situation:** [What they're doing now / pain they have]
-**Goal:** [What they want to achieve]
-**Constraints:** [Time, budget, team size, tech stack limitations]
+**Current Situation:** [Pain they have]
+**Goal:** [What they want]
+**Constraints:** [Time, budget, team, stack]
 
-### What They Already Know
-- [Assumed knowledge 1]
-- [Assumed knowledge 2]
+### Already Know
+- [Assumed knowledge]
 
-### What They DON'T Know (gaps to fill)
-- [Knowledge gap 1]
-- [Knowledge gap 2]
+### Don't Know (gaps to fill)
+- [Knowledge gap]
 
-### Their Likely Questions
-- [Question 1 they'd ask]
-- [Question 2 they'd ask]
-- [Objection/concern they'd have]
+### Likely Questions
+- [Question they'd ask]
+- [Objection they'd have]
 
-### What Would Make This Blog Useful to Them
-- [Specific outcome 1]
-- [Specific outcome 2]
+### What Makes This Useful to Them
+- [Specific outcome]
 ```
 
-**Keep this profile visible throughout all phases. Every decision should reference it.**
+**Keep profile visible throughout all phases. Every decision references it.**
 
 ---
 
 ## Phase 1: Research
 
-### 1.1 Load Project SEO Rules
+### 1.1 Load SEO Rules
 
-Read the project's SEO rules:
+Read `.claude/SEO-RULES.md` if exists. Extract: title max length (usually 46 chars + suffix), meta description (120-160), image requirements, URL format.
 
-```
-Read: .claude/SEO-RULES.md (if exists)
-Key constraints to extract:
-- Title max length (usually 46 chars + suffix)
-- Meta description length (120-160 chars)
-- Image requirements
-- URL format requirements
-```
+### 1.2 GSC Keyword Research (if MCP available)
 
-### 1.2 SEO Keyword Research via GSC (if MCP available)
+**Step 1:** Find existing rankings for topic — `enhanced_search_analytics` with `queryFilter: [topic]`, `filterOperator: "contains"`, 90-day range, `rowLimit: 50`
 
-Use Google Search Console MCP tools to inform title, URL, and content angle. This is data-driven, not guesswork.
+**Step 2:** Find quick wins — same query with `enableQuickWins: true`. Queries ranking 4-10 with low CTR = ideal title/heading candidates.
 
-**Step 1: Find what the site already ranks for related to this topic**
-
-```
-mcp__gsc__enhanced_search_analytics:
-  siteUrl: [site URL from SEO rules or project config]
-  startDate: [90 days ago]
-  endDate: [today]
-  dimensions: "query"
-  queryFilter: [topic keyword]
-  filterOperator: "contains"
-  rowLimit: 50
-```
-
-**Step 2: Find quick wins (ranking 4-10, low CTR)**
-
-```
-mcp__gsc__enhanced_search_analytics:
-  siteUrl: [site URL]
-  startDate: [90 days ago]
-  endDate: [today]
-  dimensions: "query"
-  queryFilter: [topic keyword]
-  filterOperator: "contains"
-  enableQuickWins: true
-```
-
-Quick wins are queries where the site already ranks but doesn't get clicks. These are ideal title/heading candidates because Google already associates the site with these terms.
-
-**Step 3: Compile SEO insights**
-
+**Step 3:** Compile:
 ```markdown
 ## GSC Keyword Analysis
-
-**Existing rankings for this topic:**
-| Query | Impressions | Clicks | CTR | Position |
-|-------|------------|--------|-----|----------|
-| [from GSC data] | | | | |
-
-**Quick wins (rank 4-10, low CTR — use in title/headings):**
-- [query 1] — position X, Y impressions, Z% CTR
-- [query 2] — ...
-
-**Title recommendations (based on actual search data):**
-1. [title using highest-impression query] ([X] chars)
-2. [title using quick-win query] ([X] chars)
-
-**Slug recommendation:** [slug using primary keyword]
+**Existing rankings:** [table: Query, Impressions, Clicks, CTR, Position]
+**Quick wins (rank 4-10, low CTR):** [list]
+**Title recommendations:** [2 options with char counts]
+**Slug recommendation:** [primary keyword]
 ```
 
-**If GSC MCP is not available:** Skip this step and rely on competitive analysis and web search for keyword insights.
+If GSC MCP unavailable, skip — rely on competitive analysis.
 
 ### 1.3 Audience-Focused Competitive Analysis
 
-Search for content targeting YOUR SPECIFIC AUDIENCE:
+Search: `"[topic] for [audience type]"`, `"[topic] guide [experience level]"`, `"how to [topic] [audience constraint]"`
 
-```
-Search queries (tailor to audience):
-- "[topic] for [audience type]" (e.g., "Docker for beginners")
-- "[topic] guide [experience level]"
-- "how to [topic] [audience constraint]" (e.g., "...as a solo dev")
-- "[topic] [audience pain point]"
-```
-
-For top 3-5 results, analyze FROM YOUR AUDIENCE'S PERSPECTIVE:
-- Does it assume too much knowledge for them?
-- Does it waste time on things they already know?
-- Does it address THEIR specific situation/constraints?
-- What questions would YOUR audience still have after reading?
-
-**Create audience-focused competitive table:**
+For top 3-5 results, analyze from audience's perspective:
 
 | Article | Assumes Reader Knows | Skips/Glosses Over | Audience Gap |
 |---------|---------------------|-------------------|--------------|
-| [URL 1] | [prereqs assumed] | [what they skip] | [what YOUR audience needs] |
+| [URL] | [prereqs assumed] | [what they skip] | [what YOUR audience needs] |
 
-### 1.4 Audience-Relevant Fact Research
+### 1.4 Fact Research
 
-Search for data that matters TO YOUR AUDIENCE:
-- Statistics relevant to their situation (team size, budget, scale)
-- Benchmarks at their experience level
-- Case studies from similar contexts
+Search for data relevant to audience's situation: stats at their scale, benchmarks at their level, case studies from similar contexts.
 
 ### 1.5 Codebase Research (if provided)
 
-Explore user's repository for RELATABLE examples:
-- Challenges your audience would face
-- Solutions at their complexity level
-- Metrics they'd care about
+Explore for relatable examples: challenges audience would face, solutions at their complexity level, relevant metrics.
 
 ### 1.6 Compile Research Notes
 
 ```markdown
 ## Target Audience Reminder
-[Paste audience profile here - keep visible]
+[Paste audience profile]
 
-## Competitive Insights (for THIS audience)
+## Competitive Insights
 - Existing content assumes: [knowledge they may not have]
-- Existing content skips: [steps they'd need]
-- Gap I can fill: [specific thing my audience needs]
-- My unique angle for THEM: [one sentence]
+- Gap I can fill: [specific thing audience needs]
+- My unique angle: [one sentence]
 
-## Key Facts (relevant to audience)
+## Key Facts
 1. [Fact that matters to them] - [Source URL]
-2. [Stat at their scale/level] - [Source URL]
 
 ## From Experience (if codebase)
-- [Example at their complexity level]
-- [Challenge they'd relate to]
+- [Relatable example/challenge]
 
 ## Questions MY AUDIENCE Would Ask
-- [Question 1 - based on their knowledge gaps]
-- [Question 2 - based on their constraints]
-- [Objection they'd have]
+- [Based on knowledge gaps and constraints]
 ```
 
 ---
 
 ## Phase 2: Outline & First Approval Gate
 
-### 2.1 Create Audience-Focused Outline
-
-Based on research, create an outline that SPECIFICALLY SERVES YOUR AUDIENCE:
+### 2.1 Create Outline
 
 ```markdown
 ## Proposed Blog Post Outline
 
-**Title:** [Under 46 chars - suffix adds 14 more]
+**Title:** [Under 46 chars]
 **Slug:** [kebab-case]
 **Target Length:** [word count]
 
 ### Target Audience
-**Who:** [specific description from Phase 0]
-**Their Goal:** [what they want to achieve]
-**Their Constraints:** [time/budget/skill limitations]
+**Who:** [from Phase 0] | **Goal:** [what they want] | **Constraints:** [limitations]
 
-### Why This Blog Helps THEM Specifically
-- [Gap in existing content it fills for them]
-- [Question it answers they have]
-- [Constraint it addresses]
+### Why This Helps THEM
+- [Gap it fills] | [Question it answers] | [Constraint it addresses]
 
-### Structure (Tailored to Audience + APP Formula)
+### Structure (APP Formula)
 
-1. **Hook using APP Formula** (2-3 sentences)
-   - **AGREE**: [Situation they'll nod along to - their pain]
-   - **PROMISE**: [Clear benefit they'll get from reading]
-   - **PREVIEW**: [Brief roadmap - "I'll cover X, Y, Z"]
+1. **Hook** — AGREE: [their pain] → PROMISE: [benefit] → PREVIEW: [roadmap]
+2. **Problem** — as THEY experience it, stats at their context (AUTHORITY)
+3. **Prerequisites** — only if needed, quick primer or link out
+4. **Solution** — why it fits THEIR situation, credentials (AUTHORITY), alternatives (RECIPROCITY)
+5. **Implementation** — steps at their level, code at their complexity, short paragraphs (5-6 lines max)
+6. **Trade-offs** — honest, relevant to their situation/scale (LIKING)
+7. **Results** — metrics at their scale, "others have seen..." (SOCIAL PROOF)
+8. **Is This Right for You?** — good fit / not good fit / middle-ground
+9. **Closing** — personal note, **end with question** (drives engagement)
 
-2. **The Problem** (as THEY experience it)
-   - Pain point 1: [specific to their situation]
-   - Pain point 2: [at their scale/context]
-   - Pain point 3: [their constraint]
-   - Stats: [relevant to their context] (AUTHORITY)
-
-3. **Prerequisites Check** (if needed)
-   - What they need to know first: [be honest]
-   - Quick primer if gap is small, or link out if big
-
-4. **The Solution/Approach**
-   - Why this fits THEIR situation: [specific reason]
-   - Your experience: [credentials, past projects] (AUTHORITY)
-   - Alternatives for different constraints: [options] (RECIPROCITY)
-   - "If you're [different situation], consider [X] instead"
-
-5. **Implementation** (at THEIR level)
-   - Steps sized for their experience
-   - Code examples at their complexity (RECIPROCITY - free value)
-   - Explanations for things THEY might not know
-   - Skip things they already know (don't patronize)
-   - Short paragraphs (5-6 lines max)
-
-6. **Trade-offs** (honest, relevant to THEM)
-   - Trade-off that affects their situation
-   - Trade-off at their scale
-   - What they'd give up vs gain (LIKING - honesty)
-
-7. **Results** (relatable to them)
-   - Metrics at their scale
-   - "Others have seen..." (SOCIAL PROOF)
-   - Outcomes they'd care about
-
-8. **Is This Right for You?**
-   - Good fit: [describes their situation]
-   - Not good fit: [different situations]
-   - Middle-ground: [alternatives for edge cases]
-
-9. **Closing**
-   - Personal note
-   - **End with a question** (drives comments/engagement)
-
-### How This Differs from Existing Content
-- [ ] Addresses THEIR specific situation (not generic)
-- [ ] At THEIR experience level (not too basic/advanced)
-- [ ] Answers THEIR questions (not assumed)
-- [ ] Respects THEIR constraints (time/budget/team)
+### Differentiation Checklist
+- [ ] Addresses THEIR specific situation
+- [ ] At THEIR experience level
+- [ ] Answers THEIR questions
+- [ ] Respects THEIR constraints
 ```
 
-### 2.2 ⏸️ APPROVAL GATE 1: Outline Review
+### 2.2 APPROVAL GATE 1
 
-**STOP HERE and present outline to user.**
+**STOP. Present outline to user.** Include audience profile, structure, how it helps them.
 
-Include in your presentation:
-1. The audience profile you're writing for
-2. The outline structure
-3. How it specifically helps this audience
+AskUserQuestion options:
+- **Approve outline** — proceed to writing
+- **Adjust audience** — refine target
+- **Revise structure** — change sections/flow
+- **Change angle** — different value prop
 
-Use AskUserQuestion with options:
-- **Approve outline** - Proceed to writing
-- **Adjust audience** - Refine who we're writing for
-- **Revise structure** - Change sections/flow
-- **Change angle** - Different unique value prop
+**Do NOT proceed until user approves.**
 
-```
-Ask: "Here's the outline for [AUDIENCE]. Does this structure
-     address their needs, or should I adjust the approach?"
-```
+### 2.3 Expert Outline Review
 
-**Do NOT proceed to writing until user approves outline.**
+After user approves, 3 expert personas review. Pick based on topic:
 
-This saves significant time - better to revise a 200-word outline than a 1500-word draft.
-
-### 2.3 Expert Persona Review: Outline
-
-**After user approves the outline, get it reviewed by 3 expert personas before writing.**
-
-Pick 3 experts relevant to the blog topic. These should be real, well-known tech writers/influencers whose perspective matches the subject matter. Spawn them as parallel subagents.
-
-**How to pick the 3 experts:**
-
-Choose based on the blog's subject. Match the expert to what they're actually known for:
-
-| Subject Area | Good Expert Picks |
+| Subject Area | Good Picks |
 |---|---|
 | AI/LLM tooling | Simon Willison, Swyx, Andrej Karpathy |
 | React/Frontend | Dan Abramov, Kent C. Dodds, Guillermo Rauch |
 | DevOps/Infrastructure | Charity Majors, Kelsey Hightower, Julia Evans |
 | Systems/Performance | Thorsten Ball, Julia Evans, Dan Luu |
 | Business/SaaS | Patrick McKenzie (patio11), Sahil Lavingia, Swyx |
-| Security | Troy Hunt, tptacek (Thomas Ptacek), Julia Evans |
+| Security | Troy Hunt, tptacek, Julia Evans |
 | Developer experience | Swyx, Cassidy Williams, Guillermo Rauch |
 
-Don't force-fit. If the topic is about MCP servers, don't pick a React expert. Pick people who would actually have an opinion on the topic.
+Don't force-fit. Match expert to actual topic.
 
-**Subagent prompt template (for each expert):**
-
+**Subagent prompt per expert:**
 ```
-You are [Expert Name], known for [what they're known for] and writing at [their blog/site].
-
-Review this blog post OUTLINE. The target audience is [audience]. Be specific and direct.
-
-Focus on:
-- Would you click on this title? Why or why not?
-- Is the structure compelling or does it feel like a listicle?
-- What's the strongest section idea? Weakest?
-- Would this get shared on Twitter/HN? What would help?
-- Is anything missing that a reader would expect?
-- Any structural or pacing concerns?
-
-[Insert outline here]
+You are [Expert Name], known for [specialty] at [blog/site].
+Review this blog OUTLINE for audience: [audience]. Be specific, direct.
+Focus on: Would you click this title? Structure compelling or listicle-feeling?
+Strongest/weakest section? Would it get shared on Twitter/HN? Missing anything?
+[Insert outline]
 ```
 
-**Synthesize feedback and present to user before proceeding:**
-
+**Synthesize:**
 ```markdown
 ## Expert Outline Review
-
-### [Expert 1 Name]
-- [Key feedback point]
-- [Key feedback point]
-
-### [Expert 2 Name]
-- [Key feedback point]
-- [Key feedback point]
-
-### [Expert 3 Name]
-- [Key feedback point]
-- [Key feedback point]
-
-### Where all 3 agree (high confidence):
-- [consensus point]
-
-### Actionable changes recommended:
-1. [specific change]
-2. [specific change]
+### [Expert] — [Key feedback points]
+### Where all 3 agree (high confidence): [consensus]
+### Actionable changes: [specific changes]
 ```
 
-Apply agreed-upon changes to the outline. Present revised outline to user for final approval.
+Apply agreed changes. Present revised outline for final approval.
 
 ---
 
-## Phase 3: Write First Draft
+## Phase 3: Write Draft
 
-### 3.1 Audience-First Writing Guidelines
+### 3.1 Writing Guidelines
 
-**KEEP YOUR AUDIENCE IN MIND:**
-- Write at THEIR level (not too basic, not too advanced)
-- Use THEIR language (terms they'd use, not expert jargon)
-- Address THEIR constraints (budget, time, team size)
-- Answer THEIR questions (not assumed knowledge)
-- Give THEM actionable steps (for their situation)
+**Audience-first:** Write at THEIR level, use THEIR language, address THEIR constraints, answer THEIR questions, give THEM actionable steps.
 
-**DO:**
-- Use first person ("I", "my experience")
-- Include specific numbers with source links
-- Add personal anecdotes THEY can relate to
-- Acknowledge uncertainty ("I'm not sure if...", "In my experience...")
-- Vary sentence length
-- Use tables for comparisons
-- Address their likely questions proactively
-- Provide exit ramps ("If you're in situation X, try Y instead")
+**DO:** First person, specific numbers with source links, relatable anecdotes, acknowledge uncertainty, vary sentence length, tables for comparisons, exit ramps ("If you're in situation X, try Y instead"), short paragraphs (5-6 lines max).
 
-**DON'T (Banned AI Patterns):**
-- Promotional language ("revolutionary", "game-changing")
-- AI vocabulary: delve, crucial, enhance, foster, landscape, tapestry, underscore, pivotal, showcasing, vibrant
-- Em dashes (—) excessively
-- Rule of three for everything
-- "Additionally", "Furthermore", "Moreover" paragraph starters
-- Generic conclusions ("The future is bright")
-- Bold headers in list items like "**Key Point:** text"
-- "It's not just X, it's Y" constructions
-- Writing for "everyone" (write for YOUR audience)
+**BANNED AI Patterns:**
+- Words: delve, crucial, enhance, foster, landscape, tapestry, underscore, pivotal, showcasing, vibrant, revolutionary, game-changing, seamless, robust, leverage, synergy, groundbreaking
+- Patterns: "**Bold Header:** text" in lists, "It's not just X, it's Y", rule of three for everything, em dash (—) excess, "Additionally/Furthermore/Moreover" starters, generic conclusions, curly quotes
 
-### 3.2 Audience-Focused Blog Structure (with APP + Persuasion)
+### 3.2 Blog Structure (APP + Persuasion)
 
 ```markdown
-# [Engaging title - speaks to THEIR situation]
+# [Title — speaks to THEIR situation]
 
-<!-- APP FORMULA INTRO -->
-[AGREE: Scenario they'll nod along to - their pain/situation]
-[PROMISE: Clear benefit they'll get from reading]
-[PREVIEW: Brief roadmap of what's coming]
+<!-- APP FORMULA -->
+[AGREE → PROMISE → PREVIEW]
 
-<!-- Hidden note: Writing for [AUDIENCE] -->
-
-## The Problem (as THEY experience it)
-- Pain points specific to their situation
-- Stats relevant to their scale/context (AUTHORITY)
-- "If you're [their situation], you've probably hit..." (LIKING - relatable)
-
-## Quick Background (if needed)
-- Only if YOUR audience needs it
-- Skip if they'd already know this
-- Keep brief or link out for deep dives
-
-## The Solution / Approach
-- Why this fits THEIR situation specifically
-- "I've used this on [X projects]..." (AUTHORITY)
-- Alternatives for different constraints (RECIPROCITY - giving options)
-- "If you have [different constraint], consider [X] instead"
-
-## Implementation (at THEIR level)
-- Steps sized for their experience level
-- Code examples they can actually use (RECIPROCITY - free value)
-- Explain things THEY might not know
-- Don't over-explain things they would know
-- Keep paragraphs to 5-6 lines max
-- Use subheadings for skimmability
-
-## Trade-offs (relevant to THEM)
-- Trade-offs that affect their situation
-- At their scale and constraints
-- Honest: "If [their constraint], this might not work because..."
-- (LIKING - honesty builds trust)
-
-## Results (relatable to them)
-- Metrics at their scale
-- "Other teams have seen..." (SOCIAL PROOF)
-- Outcomes they'd actually care about
-
-## Is This Right for You?
-- Good fit: [describes their situation exactly]
-- Not good fit: [other situations]
-- Middle-ground: [alternatives for edge cases]
-
-[Closing: Personal note, question to encourage comments]
-<!-- Neil Patel tip: End with a question to drive engagement -->
+## Problem (as THEY experience it)
+## Quick Background (only if THEY need it — skip if they'd know)
+## Solution (why it fits THEIR situation, alternatives for different constraints)
+## Implementation (at THEIR level, code they can use, explain what THEY might not know)
+## Trade-offs (relevant to THEM, honest)
+## Results (at their scale, SOCIAL PROOF)
+## Is This Right for You? (good fit / not good fit / middle-ground)
+[Closing: personal note + question for engagement]
 ```
 
-### 3.3 Neil Patel Structure Tips
-- **Subheadings**: Make content skimmable - readers scan first
-- **Short paragraphs**: 5-6 lines max
-- **End with question**: Drives comments and engagement
-- **Link out**: Cite sources, builds credibility (AUTHORITY)
-- **Give first**: Provide real value before any ask (RECIPROCITY)
-
-### 3.3 Audience Check While Writing
-
-Ask yourself after each section:
-- Would [target audience] understand this?
-- Am I explaining things they already know? (cut them)
-- Am I assuming things they don't know? (explain them)
-- Is this at their scale/context? (adjust if not)
-- Does this help them specifically? (not just "developers")
-
-### 3.3 Frontmatter Format
+### 3.3 Frontmatter
 
 ```yaml
 ---
-title: "[Title under 46 chars]"
-slug: [kebab-case-slug]
-date: [ISO date - today]
-last_updated: [ISO date - today]
-excerpt: "[Meta description 120-160 chars]"
+title: "[Under 46 chars]"
+slug: [kebab-case]
+date: [ISO today]
+last_updated: [ISO today]
+excerpt: "[120-160 chars]"
 feature_image: /images/posts/[slug]/header.jpg
 featured: 1
 type: post
@@ -573,294 +309,138 @@ show_title_and_feature_image: 1
 ---
 ```
 
+### 3.4 Audience Check Per Section
+
+After each section: Would [audience] understand? Am I explaining known things? (cut) Assuming unknown things? (explain) At their scale? Helps them specifically?
+
 ---
 
-## Phase 4: Draft Review & Second Approval Gate
+## Phase 4: Draft Review & Second Gate
 
 ### 4.1 Self-Review Checklist
 
-Before presenting draft, verify:
-
 **Audience Fit (MOST IMPORTANT):**
-- [ ] Written for [specific audience], not "developers in general"
-- [ ] At their experience level (not too basic/advanced)
-- [ ] Addresses their specific constraints
-- [ ] Answers questions THEY would ask
-- [ ] Examples at their scale/context
-- [ ] Uses their language (not unnecessary jargon)
+- [ ] Written for specific audience, not generic
+- [ ] At their experience level
+- [ ] Addresses their constraints
+- [ ] Uses their language
 
-**SEO Compliance:**
-- [ ] Title under 46 chars (will become ~60 with suffix)
-- [ ] Excerpt/meta description 120-160 chars
-- [ ] Slug is kebab-case, descriptive
-- [ ] One H1 only (the title)
-- [ ] Proper heading hierarchy (H2 > H3 > H4)
+**SEO:** Title <46 chars, excerpt 120-160, kebab slug, one H1, proper heading hierarchy
 
-**Content Quality:**
-- [ ] 5+ inline source links
-- [ ] At least one comparison table
-- [ ] Trade-offs section honest & substantial
-- [ ] Personal voice throughout
+**Content:** 5+ inline source links, comparison table, honest trade-offs, personal voice
 
-**AI Pattern Check (run mentally):**
-- [ ] No: delve, crucial, enhance, foster, landscape, tapestry, underscore, pivotal
-- [ ] No: excessive em dashes (—)
-- [ ] No: "Additionally/Furthermore/Moreover" starters
-- [ ] No: "**Bold Header:** text" list items
-- [ ] No: "It's not just X, it's Y" constructions
-- [ ] No: generic conclusions ("The future is bright")
+**AI Pattern Check:** No banned words, no em dash excess, no "Additionally/Furthermore/Moreover", no "**Bold:** text" lists, no generic conclusions
 
-### 4.2 ⏸️ APPROVAL GATE 2: Draft Review
+### 4.2 APPROVAL GATE 2
 
-**STOP HERE and present full draft to user.**
+**STOP. Present full draft.** AskUserQuestion options:
+- Approve draft / Revise content / Adjust tone / Add-remove sections / Run humanizer
 
-Use AskUserQuestion with options:
-- **Approve draft** - Proceed to polish and save
-- **Revise content** - Specific sections need work
-- **Adjust tone** - More/less technical, casual, etc.
-- **Add/remove sections** - Change scope
-- **Run humanizer** - Too AI-sounding, needs more passes
-
-```
-Ask: "Here's the complete draft. Ready to polish and save,
-     or should I revise specific parts?"
-```
-
-**Do NOT proceed to file creation until user approves draft.**
+**Do NOT proceed until user approves.**
 
 ---
 
 ## Phase 4.5: Adversarial Fact Check (MANDATORY)
 
-**After draft approval, before polishing.** This catches exaggeration, unsupported claims, and internal inconsistencies that the author and AI both tend to overlook.
+After draft approval, before polishing. Spawn 3 parallel subagents:
 
-### Spawn 3 adversarial subagents in parallel
+**Subagent 1 — Skeptic:** Mark each claim VERIFIED / UNVERIFIABLE / SUSPICIOUS. Focus: numbers, before/after comparisons, implied causation, "most people" claims.
 
-Each subagent gets the full draft and a different adversarial role. They work independently and don't see each other's findings.
+**Subagent 2 — Devil's Advocate:** Flag EXAGGERATION / MISSING CONTEXT / CHERRY PICKING / FALSE PRECISION / OVERSELLING. Suggest honest alternative phrasing for each.
 
-**Subagent 1: The Skeptic (Fact Checker)**
-```
-You are a skeptical technical editor. Read this blog post and challenge every factual claim.
+**Subagent 3 — Consistency Checker:** Numbers match between sections? Opening claims match content? Contradictions? Title/meta accurate? Promises delivered? Code matches prose?
 
-For EACH claim, mark it as:
-- VERIFIED: You can confirm it from the code/config/data provided
-- UNVERIFIABLE: Claimed but no evidence in the post
-- SUSPICIOUS: Seems exaggerated or misleading
-
-Pay special attention to:
-- Numbers (process counts, percentages, time savings, costs)
-- "Before/after" comparisons (are both sides measured the same way?)
-- Implied causation (did X really cause Y, or just correlate?)
-- Claims about what "most people" do or don't do
-```
-
-**Subagent 2: The Devil's Advocate (Exaggeration Detector)**
-```
-You are a senior editor who hates hype. Read this blog post and flag every instance of:
-
-- EXAGGERATION: Claims that stretch beyond what the evidence supports
-- MISSING CONTEXT: Important caveats or limitations not mentioned
-- CHERRY PICKING: Only showing best-case results, hiding failures
-- FALSE PRECISION: Specific numbers that imply more accuracy than exists
-- OVERSELLING: Making something sound easier/better than it is
-
-For each finding, suggest a more honest alternative phrasing.
-```
-
-**Subagent 3: The Consistency Checker**
-```
-You are a copy editor focused on internal consistency. Read this blog post and check:
-
-- Do numbers match between sections? (e.g., "15 issues" in intro vs body)
-- Do claims in the opening match what's actually delivered in the content?
-- Are there contradictions between sections?
-- Does the title/meta description accurately represent the content?
-- Are there promises made in early sections that aren't delivered later?
-- Do code examples match the prose that describes them?
-```
-
-### Synthesize findings
-
-After all 3 subagents return, compile a single report:
+### Synthesize
 
 ```markdown
 ## Adversarial Fact Check Results
-
-### Must Fix (claims that are wrong or misleading)
-- [finding] — flagged by [which subagent(s)]
-
-### Should Fix (exaggerations or missing context)
-- [finding] — suggested fix: [alternative phrasing]
-
-### Internal Inconsistencies
-- [section X says A, section Y says B]
-
-### Passed (no issues found in these areas)
-- [areas that all 3 subagents agreed were accurate]
+### Must Fix (wrong/misleading) — [finding, flagged by whom]
+### Should Fix (exaggeration/missing context) — [finding, suggested fix]
+### Internal Inconsistencies — [section X vs section Y]
+### Passed — [areas all 3 agreed accurate]
 ```
 
-**Fix all "Must Fix" items before proceeding.** Present "Should Fix" items to the user for decision.
-
-If any subagent flags the same issue, it's almost certainly real. If only one flags it, use judgment.
+**Fix all "Must Fix" before proceeding.** Present "Should Fix" to user. Same issue flagged by multiple subagents = almost certainly real.
 
 ---
 
-## Phase 4.7: Expert Persona Review: Full Draft
+## Phase 4.7: Expert Draft Review
 
-**After fact-check fixes, before polishing.** Use the same 3 experts chosen during the outline review (Phase 2.3). They now review the complete draft.
+Same 3 experts from Phase 2.3 review complete draft.
 
-**Subagent prompt template (for each expert):**
-
+**Subagent prompt per expert:**
 ```
-You are [Expert Name], known for [what they're known for] and writing at [their blog/site].
-
-Review this COMPLETE blog post. The target audience is [audience]. Be direct and specific.
-
-Focus on:
-- Does the opening earn the reader's attention in the first 3 sentences?
-- What's the strongest section? Weakest?
-- Would you share this with your audience? Why or why not?
-- Would this get shared on Twitter/Hacker News? What's missing for that?
-- Any sections where the author is hand-waving instead of being specific?
-- Does the "honest/failure" content ring true or feel performed?
-- Is the technical depth right for the target audience?
-- Are the claims credible and well-supported?
-- Any structural or pacing issues?
-
-Be harsh. A mediocre blog post that gets published is worse than a good one that gets delayed.
-
-[Insert full draft here]
+You are [Expert Name]. Review this COMPLETE blog post for audience: [audience]. Be harsh.
+Focus on: Opening earn attention in 3 sentences? Strongest/weakest section?
+Would you share with your audience? Why/why not? Twitter/HN shareable?
+Hand-waving instead of specifics? Honest content ring true or performed?
+Technical depth right? Claims credible? Pacing issues?
+[Insert full draft]
 ```
 
-**Synthesize and present:**
-
+**Synthesize:**
 ```markdown
 ## Expert Draft Review
-
-### [Expert 1] — Would they share it? [YES/NO]
-- Strongest: [section]
-- Weakest: [section]
-- Key feedback: [1-2 actionable points]
-
-### [Expert 2] — Would they share it? [YES/NO]
-- Strongest: [section]
-- Weakest: [section]
-- Key feedback: [1-2 actionable points]
-
-### [Expert 3] — Would they share it? [YES/NO]
-- Strongest: [section]
-- Weakest: [section]
-- Key feedback: [1-2 actionable points]
-
-### Consensus (all 3 agree):
-- [point]
-
-### Must fix before publishing:
-1. [actionable fix]
+### [Expert] — Would share? [YES/NO] | Strongest: [x] | Weakest: [x] | Key feedback: [points]
 
 ### The "would they share it" test:
-- 3/3 would share → proceed to polish
-- 2/3 would share → fix the weak points, then proceed
+- 3/3 → proceed to polish
+- 2/3 → fix weak points, proceed
 - 1/3 or 0/3 → stop, discuss with user, may need structural rewrite
 ```
 
-**The bar: at least 2 out of 3 experts would share this post.** If not, the draft needs more work before polishing.
+**Bar: at least 2/3 would share.**
 
 ---
 
 ## Phase 5: Polish, Lint & Humanize (MANDATORY)
 
-### 5.1 Humanization Pass (ALWAYS RUN - NOT OPTIONAL)
+### 5.1 Humanization (ALWAYS RUN — NOT OPTIONAL)
 
-**This is MANDATORY. Never skip humanization. The post must sound like the author, not like AI.**
+**Voice calibration:** Read 2-3 author's existing posts. Match sentence length, humor, directness, transitions.
 
-#### Voice calibration (before humanizing)
-Read 2-3 of the author's existing blog posts to internalize their voice. Match their sentence length patterns, humor style, level of directness, and how they handle transitions.
+**Process:**
+1. Per-section pass with `/humanizer`
+2. Full-post pass with `/humanizer` — at least **twice**
+3. Read aloud test — sounds like press release or LinkedIn? Rewrite.
 
-#### Humanization process
-1. **Per-section pass:** Run the `/humanizer` skill on each section individually after drafting
-2. **Full-post pass:** Run `/humanizer` on the complete assembled draft at least **twice**
-3. **Read aloud test:** If any sentence sounds like a press release or LinkedIn post, rewrite it
+**Red flags:** "In today's...", "It's worth noting...", "This approach not only X but also Y", "Let's dive in", "Ultimately", "In conclusion", "Moreover", "Furthermore", "leverage", "streamline", "robust", "comprehensive", "journey" (metaphor), "game-changing", "revolutionize"
 
-#### Red flags to catch
-These words/phrases almost never appear in human writing: "In today's...", "It's worth noting...", "This approach not only X but also Y", "Let's dive in", "Ultimately", "In conclusion", "Moreover", "Furthermore", "leverage", "streamline", "robust", "comprehensive", "journey" (as metaphor), "game-changing", "revolutionize".
+**Manual patterns (if not using /humanizer):**
 
-#### Manual patterns to apply (if not using /humanizer):
+Remove AI: bold list headers → flowing paragraphs, em dashes → commas/periods, parallel structures → vary, rule of three → use 2 or 4, "Additionally" → just start sentence.
 
-**Remove AI patterns:**
-- "A common concern:" → "This comes up a lot."
-- Bold list headers → Convert to flowing paragraphs
-- Em dashes → Commas or periods
-- Parallel structures → Vary the format
-- Rule of three → Use 2 or 4 items sometimes
-- "Additionally/Furthermore" → Just start the sentence
+Add human: opinions ("felt validating", "bad feeling"), uncertainty ("I'm not sure"), emotions ("frustrating", "tedious"), casual ("Here's the thing"), subtle humor.
 
-**Add human voice:**
-- Opinions: "which felt validating", "that's a bad feeling"
-- Uncertainty: "I'm not sure", "In my experience"
-- Emotions: "frustrating", "tedious", "satisfying"
-- Casual: "Good luck with that", "Here's the thing"
-- Humor (subtle): Light self-deprecation, observational
+**Soulless check:** Same-length sentences? All neutral? No humor? Robotic read aloud? Would human say this?
 
-**Soulless writing check:**
-- Same-length sentences? Vary them.
-- All neutral reporting? Add opinions.
-- No humor/personality? Inject some.
-- Sounds robotic read aloud? Rewrite.
-- Would a human actually say this? If not, rewrite.
-
-### 5.2 Run Lint Check
-
-If project has linting configured, run it:
+### 5.2 Lint Check
 
 ```bash
-# Check if Vale is available
 which vale && vale content/posts/[slug].md
-
-# Or use project's lint command
-npm run lint
+# Or: npm run lint
 ```
 
-Report any lint errors to user for awareness.
+Report errors for awareness.
 
-### 5.3 Generate and Add Header Image (MANDATORY)
-
-**Every blog post MUST have a header image. This is not optional.**
+### 5.3 Header Image (MANDATORY)
 
 **CRITICAL: No sci-fi, no abstract AI art, no futuristic imagery.**
 
-#### Step 1: Create the prompt
+#### Prompt Rules
 
-Write a photorealistic image prompt. Rules:
+**REQUIRED:** Real humans/workspaces, natural settings, authentic environments, natural lighting, candid moments, MacBook Pro / iPhone 16 Pro Max if devices shown, "No text overlays" at end.
 
-**REQUIRED:**
-- Real humans or real workspaces, natural settings
-- Authentic workplace environments
-- Natural lighting
-- Relatable, candid moments
-- MacBook Pro and/or iPhone 16 Pro Max if devices are shown
-- "No text overlays" at the end of every prompt
+**BANNED:** Sci-fi/futuristic, abstract geometric, glowing/neon, robots/AI imagery, isometric, "digital"/"cyber", floating UI, stock cliches (handshakes, pointing at screens).
 
-**BANNED:**
-- Sci-fi / futuristic elements
-- Abstract geometric shapes, glowing/neon effects
-- Robots or AI imagery, isometric illustrations
-- "Digital" or "cyber" aesthetics, floating UI elements
-- Generic stock photo cliches (handshakes, pointing at screens)
+#### Generate via Gemini
 
-#### Step 2: Generate via Gemini
+1. Open `https://gemini.google.com/app` in new tab
+2. Click "Create image" tool button
+3. Enter prompt, click "Send message"
+4. Wait 15-20 seconds
 
-Use the Chrome browser automation tools to generate the image:
-
-1. Open Gemini (`https://gemini.google.com/app`) in a new tab
-2. Click the "Create image" tool button (not the mode picker)
-3. Enter the prompt in the text input
-4. Click "Send message"
-5. Wait 15-20 seconds for generation
-
-#### Step 3: Download the image
-
-Use JavaScript to download from the Gemini page:
+#### Download
 
 ```javascript
 const img = document.querySelector('img[alt=", AI generated"]');
@@ -876,195 +456,70 @@ a.click();
 document.body.removeChild(a);
 ```
 
-Then find the downloaded file:
-```bash
-find ~/Downloads -name "[slug]-header*" -mmin -5
-```
-
-#### Step 4: Crop watermark and optimize
-
-Copy to the blog images directory and crop the Gemini watermark (bottom-right corner):
+#### Crop & Optimize
 
 ```bash
-# Create image directory
 mkdir -p public/images/posts/[slug]/
-
-# Copy image
 cp ~/Downloads/tmp/[slug]-header.png public/images/posts/[slug]/header.png
-
-# Crop watermark (60px from bottom-right)
 sips --cropToHeightWidth [height-60] [width-60] public/images/posts/[slug]/header.png
-
-# Optimize
 npm run optimize-images
 ```
 
-Verify the image looks clean (watermark removed) by reading it with the Read tool.
+Verify watermark removed by reading image. Update frontmatter: `feature_image: /images/posts/[slug]/header.png`
 
-#### Step 5: Update frontmatter
-
-Ensure the frontmatter references the correct path:
-```yaml
-feature_image: /images/posts/[slug]/header.png
-```
-
-**If Chrome browser tools are unavailable:** Copy the prompt to clipboard with `pbcopy`, ask the user to generate the image manually in Gemini, and provide the crop/optimize commands.
+**If Chrome tools unavailable:** Copy prompt to clipboard with `pbcopy`, ask user to generate manually, provide crop/optimize commands.
 
 ---
 
 ## Phase 6: Write File & Complete
 
-### 6.1 Determine File Path
+### 6.1 Write File
 
-```
-content/posts/[slug].md
-```
+Write to `content/posts/[slug].md` with full markdown + frontmatter.
 
-Use the slug from frontmatter.
+### 6.2 Visual Testing (MANDATORY)
 
-### 6.2 Write the Blog Post File
-
-Use the Write tool to create the file:
-
-```
-Write to: content/posts/[slug].md
-Content: [Full markdown with frontmatter]
-```
-
-### 6.3 Visual Testing (MANDATORY)
-
-**Every blog post must be visually verified before publishing.** Markdown rendering issues, broken images, and formatting problems are invisible in the source file.
-
-#### Step 1: Ensure dev server is running
-
+#### Ensure dev server running
 ```bash
-# Check if dev server is already running
 curl -s -o /dev/null -w "%{http_code}" http://localhost:3021/ || npm run dev &
 ```
 
-Wait for the server to be ready.
+#### Open in Chrome
+Navigate to `http://localhost:3021/[slug]`
 
-#### Step 2: Open the blog post in Chrome
+#### Visual Checklist (scroll full page, screenshot each viewport)
 
-Use Chrome browser automation tools:
+**Layout:** Header image loads, title renders, all headings render as headings, no raw markdown visible.
+**Code Blocks:** Syntax highlighting, no horizontal overflow, no broken fences.
+**Images:** All load, SVGs render, reasonable sizing.
+**Content:** Tables render as tables, links clickable, bold/italic correct, lists render properly.
+**Spacing:** No huge gaps, no jammed sections, proper code block margins.
 
-1. Get tab context: `mcp__claude-in-chrome__tabs_context_mcp`
-2. Create a new tab: `mcp__claude-in-chrome__tabs_create_mcp`
-3. Navigate to: `http://localhost:3021/[slug]`
+Fix issues → refresh → re-check.
 
-#### Step 3: Visual inspection checklist
+**If Chrome tools unavailable:** Ask user to preview at `http://localhost:3021/[slug]`.
 
-Take a screenshot and verify each of these. Scroll down the page taking screenshots at each viewport-height to check the full post:
-
-**Layout & Structure:**
-- [ ] Header image loads and displays correctly (not broken/missing)
-- [ ] Title renders properly (no markdown leaking)
-- [ ] All H2/H3 headings render as headings (not plain text)
-- [ ] No raw markdown visible (**, ##, ```, etc.)
-
-**Code Blocks:**
-- [ ] All code blocks render with syntax highlighting (not plain text)
-- [ ] Code blocks don't overflow horizontally (readable without scrolling)
-- [ ] No broken code fences (unclosed ``` showing raw content)
-
-**Images & Media:**
-- [ ] All inline images load (no broken image icons)
-- [ ] SVG diagrams render correctly
-- [ ] Images are reasonably sized (not tiny or overflowing)
-
-**Content:**
-- [ ] Tables render as tables (not pipe-separated text)
-- [ ] Links are clickable (blue/underlined, not raw URLs)
-- [ ] Bold/italic text renders correctly
-- [ ] Lists render as lists (not plain text with dashes)
-
-**Spacing:**
-- [ ] No huge gaps between sections
-- [ ] No sections jammed together without breathing room
-- [ ] Code blocks have proper margins
-
-#### Step 4: Fix and re-verify
-
-If any issues are found:
-1. Fix the markdown source
-2. Refresh the page in Chrome (navigate to same URL again)
-3. Re-check the fixed section
-
-**If Chrome browser tools are unavailable:** Ask the user to preview at `http://localhost:3021/[slug]` and confirm it looks correct before committing.
-
-### 6.4 Final Output Summary
-
-Present to user:
+### 6.3 Final Summary
 
 ```markdown
-## ✅ Blog Post Created
+## Blog Post Created
 
 **File:** `content/posts/[slug].md`
-**Title:** [title] ([X] chars)
-**Meta:** [excerpt] ([X] chars)
-**Word Count:** ~[X] words
-**Sources:** [X] inline links
-
-**Target Audience:** [who this is written for]
-**How It Helps Them:** [specific value for this audience]
-
-### Image Prompts
-[2-3 options listed]
+**Title:** [title] ([X] chars) | **Meta:** [excerpt] ([X] chars)
+**Word Count:** ~[X] | **Sources:** [X] inline links
+**Target Audience:** [who] | **How It Helps:** [specific value]
 
 ### Next Steps
 1. Generate header image using prompt above
-2. Add image to `/public/images/posts/[slug]/`
-3. Run `npm run optimize-images`
-4. Preview: `npm run dev` then visit `/[slug]`
-5. Commit when ready (or I can commit for you)
+2. Add to `/public/images/posts/[slug]/`
+3. `npm run optimize-images`
+4. Preview: `npm run dev` → `/[slug]`
+5. Commit when ready
 ```
 
-### 6.4 Optional: Commit Integration
+### 6.4 Optional Commit
 
-If user wants to commit:
-
-```
-Ask: "Want me to commit this blog post?"
-Options:
-- Yes, commit now
-- No, I'll review first
-```
-
-If yes, use `/commit` skill or:
-```bash
-git add content/posts/[slug].md
-git commit -m "Add blog post: [title]"
-```
-
----
-
-## Banned Words & Patterns Reference
-
-### AI Vocabulary (Never Use)
-```
-additionally, align with, crucial, delve, emphasizing, enduring, enhance,
-fostering, garner, highlight (verb), interplay, intricate, key (adjective),
-landscape (abstract), pivotal, showcase, tapestry (abstract), testament,
-underscore (verb), valuable, vibrant, groundbreaking, revolutionary,
-game-changing, seamless, robust, leverage (verb), synergy
-```
-
-### Banned Patterns
-- "**Bold Header:** description" in lists
-- "It's not just X, it's Y" / "Not only X, but also Y"
-- Rule of three: "X, Y, and Z" for everything
-- Em dash (—) more than once per paragraph
-- "Additionally," / "Furthermore," / "Moreover," paragraph starters
-- "The future looks bright" / generic positive endings
-- Curly quotes ("...") - use straight quotes ("...")
-- Excessive hedging: "It could potentially possibly..."
-
-### Human Voice Checklist
-- [ ] Has opinions, not just neutral facts
-- [ ] Varies sentence length
-- [ ] Acknowledges uncertainty somewhere
-- [ ] Has at least one casual phrase
-- [ ] Would sound natural read aloud
+If user wants: `git add content/posts/[slug].md && git commit -m "Add blog post: [title]"` or use `/commit`.
 
 ---
 
@@ -1072,89 +527,42 @@ game-changing, seamless, robust, leverage (verb), synergy
 
 | Feedback | Action |
 |----------|--------|
-| "Too specific" | Generalize, broaden audience |
-| "Too generic" | Add examples from codebase |
-| "Sounds AI-written" | Run /humanizer skill |
-| "Missing [topic]" | Research and add section |
-| "Too long" | Consolidate, remove redundancy |
-| "Needs sources" | Additional web research |
-| "Title too long" | Shorten to under 46 chars |
-| "Not my voice" | Ask for voice examples, adjust |
-
----
-
-## Notes
-
-- **Audience is REQUIRED** - Generic content helps no one; know exactly who you're writing for
-- **Approval gates save time** - Outline approval prevents rewriting entire drafts
-- **Codebase = authenticity** - Prioritize real experience over generic advice
-- **Trade-offs matter** - Honest downsides build trust
-- **Goal**: Sound like a real developer helping SPECIFIC readers, not generic AI content
-- **Lint early** - Catch issues before user invests in reviewing
+| "Too specific" | Broaden audience |
+| "Too generic" | Add codebase examples |
+| "Sounds AI-written" | Run /humanizer |
+| "Missing [topic]" | Research + add section |
+| "Too long" | Consolidate |
+| "Needs sources" | More web research |
+| "Title too long" | Shorten to <46 chars |
+| "Not my voice" | Ask for voice examples |
 
 ---
 
 ## Quick Reference
 
 ```
-Workflow:
-0. Define audience (REQUIRED - ask if not provided)
-1. Research (audience-focused competitive + facts + codebase)
-2. Outline with APP hook → [USER APPROVES]
-3. Draft (written for specific audience + persuasion principles)
-4. Review → [USER APPROVES]
-5. HUMANIZE (mandatory) + Lint
-6. Write file
-7. Optional commit
+Workflow: Audience → Research → Outline → [GATE 1] → Expert Review → Draft → [GATE 2] →
+         Fact Check → Expert Review → Humanize → Image → Write → Visual Test → Commit
 
-REQUIRED: Target audience (ask if not provided)
-MANDATORY: Humanization pass (never skip)
+REQUIRED: Target audience (ask if missing)
+MANDATORY: Humanization (never skip)
 Title: max 46 chars (60 with suffix)
 Meta: 120-160 chars
 Min sources: 5 inline links
-Min trade-offs: 4
 Paragraphs: 5-6 lines max
-End with: Question (drives engagement)
+End with: Question
 
-APP Formula (Intro):
-- AGREE: Acknowledge their pain/situation
-- PROMISE: Clear benefit from reading
-- PREVIEW: Brief roadmap
-
-Cialdini Principles (weave in):
-- Reciprocity (give value first)
-- Authority (credentials, experts)
-- Social Proof (others have...)
-- Liking (be relatable, honest)
-- Scarcity (timely info)
-- Consistency (build on beliefs)
-
-Image Prompts:
-- ✅ Human, realistic, natural settings
-- ❌ NO sci-fi, abstract, AI art, isometric
+APP: AGREE (pain) → PROMISE (benefit) → PREVIEW (roadmap)
+Cialdini: Reciprocity, Authority, Social Proof, Liking, Scarcity, Consistency
+Images: Human/realistic/natural — NO sci-fi/abstract/AI art
 ```
 
 ---
 
 ## Credits
 
-Workflow inspired by:
+**[Joe Karlsson](https://www.joekarlsson.com/2025/10/building-a-claude-code-blog-skill-what-i-learned-systematizing-content-creation/)**: Two approval gates, automated linting, encode standards.
 
-**[Joe Karlsson](https://www.joekarlsson.com/2025/10/building-a-claude-code-blog-skill-what-i-learned-systematizing-content-creation/)**:
-- Two approval gates (outline + draft)
-- Automated linting before shipping
-- Encode standards, don't remember them
+**[Neil Patel](https://neilpatel.com/blog/how-to-write-blog-post/)**: APP Formula, short paragraphs, end with question, subheadings for skimmability.
 
-**[Neil Patel](https://neilpatel.com/blog/how-to-write-blog-post/)**:
-- APP Formula (Agree-Promise-Preview) for intros
-- Short paragraphs (5-6 lines max)
-- End with question for engagement
-- Subheadings for skimmability
-
-**[Robert Cialdini](https://www.influenceatwork.com/)** (via Neil Patel):
-- 6 Principles of Persuasion applied to content
-- Reciprocity, Authority, Social Proof, Liking, Scarcity, Consistency
-
-Audience-first approach ensures content is actually helpful, not generic AI slop.
-Mandatory humanization ensures it sounds like a real person wrote it.
-Human image prompts ensure visuals match the authentic voice.
+**[Robert Cialdini](https://www.influenceatwork.com/)**: 6 Principles of Persuasion applied to content.

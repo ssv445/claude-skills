@@ -9,64 +9,54 @@ allowed-tools:
 
 # run-detached
 
-Spawn a fresh `claude -p` process inside a detached tmux session running `$ARGUMENTS`, wait for it to finish, return the result.
+Spawn fresh `claude -p` in detached tmux session running `$ARGUMENTS`, wait for completion, return result.
 
-**You are expected to be a disposable subagent when running this.** The main loop should have dispatched you via the `Agent` tool specifically so you can block on this and keep main context clean. If you are the main loop, stop and reconsider — you probably want to spawn an Agent first and have *it* invoke this skill.
+**You are a disposable subagent.** Main loop should have dispatched you via Agent tool. If you ARE main loop — stop, spawn an Agent first to invoke this.
 
 ## Why tmux
 
-- User can `tmux attach -r -t detached-run-claude-<id>` any time to watch live (read-only).
-- Appears in claude-wormhole UI automatically (wormhole lists all tmux sessions).
-- Live output is streamed through a formatter (`format-stream.py`) that renders `claude -p --output-format stream-json` events as readable colored text — tool calls, results, partial assistant text, final summary. Much nicer than raw JSON.
-- Survives your subagent being killed — session keeps running, you can reattach on next poll.
+- User can `tmux attach -r -t detached-run-claude-<id>` to watch live (read-only)
+- Shows in claude-wormhole automatically
+- Live output streamed through `format-stream.py` — renders stream-json as readable colored text
+- Survives subagent kill — session keeps running, reattach on next poll
 
 ## Inputs
 
-`$ARGUMENTS` — the prompt to pass to the child `claude -p`. Usually a slash command, but any raw prompt works since `claude -p` accepts natural-language input too. Examples:
-
-- `/test-stories TS-001 TS-002`
-- `/quality-loop "polish feed" 5`
-- `/nightshift:run 142`
-- `Compute 7 times 8. Output only the number.`
+`$ARGUMENTS` — prompt for child `claude -p`. Slash commands or raw prompts both work.
 
 ## Prerequisites
 
-- `tmux`, `claude`, and `python3` must be on `PATH`. The spawn script verifies this and aborts if any is missing.
+`tmux`, `claude`, `python3` on PATH. Spawn script verifies, aborts if missing.
 
 ## Steps
 
-You **must** run the pre-built scripts that ship with this skill (`run-detached.sh`, `run-worker.py`, `format-stream.py`). Do **not** re-implement the spawn logic inline — the scripts handle shell quoting of arbitrary prompts, stream-json formatting, absolute-path pitfalls with `tmux pipe-pane`, and a marker-file signal that's more reliable than `tmux has-session` for detecting completion. Every time an agent has tried to rewrite the spawn step, it has broken in a new way. Use the scripts.
+**Use the pre-built scripts** (`run-detached.sh`, `run-worker.py`, `format-stream.py`). Do NOT re-implement spawn logic inline — scripts handle shell quoting, stream-json formatting, absolute-path pitfalls with `tmux pipe-pane`, and marker-file signaling. Every inline rewrite has broken.
 
 ### 1. Spawn
 
-Invoke `run-detached.sh` and pipe `$ARGUMENTS` on stdin via a heredoc. The script prints metadata as `key=value` lines on stdout — capture the output, then parse the values you need.
+Pipe `$ARGUMENTS` on stdin via heredoc:
 
 ```bash
 META=$(~/.claude/skills/run-detached/run-detached.sh <<'RUN_DETACHED_EOF'
 $ARGUMENTS
 RUN_DETACHED_EOF
 )
-# Parse the fields you'll need
 RUN_ID=$(echo "$META"      | awk -F= '/^run_id=/{print $2}')
 SESSION=$(echo "$META"     | awk -F= '/^session_name=/{print $2}')
 RUN_DIR=$(echo "$META"     | awk -F= '/^run_dir=/{print $2}')
 LOG=$(echo "$META"         | awk -F= '/^log_path=/{print $2}')
 MARKER=$(echo "$META"      | awk -F= '/^marker_path=/{print $2}')
 ATTACH_CMD=$(echo "$META"  | awk -F= '/^attach_cmd=/{print $2}')
-echo "$META"  # show the caller
+echo "$META"
 ```
 
-> **Heredoc note.** Use the exact sentinel `RUN_DETACHED_EOF` with **single quotes** around it. Single quotes prevent the shell from expanding `$`, backticks, etc., inside the prompt — critical when the prompt contains shell syntax, other skill invocations, or JSON.
+> **Heredoc:** Use exact sentinel `RUN_DETACHED_EOF` with **single quotes**. Prevents shell expansion of `$`, backticks inside prompt.
 
-If the script exits non-zero, abort and report its stderr to the caller.
-
-Report to caller: `run_id`, `session_name`, `log_path`, `attach_cmd`.
+Non-zero exit → abort, report stderr. Report to caller: `run_id`, `session_name`, `log_path`, `attach_cmd`.
 
 ### 2. Poll until done
 
-Loop. Interval: ~30s. Hard cap: 4h (480 iterations).
-
-Each iteration, check for the marker file. It appears when the worker process exits cleanly; its content is the child claude's exit code.
+Loop ~30s interval. Hard cap: 4h (480 iterations).
 
 ```bash
 if [ -f "$MARKER" ]; then
@@ -77,88 +67,54 @@ else
 fi
 ```
 
-When `DONE`, break.
+When DONE, break. Between polls, do nothing else.
 
-Between polls, do nothing else. Just wait and poll. Do not start other work.
+**Optional sanity tail** every few polls: `tail -c 2048 "$LOG" 2>/dev/null` — observe output, don't act on content.
 
-**Optional sanity tail** every few polls:
+**Timeout** at 4h cap: `tmux kill-session -t "$SESSION"`, return `exit_status: timeout`.
 
-```bash
-tail -c 2048 "$LOG" 2>/dev/null
-```
-
-Useful to notice the child is producing output (vs hung) — but don't act on the content, just observe.
-
-**Timeout:** if the 4h cap is hit, kill the session and return `exit_status: timeout`:
+### 3. Read result
 
 ```bash
-tmux kill-session -t "$SESSION"
+EXIT_CODE=$(cat "$MARKER")
 ```
 
-### 3. Read the result
-
-Once `DONE`:
-
-```bash
-EXIT_CODE=$(cat "$MARKER")  # 0 on success, non-zero otherwise
-```
-
-Use the `Read` tool on `$LOG` (absolute path) to pull out whatever the caller asked for. The log is colored/formatted text with ANSI escapes — they're harmless but you can strip them with `sed 's/\x1b\[[0-9;]*m//g'` if you need plain text.
-
-The final answer from the child is always the last `─── success …` block in the log, followed by the child's `result` text.
+Read `$LOG` via Read tool. Final answer is last `─── success …` block followed by `result` text. Strip ANSI if needed: `sed 's/\x1b\[[0-9;]*m//g'`.
 
 ### 4. Return to caller
-
-Compact summary:
 
 ```
 run_id: <id>
 session_name: detached-run-claude-<id>
 log_path: <absolute path>
-exit_status: <EXIT_CODE from marker> | timeout
+exit_status: <EXIT_CODE> | timeout
 attach_cmd: tmux attach -r -t detached-run-claude-<id>
 output_tail: |
   <last ~4KB of log, ANSI-stripped>
 ```
 
-If the caller asked for a specific synthesis (e.g. *"return the test-stories report"*), `Read` more of `$LOG` and synthesize — don't just dump the tail.
+If caller asked for specific synthesis, Read more of `$LOG` and synthesize — don't just dump tail.
 
-## Files that ship with this skill
+## Files
 
 | File | Purpose |
 |---|---|
-| `SKILL.md` | This doc. |
-| `run-detached.sh` | Entry point. Creates paths, spawns the tmux session, attaches log capture, prints metadata. Reads prompt from stdin. |
-| `run-worker.py` | Runs inside the tmux pane. Invokes `claude -p` via Python subprocess (prompt as literal argv — no shell quoting), pipes stream-json output through the formatter, writes the done marker on exit. |
-| `format-stream.py` | Renders `claude -p --output-format stream-json` events as readable colored text (tool calls, results, partial assistant text, final summary). |
+| `run-detached.sh` | Entry point. Creates paths, spawns tmux, attaches log capture, prints metadata. Reads prompt from stdin. |
+| `run-worker.py` | Runs inside tmux pane. Invokes `claude -p` via subprocess (prompt as literal argv), pipes through formatter, writes done marker. |
+| `format-stream.py` | Renders stream-json events as readable colored text. |
 
 ## Failure modes
 
 | Situation | Action |
 |---|---|
-| `tmux`/`claude`/`python3` missing | `run-detached.sh` aborts with clear error. Do not fall back. |
-| Session fails to start | `run-detached.sh` exits non-zero. Abort, relay stderr. |
-| Marker file never appears | Either the worker crashed before writing it, or the tmux session is still alive. Check `tmux has-session -t "$SESSION"` — if alive, keep polling; if dead, treat as `exit_status=crashed` and return the tail of the log. |
-| 4h cap reached | `tmux kill-session`, return `exit_status=timeout`. |
+| `tmux`/`claude`/`python3` missing | Script aborts. Do not fall back. |
+| Session fails to start | Script exits non-zero. Abort, relay stderr. |
+| Marker never appears | Check `tmux has-session -t "$SESSION"` — alive → keep polling; dead → `exit_status=crashed`, return log tail. |
+| 4h cap | `tmux kill-session`, `exit_status=timeout`. |
 
-## Caveats to surface in your return message
+## Caveats (surface in return message)
 
-- Child runs with `--dangerously-skip-permissions` — full tool access.
-- Child has its own token budget + cost. Nested run-detached calls multiply this; the final `─── success • N turns • Ts • $X.XXXX` line from each level tells you what you spent.
+- Child runs `--dangerously-skip-permissions` — full tool access.
+- Child has own token budget + cost. Nested calls multiply. Final `─── success • N turns • Ts • $X.XXXX` shows spend.
 - cwd inherited from this subagent.
-- Live view is available via `tmux attach -r -t <session>` or claude-wormhole. The pane shows the formatted stream in real time.
-
-## Example flow
-
-Main loop spawns an Agent:
-
-> "Run `/test-stories TS-001 TS-002` via the `run-detached` skill. Return the final test-stories report as a concise summary — pass/fail per story, key issues."
-
-Agent subagent:
-
-1. Pipes `/test-stories TS-001 TS-002` into `~/.claude/skills/run-detached/run-detached.sh`, captures the metadata.
-2. Session `detached-run-claude-20260408-143022-test-stories-TS-001` is now visible in `tmux ls` and in claude-wormhole; pane shows live tool calls and assistant output via the formatter.
-3. Polls `test -f "$MARKER"` every 30s for however long test-stories takes.
-4. On completion, reads the relevant sections of `output.log`, synthesizes the requested summary, returns it.
-
-Main loop receives only the summary. Its context stays clean. User could have watched the whole thing live via wormhole if curious.
+- Live view: `tmux attach -r -t <session>` or claude-wormhole.

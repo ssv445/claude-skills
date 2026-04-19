@@ -15,84 +15,59 @@ allowed-tools:
 
 # GitHub Discussion Manager
 
-Create and manage GitHub Discussions via the GraphQL API.
+Prereqs: `gh` CLI authenticated, repo has Discussions enabled.
 
-## Prerequisites
+## Create Discussion
 
-- `gh` CLI must be authenticated (`gh auth status`)
-- Repository must have Discussions enabled
+1. Get repo info:
+   ```bash
+   REPO_OWNER=$(gh repo view --json owner -q '.owner.login')
+   REPO_NAME=$(gh repo view --json name -q '.name')
+   ```
 
-## How to Create a Discussion
+2. Get repo ID:
+   ```bash
+   REPO_ID=$(gh api graphql -f query='{ repository(owner:"OWNER", name:"NAME") { id } }' -q '.data.repository.id')
+   ```
 
-### Step 1: Determine the repo
+3. List categories — ask user which one if not specified:
+   ```bash
+   gh api graphql -f query='{ repository(owner:"OWNER", name:"NAME") { discussionCategories(first:10) { nodes { id name } } } }'
+   ```
 
-Use the current git remote, or ask the user if not in a git repo.
+4. Write body to `/tmp/gh-discussion-body.md` — never inline long markdown in shell.
 
-```bash
-REPO_OWNER=$(gh repo view --json owner -q '.owner.login')
-REPO_NAME=$(gh repo view --json name -q '.name')
-```
+5. Create via GraphQL. Use `--raw-field` (not `-f`) for body to preserve formatting:
+   ```bash
+   gh api graphql \
+     -f query='mutation($repoId: ID!, $catId: ID!, $title: String!, $body: String!) {
+       createDiscussion(input: {
+         repositoryId: $repoId,
+         categoryId: $catId,
+         title: $title,
+         body: $body
+       }) {
+         discussion {
+           url
+           number
+         }
+       }
+     }' \
+     -f repoId="$REPO_ID" \
+     -f catId="$CATEGORY_ID" \
+     -f title="Discussion Title" \
+     --raw-field body="$(cat /tmp/gh-discussion-body.md)"
+   ```
 
-### Step 2: Get the repository ID
+6. Print discussion URL. Clean up temp files.
 
-```bash
-REPO_ID=$(gh api graphql -f query='{ repository(owner:"OWNER", name:"NAME") { id } }' -q '.data.repository.id')
-```
+## Add Comment
 
-### Step 3: List available discussion categories
-
-```bash
-gh api graphql -f query='{ repository(owner:"OWNER", name:"NAME") { discussionCategories(first:10) { nodes { id name } } } }'
-```
-
-Ask the user which category to use if not specified. Common categories: Announcements, General, Ideas, Q&A, Show and tell.
-
-### Step 4: Write the body to a temp file
-
-Always write the discussion body to a temp file first (`/tmp/gh-discussion-body.md`). This avoids shell quoting issues with long markdown content.
-
-### Step 5: Create the discussion via GraphQL
-
-```bash
-gh api graphql \
-  -f query='mutation($repoId: ID!, $catId: ID!, $title: String!, $body: String!) {
-    createDiscussion(input: {
-      repositoryId: $repoId,
-      categoryId: $catId,
-      title: $title,
-      body: $body
-    }) {
-      discussion {
-        url
-        number
-      }
-    }
-  }' \
-  -f repoId="$REPO_ID" \
-  -f catId="$CATEGORY_ID" \
-  -f title="Discussion Title" \
-  --raw-field body="$(cat /tmp/gh-discussion-body.md)"
-```
-
-**IMPORTANT**: Use `--raw-field body="$(cat /tmp/gh-discussion-body.md)"` to pass the body from file. This handles all special characters, newlines, and markdown formatting correctly.
-
-### Step 6: Report the URL
-
-Print the discussion URL for the user.
-
-## How to Add a Comment to a Discussion
-
-### Get the discussion node ID
+Get discussion node ID, write comment to `/tmp/gh-discussion-comment.md`:
 
 ```bash
 DISCUSSION_ID=$(gh api graphql -f query='{ repository(owner:"OWNER", name:"NAME") { discussion(number: NUMBER) { id } } }' -q '.data.repository.discussion.id')
-```
 
-### Add the comment
-
-Write comment body to `/tmp/gh-discussion-comment.md`, then:
-
-```bash
 gh api graphql \
   -f query='mutation($discussionId: ID!, $body: String!) {
     addDiscussionComment(input: {
@@ -108,13 +83,13 @@ gh api graphql \
   --raw-field body="$(cat /tmp/gh-discussion-comment.md)"
 ```
 
-## How to List Discussions
+## List Discussions
 
 ```bash
 gh api graphql -f query='{ repository(owner:"OWNER", name:"NAME") { discussions(first:10, orderBy:{field:CREATED_AT, direction:DESC}) { nodes { number title url category { name } createdAt } } } }'
 ```
 
-## How to Close a Discussion
+## Close Discussion
 
 ```bash
 DISCUSSION_ID=$(gh api graphql -f query='{ repository(owner:"OWNER", name:"NAME") { discussion(number: NUMBER) { id } } }' -q '.data.repository.discussion.id')
@@ -124,9 +99,7 @@ gh api graphql -f query='mutation($id: ID!) { closeDiscussion(input: { discussio
 
 ## Rules
 
-- Always confirm with the user before posting (this is a public action)
-- Write body to a temp file — never inline long markdown in shell commands
-- Use `--raw-field` (not `-f`) for the body parameter to preserve formatting
-- Return the discussion URL when done
-- If `$ARGUMENTS` is provided, use it as the discussion topic/content
-- Clean up temp files after posting
+- Confirm w/ user before posting (public action)
+- Always use `--raw-field` for body param
+- If `$ARGUMENTS` provided, use as topic/content
+- Return discussion URL when done

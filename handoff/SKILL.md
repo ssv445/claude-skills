@@ -15,52 +15,45 @@ description: "Context handoff across /clear boundaries. Three steps: (1) /handof
 
 ---
 
-## Save Mode (`/handoff` or `/handoff save`)
+## Save Mode
 
-### When to Use
-- Conversation getting long, user wants `/clear` without losing progress
-- User says: "handoff", "save state", "compress context", "handoff save"
+1. Ensure `./.tmp/handoff/` exists. Verify `.tmp` in `.gitignore`.
 
-### Steps
+2. `date +%Y%m%d-%H%M%S` → timestamp.
 
-1. **Ensure `./.tmp/handoff/` exists.** Create if missing. Verify `.tmp` in `.gitignore`.
-
-2. **Generate timestamp** via `date +%Y%m%d-%H%M%S`.
-
-3. **Select load-bearing content only:**
-   - **Goal** — what user is trying to do
+3. Extract load-bearing content only:
+   - **Goal** — what user is doing
    - **State** — done / wip / next
    - **Decisions** — locked choices + brief why
    - **Files** — paths + one-line purpose
    - **Open** — blockers, questions, things to verify
-   - **Background** — running processes (PIDs, tmux sessions), active loops/schedules, monitoring with thresholds/kill conditions
+   - **Background** — running processes (PIDs, tmux), active loops/schedules, monitoring w/ thresholds/kill conditions
    - **Env** — branch, servers, key state
    - **Exclude**: chit-chat, dead ends, framework details, re-derivable info
 
-4. **Compress to caveman format.** Drop articles, use symbols (`→ = & w/`), abbreviate. Include enough detail that resume mode can start working without re-exploring the codebase.
+4. Compress to caveman format. Drop articles, use symbols (`→ = & w/`). Include enough detail for resume to start working without re-exploring codebase.
 
-5. **Write** to `./.tmp/handoff/context-<timestamp>.md`. **Symlink as latest:**
+5. Write to `./.tmp/handoff/context-<timestamp>.md`. Symlink:
    ```bash
    ln -sf context-<timestamp>.md ./.tmp/handoff/context-latest.md
    ```
 
-6. **Estimate compression.** Rough token estimate: `words * 1.3`. Report:
-   ```
-   Compressed: ~<session_tokens> → ~<handoff_tokens> tokens (<ratio>% reduction)
-   ```
+6. Estimate compression. `words * 1.3` ≈ tokens. Report ratio.
 
-7. **Copy to clipboard:**
+7. Copy to clipboard:
    ```bash
    printf '%s' "/handoff resume" | pbcopy
    ```
 
-8. **Output:**
+8. Output:
    ```
    Handoff saved: .tmp/handoff/context-<timestamp>.md
    Compressed: ~150K → ~600 tokens (99.6% reduction)
    Now run /clear, then paste to resume.
    ```
-   Stop. Do not continue the original task.
+   Stop. Do not continue original task.
+
+Size should match complexity — simple task ~300 tokens, complex multi-day ~800 tokens. Never skip symlink.
 
 ### Template
 
@@ -96,38 +89,19 @@ ENV:
 
 ---
 
-## Load Mode (`/handoff resume`)
+## Load Mode
 
-### When to Use
-- After `/clear`, user pastes `/handoff resume`
-- User says: "handoff resume", "handoff load", "handoff continue"
-
-### Steps
-
-1. **Read the handoff file into context.** Use Read tool on `./.tmp/handoff/context-latest.md`. If missing, find latest:
+1. Read `./.tmp/handoff/context-latest.md` in full. If missing:
    ```bash
    ls -t .tmp/handoff/context-*.md | grep -v latest | head -1
    ```
-   The file MUST be loaded in full — it IS the context for this session.
 
-2. **Announce resume** — one-line summary:
-   ```
-   Resumed from ctx-<timestamp>. Goal: <goal>. Next: <next items>.
-   ```
+2. Announce: `Resumed from ctx-<timestamp>. Goal: <goal>. Next: <next items>.`
 
-3. **Jump to work immediately** on STATE.wip or STATE.next items. Don't ask "what should I do?" — the handoff file already says what's next.
+3. Jump to work immediately. Don't ask "what should I do?" — handoff says what's next.
 
 ### Resume Priority
-- OPEN blockers → address first
+- OPEN blockers → first
 - STATE.wip → continue
-- STATE.next → start first item
+- STATE.next → start
 - Everything done → tell user, ask what's next
-
----
-
-## Common Mistakes
-
-- **Over-including in save.** Load-bearing only. Size should match complexity — simple task ~300 tokens, complex multi-day work ~800 tokens.
-- **Skipping symlink.** `context-latest.md` enables fast resume without glob.
-- **Asking user what to do on resume.** Handoff has NEXT items. Start.
-- **Continuing task after save.** Stop — next session takes over.

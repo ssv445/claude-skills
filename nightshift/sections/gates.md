@@ -1,13 +1,12 @@
 # Gates & Recovery
 
-## Brainstorming Gate (for Ambiguous Issues)
+## Brainstorming Gate (Ambiguous Issues)
 
-When Step 1 (UNDERSTAND) reveals **ambiguous requirements** — unclear scope, multiple valid interpretations, or missing acceptance criteria — do NOT proceed to Step 2. Instead, invoke a brainstorming gate.
+When Step 1 reveals **ambiguous requirements** — unclear scope, multiple interpretations, missing ACs — do NOT proceed. Invoke brainstorming gate.
 
-### When to trigger
+### Trigger
 
-The Step 1 worker flags ambiguity by including in `01-understand.md`:
-
+Step 1 worker flags in `01-understand.md`:
 ```
 ## Ambiguity Flag
 Status: AMBIGUOUS
@@ -19,50 +18,43 @@ Questions for clarification:
 - <question 2>
 ```
 
-### Brainstorming gate flow
+### Flow
 
-1. **Post questions as issue comment** — list the unclear areas and questions. Tag with `needs-clarification` label.
-2. **Convene expert panel** — 3 experts discuss the ambiguity and propose approaches:
-   - Each expert gets the issue + `01-understand.md` + the ambiguity flag
-   - Each proposes an interpretation and approach
+1. **Post questions as issue comment** — tag with `needs-clarification` label
+2. **Convene expert panel** — 3 experts get issue + `01-understand.md` + ambiguity flag
+   - Each proposes interpretation and approach
    - 2/3 majority → adopt that interpretation
-   - 3-way split → post all 3 interpretations as issue comment, mark BLOCKED for human input
-3. **If panel resolves it** — write the agreed interpretation to `01-understand.md` (append a "## Resolved Ambiguity" section), re-run Step 1 review gate
-4. **If panel can't resolve** — mark issue BLOCKED with `"Ambiguous requirements — needs human clarification"` and move to next issue
+   - 3-way split → post all 3 as comment, mark BLOCKED for human input
+3. **Panel resolves** → append "## Resolved Ambiguity" to `01-understand.md`, re-run Step 1 review gate
+4. **Panel can't resolve** → BLOCKED: "Ambiguous requirements — needs human clarification", move to next issue
 
 ### Skip conditions
 
-Do NOT brainstorm if:
-- Issue has clear acceptance criteria
-- Step 1 worker says `Status: CLEAR`
-- Issue is a `simple-bug` type (root cause is obvious)
+Skip if: clear acceptance criteria, worker says `Status: CLEAR`, `simple-bug` with obvious root cause.
 
 ---
 
-## Interactive Checkpoint (Optional — Supervised Mode)
+## Interactive Checkpoint (--supervised)
 
-When nightshift is run with the `--supervised` flag (e.g., `/nightshift:run --supervised #50 #51`), pause after Step 2 (PLAN) for human feedback before proceeding to code.
+When run with `--supervised`, pause after Step 2 (PLAN) for human feedback.
 
-### How it works
+### Flow
 
-1. After Step 2 passes review → post the plan summary as an issue comment
-2. Add label `awaiting-feedback` to the issue
-3. **PAUSE** — do not proceed to Step 3
-4. Post comment: `"**Nightshift PAUSED** — Plan ready for review. Approve by commenting 'lgtm' or 'proceed'. Provide feedback to adjust."`
-5. **Poll for response** — check issue comments every 5 minutes (up to 1 hour):
+1. Step 2 passes review → post plan summary as issue comment
+2. Add label `awaiting-feedback`
+3. **PAUSE** — do not proceed
+4. Post: `"**Nightshift PAUSED** — Plan ready for review. Comment 'lgtm' or 'proceed' to approve. Provide feedback to adjust."`
+5. **Poll** every 5 min (up to 1 hour):
    ```bash
    gh issue view <N> --comments --json comments --jq '.comments[-1].body'
    ```
-6. On `lgtm` / `proceed` / `approved` → remove `awaiting-feedback` label, continue to Step 3
-7. On feedback → feed the comment to a ralph retry of Step 2 (re-plan with feedback)
-8. After 1 hour with no response → continue autonomously (log that timeout occurred)
+6. `lgtm`/`proceed`/`approved` → remove label, continue to Step 3
+7. Feedback → ralph retry Step 2 with feedback
+8. 1 hour no response → continue autonomously (log timeout)
 
-### Default behavior (no flag)
-
-Without `--supervised`, nightshift runs fully autonomous — no pauses, no polling. This is the default.
+**Default (no flag):** fully autonomous, no pauses.
 
 ### State tracking
-
 ```json
 "supervisedMode": true,
 "checkpoint": { "step": 2, "waitingSince": "ISO timestamp", "resolved": false }
@@ -72,22 +64,20 @@ Without `--supervised`, nightshift runs fully autonomous — no pauses, no polli
 
 ## Resume Detection & Recovery
 
-On startup, check if `.claude/nightshift/state.json` exists.
+On startup, check `.claude/nightshift/state.json`.
 
 ### Fresh Run (no state.json)
-
-Proceed with normal setup — create nightshift branch, initialize state.
+Normal setup — create branch, initialize state.
 
 ### Resume Run (state.json exists)
 
-Offload validation to a **subagent** (`model: "opus"`):
-
+Offload validation to **subagent** (`model: "opus"`):
 ```
 Read .claude/nightshift/state.json and validate resume state.
 Check:
-- Nightshift branch from state exists: `git branch --list <branch>` and `git ls-remote --heads origin <branch>`
-- Each issue branch exists (for in_progress issues)
-- Artifact files exist for completed steps (.claude/nightshift/issue-<N>/)
+- Nightshift branch exists: `git branch --list <branch>` and `git ls-remote --heads origin <branch>`
+- Issue branches exist (for in_progress issues)
+- Artifact files exist for completed steps
 
 Return EXACTLY:
 RESUME_PLAN:
@@ -98,32 +88,28 @@ NIGHTSHIFT_BRANCH: nightshift/2026-03-03-user-avatar (exists: yes/no)
 ORCHESTRATOR_SUMMARY: Resume validated — 1 skip, 1 resume at step 4, 1 fresh
 ```
 
-### Resume Logic (orchestrator applies the plan)
-
-For each issue in input:
-- **"completed"** → skip, log "already done"
-- **"blocked"** → skip, log "previously blocked"
-- **"in_progress"** → resume from `currentStep` using `lastResult`:
+### Resume Logic
 
 | `lastResult` | Action |
 |--------------|--------|
 | `"passed"` | Skip to next step |
 | `"worker_done_pending_review"` | Skip worker, run review gate only |
-| `"review_rejected"` | Run ralph retry (preserve attempt count) |
+| `"review_rejected"` | Ralph retry (preserve attempt count) |
 | `null` | Run step from scratch |
+
+- **"completed"** → skip
+- **"blocked"** → skip
 
 ### Branch Recovery
 
-- State has branch + exists in git → `git checkout <branch>` and reuse
-- State has branch + NOT in git → create fresh from latest default branch, warn via issue comment
-- No state → create fresh (normal flow)
+- State has branch + exists → checkout and reuse
+- State has branch + NOT in git → create fresh from default, warn via comment
+- No state → create fresh
 
 ### Resume Comment
-
-Post on the issue being resumed:
 ```bash
 gh issue comment <N> --body "**Nightshift RESUMED** at step <X>, attempt <Y>/<Z>
 Previous session state recovered. Continuing from: <lastResult>"
 ```
 
-**Preserve attempt counts** — never reset retries on resume. The whole point is continuity.
+**Preserve attempt counts** — never reset retries on resume.
