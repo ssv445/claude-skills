@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Devloop State",
+  "type": "object",
+  "required": ["runId", "branch", "baselineSha", "storyIds", "maxIterations", "iteration", "exit_reason", "iterations"],
+  "properties": {
+    "runId": {
+      "type": "string",
+      "description": "YYYY-MM-DD-HHmm"
+    },
+    "branch": {
+      "type": "string",
+      "description": "Current branch at run start. Devloop never switches branches."
+    },
+    "baselineSha": {
+      "type": "string",
+      "description": "Commit SHA at run start (the head of branch before any devloop commits)"
+    },
+    "storyIds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Story IDs targeted by this run"
+    },
+    "maxIterations": {
+      "type": "integer",
+      "default": 7
+    },
+    "iteration": {
+      "type": "integer",
+      "description": "Current iteration index (1-based). 0 before any iteration starts."
+    },
+    "exit_reason": {
+      "type": ["string", "null"],
+      "enum": [null, "CLEAN", "STUCK", "CAPPED", "DRY_RUN", "ABORTED", "REGRESSION"],
+      "description": "Null while running. Set on outer-loop exit. REGRESSION = integration test failed at end of an iteration."
+    },
+    "testCommands": {
+      "type": "object",
+      "description": "Auto-detected at setup, cached for the run",
+      "properties": {
+        "unit": { "type": ["string", "null"] },
+        "integration": { "type": ["string", "null"] },
+        "detectionSource": { "type": "string", "enum": ["claude-md", "package-json", "convention", "none"] }
+      }
+    },
+    "flags": {
+      "type": "object",
+      "properties": {
+        "noTests": { "type": "boolean", "default": false },
+        "noIntegration": { "type": "boolean", "default": false },
+        "dryRun": { "type": "boolean", "default": false }
+      }
+    },
+    "iterations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["index", "trafficLights", "items"],
+        "properties": {
+          "index": { "type": "integer" },
+          "startedAt": { "type": "string" },
+          "endedAt": { "type": ["string", "null"] },
+          "trafficLights": {
+            "type": "object",
+            "description": "story-id → 🔴|🟡|🟢",
+            "additionalProperties": { "type": "string" }
+          },
+          "unresolved": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["storyId", "criterion"],
+              "properties": {
+                "storyId": { "type": "string" },
+                "criterion": { "type": "string" }
+              }
+            },
+            "description": "Used for stuck-detection comparison between iterations"
+          },
+          "planPath": { "type": "string" },
+          "integrationResult": {
+            "type": ["object", "null"],
+            "description": "Set after Phase C.5 integration test run, null if skipped",
+            "properties": {
+              "status": { "type": "string", "enum": ["pass", "fail", "timeout", "skipped"] },
+              "command": { "type": "string" },
+              "duration": { "type": "string" },
+              "failingTests": { "type": "array", "items": { "type": "string" } },
+              "likelyCulpritCommits": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "status"],
+              "properties": {
+                "id": { "type": "string" },
+                "source": { "type": "string", "description": "story-id" },
+                "title": { "type": "string" },
+                "failingCriterion": { "type": "string" },
+                "severity": { "type": "string", "enum": ["🔴", "🟡"] },
+                "affectedPages": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "status": {
+                  "type": "string",
+                  "enum": ["pending", "in-progress", "shipped", "taste-skip", "retry-exhausted"]
+                },
+                "attempts": { "type": "integer", "default": 0 },
+                "commitSha": { "type": ["string", "null"] },
+                "screenshots": {
+                  "type": "object",
+                  "properties": {
+                    "before": { "type": ["string", "null"] },
+                    "after": { "type": ["string", "null"] }
+                  }
+                },
+                "tasteQuestion": {
+                  "type": ["string", "null"],
+                  "description": "Set when status==taste-skip"
+                },
+                "dissentHistory": {
+                  "type": "array",
+                  "description": "One entry per failed attempt; populated on retry-exhausted",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "attempt": { "type": "integer" },
+                      "seat": { "type": "string", "enum": ["adversarial", "root-cause", "convention", "browser", "unit-tests"] },
+                      "reason": { "type": "string" }
+                    }
+                  }
+                },
+                "unitTestResult": {
+                  "type": ["object", "null"],
+                  "description": "Result of Gate 4 unit tests for the final (passing) attempt",
+                  "properties": {
+                    "status": { "type": "string", "enum": ["pass", "fail", "timeout", "skipped"] },
+                    "scope": { "type": "string", "enum": ["scoped", "full"] },
+                    "duration": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "currentItemIndex": { "type": "integer", "default": 0 }
+        }
+      }
+    }
+  }
+}

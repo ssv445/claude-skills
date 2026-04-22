@@ -27,6 +27,7 @@ Custom skills for [Claude Code](https://claude.ai/code).
 | [karpathy-guidelines](./karpathy-guidelines/) | Behavioral guidelines to reduce common LLM coding mistakes: think before coding, simplicity first, surgical changes, goal-driven execution. Based on [forrestchang/andrej-karpathy-skills](https://github.com/forrestchang/andrej-karpathy-skills). |
 | [subagent-first](./subagent-first/) | Decision tree + red flags to keep main-agent context clean by routing exploration, long-running commands, MCP calls, reviews, and research to specialized subagents. Reference from your global CLAUDE.md. |
 | [ack](./ack/) | Force agent to acknowledge intent before acting: parse request, rephrase in 1-3 bullets, ask permission, wait for explicit `y`, then execute. Tool whitelist, scope-drift rule, rationalization table. |
+| [devloop](./devloop/) | Tight polish loop after a feature ships. Takes test-stories IDs, runs tests, fixes prioritized issues with a unanimous 3-seat expert panel (adversarial + root-cause + convention) and browser screenshot check, re-runs, repeats until clean. Fire-and-forget. |
 
 ## Installation
 
