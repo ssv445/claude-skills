@@ -14,7 +14,6 @@ Custom skills for [Claude Code](https://claude.ai/code).
 | [gh-discussion](./gh-discussion/) | Create and manage GitHub Discussions via GraphQL API. |
 | [portless](./portless/) | Named local dev server URLs. Based on [vercel-labs/portless](https://github.com/vercel-labs/portless) by Vercel Labs. |
 | [test-stories](./test-stories/) | AI-driven user story testing with browser automation subagents. |
-| [daily-operator](./daily-operator/) | Automated daily pipeline for site operations: GSC analysis, content, affiliates, SEO. |
 | [nightshift](./nightshift/) | Autonomous overnight GitHub issue processing. 7-step TDD pipeline with review gates, expert panels, and thin orchestrator pattern. |
 | [quality-loop](./quality-loop/) | Continuous quality improvement with competing dual-perspective investigators, 5 review gates, and anti-loop detection. |
 | [commit](./commit/) | Commit staged changes following repo conventions. Simple and focused. |
