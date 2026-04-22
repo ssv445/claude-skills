@@ -15,7 +15,6 @@ Custom skills for [Claude Code](https://claude.ai/code).
 | [portless](./portless/) | Named local dev server URLs. Based on [vercel-labs/portless](https://github.com/vercel-labs/portless) by Vercel Labs. |
 | [test-stories](./test-stories/) | AI-driven user story testing with browser automation subagents. |
 | [nightshift](./nightshift/) | Autonomous overnight GitHub issue processing. 7-step TDD pipeline with review gates, expert panels, and thin orchestrator pattern. |
-| [quality-loop](./quality-loop/) | Continuous quality improvement with competing dual-perspective investigators, 5 review gates, and anti-loop detection. |
 | [commit](./commit/) | Commit staged changes following repo conventions. Simple and focused. |
 | [brainstorm](./brainstorm/) | One-question-at-a-time ideation to build detailed specs. Inspired by [obra/superpowers](https://github.com/obra/superpowers) by Jesse Vincent. |
 | [ship](./ship/) | Ship a task end-to-end: GitHub issue, branch, implement, test, PR. |
