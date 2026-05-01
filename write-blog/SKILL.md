@@ -352,7 +352,8 @@ Per Pre-gate Review Pattern. Pick 3 experts based on topic.
 | Programming culture / industry | Joel Spolsky, Jeff Atwood, Paul Ford |
 | Laravel / PHP | Taylor Otwell, Jeffrey Way, Freek Van der Herten |
 | Ruby / Rails | DHH, Aaron Patterson, Eileen M. Uchitelle |
-| Business / SaaS / founders | Jason Fried, DHH, Garry Tan, Patrick McKenzie (patio11), Sahil Lavingia |
+| Business / SaaS / founders | Jason Fried, DHH, Garry Tan, Peter Thiel, Patrick McKenzie (patio11), Sahil Lavingia |
+| Contrarian strategy / monopolies | Peter Thiel, Patrick Collison, Marc Andreessen |
 | Developer relations / content marketing | Karl Hughes, Cassidy Williams, Swyx |
 | Marketing / SEO / content structure | Neil Patel (also credited for APP formula), Rand Fishkin |
 | Security | Troy Hunt, tptacek, Julia Evans |

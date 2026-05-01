@@ -93,6 +93,8 @@ experts:
     #   specialty: SEO, marketing
     # - name: Garry Tan             # YC, startups, founders
     #   specialty: startups, founders
+    # - name: Peter Thiel           # contrarian strategy, monopolies, Zero to One
+    #   specialty: startup strategy, contrarian thinking
     # - name: Gergely Orosz         # engineering management, tech industry
     #   specialty: eng management, tech industry
     # - name: Martin Fowler         # software design, architecture
