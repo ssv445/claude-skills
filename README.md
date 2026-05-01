@@ -14,7 +14,6 @@ Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claud
 | [ios-safari-quirks](./ios-safari-quirks/) | 55+ documented iOS Safari JavaScript quirks with fixes. |
 | [plan-exit-review](./plan-exit-review/) | Thorough plan review before implementation. Based on [garrytan/gstack](https://github.com/garrytan/gstack) by Garry Tan. |
 | [gh-discussion](./gh-discussion/) | Create and manage GitHub Discussions via GraphQL API. |
-| [portless](./portless/) | Named local dev server URLs. Based on [vercel-labs/portless](https://github.com/vercel-labs/portless) by Vercel Labs. |
 | [test-stories](./test-stories/) | AI-driven user story testing with browser automation subagents. |
 | [nightshift](./nightshift/) | Autonomous overnight GitHub issue processing. 7-step TDD pipeline with review gates, expert panels, and thin orchestrator pattern. |
 | [commit](./commit/) | Commit staged changes following repo conventions. Simple and focused. |
