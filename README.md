@@ -1,6 +1,38 @@
 # Claude Code Skills
 
-Custom skills for [Claude Code](https://claude.ai/code).
+Custom skills for [Claude Code](https://claude.ai/code) (and other agents — Cursor, Codex, Cline, Gemini CLI, etc.).
+
+Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claude-skills)**
+
+## Install
+
+Uses the [`skills`](https://github.com/vercel-labs/skills) CLI by Vercel Labs. Default behavior is symlink (live updates from `git pull`); pass `--copy` for portable install.
+
+```bash
+# Install one skill globally (user-level)
+npx skills add ssv445/claude-skills -s write-blog -g
+
+# Install all skills from this repo, into all detected agents
+npx skills add ssv445/claude-skills --all -g
+
+# List available skills without installing
+npx skills add ssv445/claude-skills -l
+
+# Update installed skills
+npx skills update
+
+# Remove a skill
+npx skills remove write-blog -g
+```
+
+After install, the skill is available as `/<skill-name>` in Claude Code (and the equivalent invocation in other agents).
+
+Manual install (if you'd rather not use the CLI): clone this repo, then symlink any skill dir into `~/.claude/skills/`:
+
+```bash
+git clone https://github.com/ssv445/claude-skills ~/code/claude-skills
+ln -s ~/code/claude-skills/write-blog ~/.claude/skills/write-blog
+```
 
 ## Skills
 
