@@ -1,5 +1,6 @@
 ---
-description: Commit staged changes only (if available)
+name: commit
+description: Commit staged changes only (if available). Reviews the diff, matches the repo's commit-message style from recent log, and writes a concise message — never adds untracked files, never amends.
 ---
 
 # Commit Staged Changes

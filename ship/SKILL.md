@@ -1,5 +1,6 @@
 ---
-description: Ship a task end-to-end -- issue, branch, implement, test, PR
+name: ship
+description: Ship a task end-to-end — opens GitHub issue, creates branch, implements, runs tests, and opens a PR. Use when you want a single command to take a feature idea from "filed" to "ready to merge."
 ---
 
 # Ship
