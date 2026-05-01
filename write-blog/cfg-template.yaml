@@ -72,6 +72,43 @@ links:
     max: 5
     rating_threshold: 6
 
+# Preferred expert reviewers for Phase 2.3 + 4.7 expert reviews.
+# Skill picks 3 experts whose specialty matches the topic; if this list is set,
+# it's preferred over the global table in SKILL.md.
+experts:
+  preferred:
+    # - name: Simon Willison        # AI/LLM tooling, devtools
+    #   specialty: AI/LLM, devtools
+    # - name: Joel Spolsky          # programming culture, software business
+    #   specialty: programming culture, software business
+    # - name: Taylor Otwell         # Laravel, PHP, SaaS
+    #   specialty: Laravel/PHP, SaaS
+    # - name: Jason Fried           # business, work culture, productivity
+    #   specialty: business, founder
+    # - name: DHH                   # Rails, business, culture
+    #   specialty: Rails, business, culture
+    # - name: Paul Ford             # web/tech writing, essays
+    #   specialty: web culture, essays
+    # - name: Neil Patel            # SEO, content structure
+    #   specialty: SEO, marketing
+    # - name: Garry Tan             # YC, startups, founders
+    #   specialty: startups, founders
+    # - name: Gergely Orosz         # engineering management, tech industry
+    #   specialty: eng management, tech industry
+    # - name: Martin Fowler         # software design, architecture
+    #   specialty: software design, architecture
+    # - name: Jeff Atwood           # programming culture, Stack Overflow
+    #   specialty: programming culture
+    # - name: Karl Hughes           # devrel, content marketing
+    #   specialty: devrel, content marketing
+    # - name: James Stanier         # engineering management
+    #   specialty: eng management
+    # - name: Will Larson           # staff engineering, infra
+    #   specialty: staff engineering, infra
+    # - name: alistapart.com        # web design/development editorial voice
+    #   specialty: web design, web platform
+    []
+
 # Iterative humanization loop
 humanize:
   target_score: 25              # avg AI-likelihood threshold (0-100, lower = more human; 15-25 is normal for human technical writing — treat as lint signal, not hard gate)

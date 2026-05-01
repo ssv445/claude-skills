@@ -330,19 +330,32 @@ Wait for confirmation. Full pre-gate-review pattern (3 subagents, retry budget) 
 
 ### 2.3 Expert Outline Review (runs BEFORE Gate 1)
 
-Per Pre-gate Review Pattern. Pick 3 experts based on topic:
+Per Pre-gate Review Pattern. Pick 3 experts based on topic.
+
+**Selection order:**
+
+1. If `cfg.experts.preferred` is non-empty in `.write-blog.cfg`, prefer experts from that list whose specialty matches the topic.
+2. Else, pick from the global table below.
+3. Always pick exactly 3. Don't force-fit — match specialty to actual topic.
+
+**Global expert table:**
 
 | Subject Area | Good Picks |
 |---|---|
 | AI/LLM tooling | Simon Willison, Swyx, Andrej Karpathy |
 | React/Frontend | Dan Abramov, Kent C. Dodds, Guillermo Rauch |
+| Web design/platform | Paul Ford, alistapart.com (editorial voice), Jeffrey Zeldman |
 | DevOps/Infrastructure | Charity Majors, Kelsey Hightower, Julia Evans |
 | Systems/Performance | Thorsten Ball, Julia Evans, Dan Luu |
-| Business/SaaS | Patrick McKenzie (patio11), Sahil Lavingia, Swyx |
+| Software design/architecture | Martin Fowler, DHH, Joel Spolsky |
+| Engineering management / staff eng | Will Larson, James Stanier, Gergely Orosz |
+| Programming culture / industry | Joel Spolsky, Jeff Atwood, Paul Ford |
+| Laravel / PHP | Taylor Otwell, Jeffrey Way, Freek Van der Herten |
+| Ruby / Rails | DHH, Aaron Patterson, Eileen M. Uchitelle |
+| Business / SaaS / founders | Jason Fried, DHH, Garry Tan, Patrick McKenzie (patio11), Sahil Lavingia |
+| Developer relations / content marketing | Karl Hughes, Cassidy Williams, Swyx |
+| Marketing / SEO / content structure | Neil Patel (also credited for APP formula), Rand Fishkin |
 | Security | Troy Hunt, tptacek, Julia Evans |
-| Developer experience | Swyx, Cassidy Williams, Guillermo Rauch |
-
-Don't force-fit — match expert to actual topic.
 
 **Subagent prompt per expert (`Task` tool):**
 
