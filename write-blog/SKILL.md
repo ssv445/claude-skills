@@ -277,6 +277,93 @@ Apply consensus fixes (rerun research where needed). Then present polished notes
 
 Wait for confirmation.
 
+---
+
+## Phase 2: Outline
+
+### 2.1 Create Outline
+
+```markdown
+## Proposed Blog Post Outline
+
+**Title:** [under 46 chars]
+**Slug:** [kebab-case]
+**Target Length:** [word count]
+
+### Target Audience
+**Who:** [from Phase 0] | **Goal:** [what they want] | **Constraints:** [limitations]
+
+### Why This Helps THEM
+- [gap it fills] | [question it answers] | [constraint it addresses]
+
+### Structure (APP Formula)
+
+1. **Hook** — AGREE: [their pain] → PROMISE: [benefit] → PREVIEW: [roadmap]
+2. **Problem** — as THEY experience it, stats at their context (AUTHORITY)
+3. **Prerequisites** — only if needed, quick primer or link out
+4. **Solution** — why it fits THEIR situation, credentials (AUTHORITY), alternatives (RECIPROCITY)
+5. **Implementation** — steps at their level, code at their complexity, short paragraphs (5-6 lines max)
+6. **Trade-offs** — honest, relevant to their situation/scale (LIKING)
+7. **Results** — metrics at their scale, "others have seen..." (SOCIAL PROOF)
+8. **Is This Right for You?** — good fit / not good fit / middle-ground
+9. **Closing** — personal note, **end with question** (drives engagement)
+
+### Differentiation Checklist
+- [ ] Addresses THEIR specific situation
+- [ ] At THEIR experience level
+- [ ] Answers THEIR questions
+- [ ] Respects THEIR constraints
+```
+
+### 2.3 Expert Outline Review (runs BEFORE Gate 1)
+
+Per Pre-gate Review Pattern. Pick 3 experts based on topic:
+
+| Subject Area | Good Picks |
+|---|---|
+| AI/LLM tooling | Simon Willison, Swyx, Andrej Karpathy |
+| React/Frontend | Dan Abramov, Kent C. Dodds, Guillermo Rauch |
+| DevOps/Infrastructure | Charity Majors, Kelsey Hightower, Julia Evans |
+| Systems/Performance | Thorsten Ball, Julia Evans, Dan Luu |
+| Business/SaaS | Patrick McKenzie (patio11), Sahil Lavingia, Swyx |
+| Security | Troy Hunt, tptacek, Julia Evans |
+| Developer experience | Swyx, Cassidy Williams, Guillermo Rauch |
+
+Don't force-fit — match expert to actual topic.
+
+**Subagent prompt per expert (`Task` tool):**
+
+```
+You are [Expert Name], known for [specialty] at [blog/site].
+Review this blog OUTLINE for audience: [audience]. Be specific, direct.
+Focus on: Would you click this title? Structure compelling or listicle-feeling?
+Strongest/weakest section? Would it get shared on Twitter/HN? Missing anything?
+[insert outline]
+```
+
+Run Loop-Integrity Filter Team on the three persona outputs (catch fabricated quotes, blanket harshness that misses what works, gaps in critique).
+
+**Synthesize:**
+
+```markdown
+## Expert Outline Review
+### [Expert] — [key feedback points]
+### Where all 3 agree (high confidence): [consensus]
+### Actionable changes: [specific changes]
+```
+
+**Apply consensus changes silently.** Then present polished outline to user.
+
+### 2.2 GATE 1 — User Approves Polished Outline
+
+AskUserQuestion options:
+- **Approve outline** — proceed to writing
+- **Adjust audience** — refine target
+- **Revise structure** — change sections / flow
+- **Change angle** — different value prop
+
+Do NOT proceed until user approves.
+
 <!-- PHASES_END -->
 
 ## Quick Reference
