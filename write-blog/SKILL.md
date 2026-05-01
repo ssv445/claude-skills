@@ -774,6 +774,75 @@ If Chrome tools unavailable: `pbcopy` the prompt, ask user to generate manually,
 
 Write to `[cfg.posts.dir]/[slug].md` with full markdown + frontmatter (per `cfg.frontmatter` schema).
 
+---
+
+## Phase 8: Visual Testing (MANDATORY)
+
+### 8.1 Ensure Dev Server Running
+
+```bash
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3021/ || npm run dev &
+```
+
+(Port from project conventions; default 3021.)
+
+### 8.2 Open in Chrome
+
+Navigate to `http://localhost:3021/[slug]` (or whatever URL pattern matches `cfg.url.post_path`).
+
+### 8.3 Visual Checklist (scroll full page, screenshot each viewport)
+
+- **Layout:** Header image loads, title renders, all headings render as headings, no raw markdown visible.
+- **Code Blocks:** Syntax highlighting, no horizontal overflow, no broken fences.
+- **Images:** All load, SVGs render, reasonable sizing.
+- **Content:** Tables render as tables, links clickable, bold/italic correct, lists render properly.
+- **Spacing:** No huge gaps, no jammed sections, proper code block margins.
+
+### 8.5 Internal Review of Rendered Output (Pre-gate)
+
+After capturing screenshots, run 3 parallel Task subagents on the screenshots + rendered HTML:
+
+1. *Mechanical issues:* "Any broken markdown rendering, missing image, raw frontmatter showing? Flag specifics."
+2. *Spacing/layout:* "Any obvious layout breakage — squished sections, huge gaps, cut-off code blocks?"
+3. *Link integrity:* "Any link that visually looks broken (404, missing anchor)? Cross-check against insertion log."
+
+Apply consensus mechanical fixes silently (these are formatting bugs, no taste call).
+
+Only escalate to user if a real problem requires content change (e.g., a section that doesn't render).
+
+If Chrome tools unavailable: ask user to preview at `http://localhost:3021/[slug]` and confirm.
+
+### 8.6 Final Summary
+
+```markdown
+## Blog Post Created
+
+**File:** `[cfg.posts.dir]/[slug].md`
+**Title:** [title] ([X] chars) | **Meta:** [excerpt] ([X] chars)
+**Word Count:** ~[X]
+**External links:** [N]/10 | **Internal links:** [N]/5
+**Humanize avg score:** [N]/100 (after [I] iterations)
+**Target Audience:** [who] | **How It Helps:** [specific value]
+
+### Next Steps
+1. Image already generated and optimized.
+2. Preview: `npm run dev` → `/[slug]`
+3. Commit when ready.
+```
+
+---
+
+## Phase 9: Optional Commit
+
+If user wants:
+
+```bash
+git add [cfg.posts.dir]/[slug].md [cfg.images.posts_dir]/[slug]/
+git commit -m "Add blog post: [title]"
+```
+
+Or invoke `/commit`.
+
 <!-- PHASES_END -->
 
 ## Quick Reference
