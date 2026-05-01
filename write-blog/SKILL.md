@@ -845,10 +845,70 @@ Or invoke `/commit`.
 
 <!-- PHASES_END -->
 
+---
+
+## Failure Modes & User Escalation
+
+| Failure | Behavior |
+|---|---|
+| Site profile detection ambiguous | Ask user which posts dir |
+| Internal link candidates < 1 after grading | Fail loud, present top-3 by raw overlap |
+| External link candidates < 1 after grading | Fail loud, ask user for replacement URLs |
+| Humanization cap (5 iter) hit, avg ≥ 10 | Surface trace; accept / manual fix / restructure |
+| Pre-gate review retries (2) exhausted | Escalate to user with diagnosis |
+| Codex CLI fails | Continue with Gemini only, flag in summary |
+| Gemini CLI fails | Continue with Codex only, flag in summary |
+| Both external CLIs fail (humanize) | Skip detection, 2 fixed humanizer passes, flag |
+| Both external CLIs fail (link grade) | Drop to Claude-only, surface to user before insertion |
+
+---
+
+## Handling Feedback
+
+| Feedback | Action |
+|----------|--------|
+| "Too specific" | Broaden audience |
+| "Too generic" | Add codebase examples |
+| "Sounds AI-written" | Re-run Phase 5 humanize loop |
+| "Missing [topic]" | Research + add section |
+| "Too long" | Consolidate |
+| "Needs more sources" | Add to bare reference list, re-run Phase 4.9 |
+| "Title too long" | Shorten to <46 chars |
+| "Not my voice" | Ask for voice examples; re-run Phase 5 |
+
+---
+
 ## Quick Reference
 
-(filled in by later task)
+```
+Workflow: Audience → Research → Site Profile → Outline → Expert Review → [GATE 1]
+       → Draft (with bare ref list) → Fact Check + Expert Review → [GATE 2]
+       → Link Curation (3-way grade) → Iterative Humanize Loop (max 5, avg<10)
+       → Lint → Image → Write → Visual Test → Commit
+
+REQUIRED: Target audience (ask if missing)
+MANDATORY: Humanization loop (run until avg<10 or max 5 passes)
+Title: max 46 chars (60 with suffix)
+Meta: 120-160 chars
+External links: ≥1, ≤10 (per cfg)
+Internal links: ≥1, ≤5 (per cfg)
+External CLIs: codex exec / gemini -p
+Pre-gate review on every artifact (3-subagent team)
+Loop-integrity filter inside every iterative loop
+
+APP: AGREE → PROMISE → PREVIEW
+Cialdini: Reciprocity, Authority, Social Proof, Liking, Scarcity, Consistency
+Images: Human/realistic/natural — NO sci-fi/abstract/AI art
+```
+
+---
 
 ## Credits
 
-(filled in by later task)
+**[Joe Karlsson](https://www.joekarlsson.com/2025/10/building-a-claude-code-blog-skill-what-i-learned-systematizing-content-creation/)** — Two approval gates, automated linting, encode standards.
+
+**[Neil Patel](https://neilpatel.com/blog/how-to-write-blog-post/)** — APP Formula, short paragraphs, end with question, subheadings for skimmability.
+
+**[Robert Cialdini](https://www.influenceatwork.com/)** — 6 Principles of Persuasion applied to content.
+
+**v5 (2026-05-01):** Iterative humanization with multi-model detection (codex + gemini), per-repo `.write-blog.cfg`, link curation with 3-way value grading, pre-gate review pattern, loop-integrity filter team.
