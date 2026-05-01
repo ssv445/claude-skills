@@ -709,6 +709,71 @@ If neither codex nor gemini responds in a given iteration: skip detection that i
 
 If only one CLI responds: continue with single-detector mode (no avg, just that score). Flag in final report.
 
+---
+
+## Phase 5.x: Lint Check
+
+```bash
+which vale && vale content/posts/[slug].md
+# Or per repo: npm run lint
+```
+
+Report lint errors for awareness; non-blocking unless severe.
+
+---
+
+## Phase 6: Header Image (MANDATORY)
+
+**CRITICAL: No sci-fi, no abstract AI art, no futuristic imagery.**
+
+### 6.1 Prompt Rules
+
+**REQUIRED:** Real humans / workspaces, natural settings, authentic environments, natural lighting, candid moments, MacBook Pro / iPhone 16 Pro Max if devices shown, "No text overlays" appended.
+
+**BANNED:** Sci-fi/futuristic, abstract geometric, glowing/neon, robots/AI imagery, isometric, "digital"/"cyber", floating UI, stock cliches (handshakes, pointing at screens).
+
+### 6.2 Generate via Gemini Browser
+
+1. Open `https://gemini.google.com/app` in new tab.
+2. Click "Create image" tool button.
+3. Enter prompt, click "Send message".
+4. Wait 15-20 seconds.
+
+### 6.3 Download
+
+```javascript
+const img = document.querySelector('img[alt=", AI generated"]');
+const canvas = document.createElement('canvas');
+canvas.width = img.naturalWidth;
+canvas.height = img.naturalHeight;
+canvas.getContext('2d').drawImage(img, 0, 0);
+const a = document.createElement('a');
+a.href = canvas.toDataURL('image/png');
+a.download = '[slug]-header.png';
+document.body.appendChild(a);
+a.click();
+document.body.removeChild(a);
+```
+
+### 6.4 Crop & Optimize
+
+```bash
+mkdir -p [cfg.images.posts_dir]/[slug]/
+cp ~/Downloads/tmp/[slug]-header.png [cfg.images.posts_dir]/[slug]/header.png
+sips --cropToHeightWidth [height-60] [width-60] [cfg.images.posts_dir]/[slug]/header.png
+[cfg.images.optimizer_cmd]   # e.g. npm run optimize-images
+```
+
+Verify watermark removed by reading image. Update frontmatter `feature_image` to match path.
+
+If Chrome tools unavailable: `pbcopy` the prompt, ask user to generate manually, provide crop/optimize commands.
+
+---
+
+## Phase 7: Write File
+
+Write to `[cfg.posts.dir]/[slug].md` with full markdown + frontmatter (per `cfg.frontmatter` schema).
+
 <!-- PHASES_END -->
 
 ## Quick Reference
