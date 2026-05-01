@@ -75,7 +75,7 @@ links:
 # Iterative humanization loop
 humanize:
   target_score: 25              # avg AI-likelihood threshold (0-100, lower = more human; 15-25 is normal for human technical writing — treat as lint signal, not hard gate)
-  max_iterations: 5
+  max_iterations: 3              # 3 is enough for most drafts; if not converged by 3, structural rewrite likely needed (not more iterations)
   # Score bands (used in 5.3 score interpretation; below target_score = clean)
   band_noticeable: 25           # 25-40 = noticeable patterns, continue with feedback
   band_strong: 40               # 40-60 = strong AI signature, escalate after iter 3

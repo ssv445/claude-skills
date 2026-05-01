@@ -3,7 +3,7 @@ name: write-blog
 version: 5.0.0
 description: |
   Write a complete blog post with iterative humanization (multi-model AI-detection
-  via codex + gemini, target avg score < 25, max 5 passes — scores treated as lint
+  via codex + gemini, target avg score < 25, max 3 passes — scores treated as lint
   signals, not hard gates), pre-gate agent-team
   review (no raw AI output reaches user), curated internal + external links
   (3-way value grading by Claude + Codex + Gemini, hard caps 1-10 ext / 1-5 int),
@@ -35,7 +35,7 @@ loop, link curation with 3-way grading, pre-gate review on every artifact.
 2. **APP formula** for hooks, **Cialdini** for engagement
 3. **Two user gates** — outline + draft. Pre-gate agent review fixes consensus issues silently before showing user.
 4. **No raw AI output to user.** Every artifact passes through team review first.
-5. **Iterative humanization** — loop until avg AI-likelihood < 25 (max 5 passes), multi-model detection. Scores are lint signals; cap-reached surfaces to user, never publishes silently.
+5. **Iterative humanization** — loop until avg AI-likelihood < 25 (max 3 passes), multi-model detection. Scores are lint signals; cap-reached surfaces to user, never publishes silently.
 6. **Curated links** — at least 1 internal + 1 external; max 5 internal, 10 external; all graded.
 7. **Human imagery only** — realistic/natural, never sci-fi or abstract AI art.
 
@@ -78,7 +78,7 @@ Phase 4: Pre-gate Review Bundle
          (Loop-Integrity Filter on subagent outputs)
        → [GATE 2] user approves polished, fact-checked draft
 Phase 4.9: Link Curation & Insertion (3-way grade external + internal, caps + filter)
-Phase 5: Iterative Humanization Loop (max 5; codex + gemini detect; target avg < 25)
+Phase 5: Iterative Humanization Loop (max 3; codex + gemini detect; target avg < 25)
 Phase 5.x: Lint check
 Phase 6: Header image (Gemini)
 Phase 7: Write file
@@ -119,6 +119,18 @@ Synthesis:
 - 1/3 → log only, continue
 
 Applies inside: Phase 5 (humanization, per iteration — content is being transformed), Phase 4.9 (link grading per candidate — graders may hallucinate content). Skipped on: Phase 4.5 fact-check, Phase 2.3 + 4.7 expert reviews — those are already 3-way consensus reviews on unchanged source content, so the cross-validation LIF would provide is redundant.
+
+### Heartbeat (per-phase status log)
+
+At the start of every phase, print one short status line to the user so they can see progress instead of staring at silence:
+
+```
+[Phase 4.9] Grading 8 external + 5 internal link candidates...
+[Phase 5 iter 2] Running humanizer (focus: <top-3 reasons>)...
+[Phase 8.1] Starting dev server, watching stdout for URL (timeout: 30s)...
+```
+
+Format: `[Phase N.x] <verb-ing> <object>...` — single line, single sentence, present-continuous, no preamble. Skip the heartbeat for trivially fast steps (`< 2s`); use it for any step likely to take more than ~5 seconds.
 
 ### External CLI Reviewers
 
@@ -435,6 +447,8 @@ After each section: Would [audience] understand? Am I explaining things they kno
 
 ## Phase 4: Pre-gate Review Bundle (runs BEFORE Gate 2)
 
+**Run 4.5 and 4.7 in parallel.** They read the same draft, produce independent findings, and have no shared state. Dispatch both via `Task` at the same time; collect results when both finish; then apply consensus fixes from each. Sequential phasing here adds latency for no benefit.
+
 ### 4.1 Self-Review Checklist
 
 **Audience Fit (most important):**
@@ -690,7 +704,7 @@ draft_v0 = post-Gate-2, post-link-insertion draft
 detector_reasons = []
 iteration = 0
 
-while iteration < cfg.humanize.max_iterations (default 5):
+while iteration < cfg.humanize.max_iterations (default 3):
     iteration += 1
 
     # 1. Run humanizer
@@ -1014,11 +1028,11 @@ Or invoke `/commit`.
 ```
 Workflow: Audience → Research → Site Profile → Outline → Expert Review → [GATE 1]
        → Draft (with bare ref list) → Fact Check + Expert Review → [GATE 2]
-       → Link Curation (3-way grade) → Iterative Humanize Loop (max 5, avg<25)
+       → Link Curation (3-way grade) → Iterative Humanize Loop (max 3, avg<25)
        → Lint → Image → Write → Visual Test → Commit
 
 REQUIRED: Target audience (ask if missing)
-MANDATORY: Humanization loop (run until avg<25 or max 5 passes; scores are lint signals)
+MANDATORY: Humanization loop (run until avg<25 or max 3 passes; scores are lint signals)
 Title: max 46 chars (60 with suffix)
 Meta: 120-160 chars
 External links: ≥1, ≤10 (per cfg)
