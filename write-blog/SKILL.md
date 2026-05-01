@@ -87,6 +87,56 @@ Phase 8: Visual test (8.5 internal pre-review of rendered output)
 Phase 9: Optional commit
 ```
 
+---
+
+## Cross-Cutting Patterns
+
+### Pre-gate Review Pattern
+
+**Rule:** Every AI-generated artifact destined for a user gate first passes a 3-subagent pre-gate review. Consensus issues are fixed silently. Polished output reaches the user.
+
+Consensus rules:
+- 3/3 agree on issue → must fix before user
+- 2/3 agree → fix or document why ignored
+- 1/3 → log, don't act
+
+Retry budget: max 2 fix-and-re-review rounds per phase. Third round = escalate to user with diagnosis.
+
+Applies to: Phase 1.8 (research), Phase 2.3 (outline), Phase 4.5+4.7 (draft), Phase 8.5 (rendered output).
+
+### Loop-Integrity Filter Team
+
+**Purpose:** Inside iterative loops (humanize, link grade, fact check), each step's output is filtered by 3 subagents before becoming input to the next iteration. Catches drift on bad data.
+
+Three subagents, run in parallel:
+
+1. **Loss Detector** — "What valuable content / nuance / signal did this step REMOVE that should have stayed? List specifics."
+2. **Gap Finder** — "What's MISSING that the audience needs but isn't present? What would they ask that isn't answered?"
+3. **Hallucination Hunter** — "Any claim, score, or judgment NOT grounded in source/context? Flag fabricated specifics, invented stats, made-up quotes, unsupported scoring rationale."
+
+Synthesis:
+- 3/3 agree → must address before next iteration
+- 2/3 agree → address or document why ignored
+- 1/3 → log only, continue
+
+Applies inside: Phase 5 (humanization, per iteration), Phase 4.9 (link grading per candidate), Phase 4.5 (fact-check outputs), Phase 2.3 + 4.7 (expert reviews).
+
+### External CLI Reviewers
+
+`codex` and `gemini` CLIs provide independent-model verification. Used for:
+
+- AI-detection scoring in humanization loop (Phase 5)
+- Value grading of links in audience context (Phase 4.9)
+
+Invocation:
+
+```bash
+codex exec "<prompt>" 2>/dev/null      # 30s timeout
+gemini -p "<prompt>" 2>/dev/null       # 30s timeout, default gemini-2.5-pro
+```
+
+Both return text/JSON; parse score field. On failure of one, continue with the other and flag in final report. If both fail in humanize loop: skip detection, run 2 fixed humanizer passes, present to user with note. If both fail in link grading: drop to Claude-only, surface to user before insertion.
+
 <!-- PHASES_END -->
 
 ## Quick Reference
