@@ -430,6 +430,86 @@ show_title_and_feature_image: 1
 
 After each section: Would [audience] understand? Am I explaining things they know? (cut) Assuming things they don't? (explain) At their scale? Helps them specifically?
 
+---
+
+## Phase 4: Pre-gate Review Bundle (runs BEFORE Gate 2)
+
+### 4.1 Self-Review Checklist
+
+**Audience Fit (most important):**
+- [ ] Written for specific audience, not generic
+- [ ] At their experience level
+- [ ] Addresses their constraints
+- [ ] Uses their language
+
+**SEO:** Title <46 chars, excerpt 120-160, kebab slug, one H1, proper heading hierarchy.
+
+**Content:** Reference list at bottom contains ≥5 candidate URLs (not inserted yet); comparison table; honest trade-offs; personal voice.
+
+**AI Pattern Check:** No banned words, no em dash excess, no "Additionally/Furthermore/Moreover", no "**Bold:** text" lists, no generic conclusions.
+
+### 4.5 Adversarial Fact Check (3 internal subagents, parallel)
+
+**Subagent 1 — Skeptic:** Mark each claim VERIFIED / UNVERIFIABLE / SUSPICIOUS. Focus: numbers, before/after comparisons, implied causation, "most people" claims.
+
+**Subagent 2 — Devil's Advocate:** Flag EXAGGERATION / MISSING CONTEXT / CHERRY PICKING / FALSE PRECISION / OVERSELLING. Suggest honest alternative phrasing for each.
+
+**Subagent 3 — Consistency Checker:** Numbers match between sections? Opening claims match content? Contradictions? Title/meta accurate? Promises delivered? Code matches prose? Reference URLs cited correctly?
+
+Run Loop-Integrity Filter on the three subagent outputs (catch fabricated "verified" statuses, missed claims, defensible claims wrongly flagged).
+
+**Synthesize:**
+
+```markdown
+## Adversarial Fact Check Results
+### Must Fix (wrong/misleading) — [finding, flagged by whom]
+### Should Fix (exaggeration/missing context) — [finding, suggested fix]
+### Internal Inconsistencies — [section X vs section Y]
+### Passed — [areas all 3 agreed accurate]
+```
+
+**Fix all "Must Fix" before proceeding.** Same issue flagged by multiple subagents = almost certainly real.
+
+### 4.7 Expert Draft Review (3 personas, "would share" gate)
+
+Same 3 experts from Phase 2.3 review the complete draft.
+
+**Subagent prompt per expert (`Task` tool):**
+
+```
+You are [Expert Name]. Review this COMPLETE blog post for audience: [audience]. Be harsh.
+Focus on: Opening earn attention in 3 sentences? Strongest/weakest section?
+Would you share with your audience? Why/why not? Twitter/HN shareable?
+Hand-waving instead of specifics? Honest content ring true or performed?
+Technical depth right? Claims credible? Pacing issues?
+[insert full draft]
+```
+
+Run Loop-Integrity Filter on persona outputs.
+
+**Synthesize:**
+
+```markdown
+## Expert Draft Review
+### [Expert] — Would share? [YES/NO] | Strongest: [x] | Weakest: [x] | Key feedback: [points]
+
+### "Would they share it" test:
+- 3/3 → proceed to user gate
+- 2/3 → fix consensus weak points silently, then proceed
+- 1/3 or 0/3 → STOP. Surface to user with diagnosis. May need structural rewrite.
+```
+
+**Bar: at least 2/3 would share.** If yes, apply consensus fixes silently. Retry budget: max 2 rounds.
+
+### 4.2 GATE 2 — User Approves Polished Draft
+
+After 4.5 Must-Fix applied AND 4.7 ≥2/3 share-bar passed AND consensus fixes applied:
+
+AskUserQuestion options:
+- Approve draft / Revise content / Adjust tone / Add-remove sections
+
+Do NOT proceed until user approves.
+
 <!-- PHASES_END -->
 
 ## Quick Reference
