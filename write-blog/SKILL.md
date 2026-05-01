@@ -28,8 +28,6 @@ allowed-tools:
 Technical blog writer. v5 adds: per-repo site profile, multi-model AI-detection
 loop, link curation with 3-way grading, pre-gate review on every artifact.
 
-<!-- PHASES_START -->
-
 ## Core Principles
 
 1. **Target audience REQUIRED** — ask if not provided, never proceed without it
@@ -842,8 +840,6 @@ git commit -m "Add blog post: [title]"
 ```
 
 Or invoke `/commit`.
-
-<!-- PHASES_END -->
 
 ---
 
