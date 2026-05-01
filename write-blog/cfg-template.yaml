@@ -37,6 +37,18 @@ frontmatter:
 images:
   posts_dir: public/images/posts
   optimizer_cmd: "npm run optimize-images"   # shell cmd; null if none
+  watermark_crop_px: 60                      # sips will crop this many px from each edge to remove watermarks
+
+# Dev server (used by Phase 8 visual testing)
+dev:
+  cmd: "npm run dev"                         # command to start the local preview server
+  url_regex: "https?://[a-zA-Z0-9.-]+(:[0-9]+)?"   # regex to extract URL from `cmd` stdout (matches Next.js, Astro, Vite output)
+  startup_timeout_seconds: 30                # how long to wait for server to print URL
+  fallback_url: "http://localhost:3000"      # only used if url_regex fails to match within timeout
+
+# Visual testing
+visual:
+  preview_path: "{post_url}"                 # template; {post_url} = url.base + url.post_path applied to slug
 
 # Link policy (per-repo overrides for v5 hard caps)
 links:
@@ -45,7 +57,16 @@ links:
     max: 10
     rating_threshold: 6         # 0-10 avg from 3-way grade — T2 keep threshold
     t3_rating_threshold: 8      # higher bar for T3 sources (Medium, dev.to, random blogs)
-    whitelist_t1: []            # extends global T1 whitelist (auto-pass on authority; still relevance-checked)
+    # T1 = auto-pass authority (still relevance-checked). Repo extends global defaults.
+    whitelist_t1:
+      # Defaults (also live in skill code; this list extends them):
+      # developer.mozilla.org, docs.python.org, react.dev, nodejs.org,
+      # tc39.es, w3.org, whatwg.org, rfc-editor.org, wikipedia.org,
+      # iso.org, ieee.org
+      []
+    # T2 known publications (graded with default rating_threshold):
+    known_t2: []                # repo-specific extension of global T2 list
+    # T3 = anything not in T1/T2 (Medium, dev.to, LinkedIn, random blogs); uses t3_rating_threshold
   internal:
     min: 1
     max: 5
@@ -55,3 +76,13 @@ links:
 humanize:
   target_score: 25              # avg AI-likelihood threshold (0-100, lower = more human; 15-25 is normal for human technical writing — treat as lint signal, not hard gate)
   max_iterations: 5
+  # Score bands (used in 5.3 score interpretation; below target_score = clean)
+  band_noticeable: 25           # 25-40 = noticeable patterns, continue with feedback
+  band_strong: 40               # 40-60 = strong AI signature, escalate after iter 3
+  band_critical: 60             # 60+ = surface to user immediately
+
+# Link grading
+link_grade:
+  fetch_excerpt_words: 1500     # how much body content to send to graders per URL
+  shortlist_multiplier: 2       # internal candidates shortlisted = N * cfg.links.internal.max
+  fail_loud_top_n: 3            # how many top candidates to surface when min unmet

@@ -539,7 +539,7 @@ Repo extends T1 via `links.external.whitelist_t1` in `.write-blog.cfg`.
 For each `ref_url` in draft's bare reference list:
 
 1. `domain = extract_domain(ref_url)`
-2. **Pre-grade fetch (mandatory):** `fetched_content = WebFetch(ref_url, "extract: title, author, publish_date, body main content (first 1500 words), paywall_indicator")`. If WebFetch fails (404, timeout, blocked) → drop URL, log reason, do not grade.
+2. **Pre-grade fetch (mandatory):** `fetched_content = WebFetch(ref_url, "extract: title, author, publish_date, body main content (first cfg.link_grade.fetch_excerpt_words words, default 1500), paywall_indicator")`. If WebFetch fails (404, timeout, blocked) → drop URL, log reason, do not grade.
 3. **T1 lightweight relevance check** (not full grade — just one Task subagent call): "Does this T1 source's fetched content actually address `<section topic>` for `<audience>`? Yes / No / Tangential." Yes → keep. No / Tangential → drop. Reasoning: official docs are authoritative but not always relevant; auto-pass authority, not insertion.
 4. **T2 / T3 / unknown — 3-way value grade in parallel** using the fetched content:
 
@@ -555,7 +555,7 @@ For each `ref_url` in draft's bare reference list:
    Fetched publish date: <fetched_content.publish_date>
    Fetched body excerpt:
    <<<
-   <fetched_content.body[:1500]>
+   <fetched_content.body[:cfg.link_grade.fetch_excerpt_words]>
    >>>
    Paywall indicator: <fetched_content.paywall_indicator>
 
@@ -613,7 +613,7 @@ Goal: 1-5 internal links to other posts/pages on the user's site that build topi
    - Fetch sitemap from `cfg.url.base + cfg.url.sitemap` via WebFetch.
    - Parse `<url><loc>` entries. For each non-post URL, WebFetch + extract `<title>` and `<meta name="description">`. Compute keyword overlap.
 
-3. **Shortlist:** Top `2 * cfg.links.internal.max` candidates by overlap (default top 10).
+3. **Shortlist:** Top `cfg.link_grade.shortlist_multiplier * cfg.links.internal.max` candidates by overlap (default 2 × 5 = 10).
 
 4. **Pre-grade fetch** (already covered for non-post candidates in step 2; for post candidates, the frontmatter title + excerpt are sufficient — no extra fetch needed since posts live in the local repo).
 
@@ -628,7 +628,7 @@ Goal: 1-5 internal links to other posts/pages on the user's site that build topi
    ```
    AskUserQuestion("Internal link minimum (≥1) not met after grading.
 
-   Top-3 candidates by raw keyword overlap (with grade trace):
+   Top-N candidates by raw keyword overlap (N = cfg.link_grade.fail_loud_top_n, default 3) with grade trace:
    [paste: post title | overlap score | grade avg | drop reason]
 
    Choose:
@@ -748,11 +748,11 @@ Text:
 >>>
 ```
 
-Score interpretation (lint bands, not hard gates):
-- avg < 25 → **clean**, exit loop
-- 25-40 → noticeable patterns, continue with detector reasons fed back into next humanizer pass
-- 40-60 → strong AI signature, continue + escalate after iteration 3 with "Loss Detector veto" check (don't strip technical signal to hit a number)
-- 60+ → fundamental issue, surface to user immediately for restructuring decision
+Score interpretation (lint bands, all from cfg.humanize.*; not hard gates):
+- avg < `target_score` (default 25) → **clean**, exit loop
+- `band_noticeable`-`band_strong` (default 25-40) → noticeable patterns, continue with detector reasons fed back into next humanizer pass
+- `band_strong`-`band_critical` (default 40-60) → strong AI signature, continue + escalate after iteration 3 with "Loss Detector veto" check (don't strip technical signal to hit a number)
+- ≥ `band_critical` (default 60) → fundamental issue, surface to user immediately for restructuring decision
 
 ### 5.4 Cap Reached Without Pass
 
@@ -860,7 +860,11 @@ document.body.removeChild(a);
 ```bash
 mkdir -p [cfg.images.posts_dir]/[slug]/
 cp ~/Downloads/tmp/[slug]-header.png [cfg.images.posts_dir]/[slug]/header.png
-sips --cropToHeightWidth [height-60] [width-60] [cfg.images.posts_dir]/[slug]/header.png
+# Crop cfg.images.watermark_crop_px from each edge (default 60) to remove generator watermark.
+# Read source dimensions first, subtract 2 * watermark_crop_px from height and width.
+sips --cropToHeightWidth $((H - 2*$WCP)) $((W - 2*$WCP)) [cfg.images.posts_dir]/[slug]/header.png
+# where H, W = source height/width via `sips -g pixelHeight -g pixelWidth`,
+# and WCP = cfg.images.watermark_crop_px (default 60)
 [cfg.images.optimizer_cmd]   # e.g. npm run optimize-images
 ```
 
@@ -878,17 +882,46 @@ Write to `[cfg.posts.dir]/[slug].md` with full markdown + frontmatter (per `cfg.
 
 ## Phase 8: Visual Testing (MANDATORY)
 
-### 8.1 Ensure Dev Server Running
+### 8.1 Ensure Dev Server Running and Discover Its URL
+
+Never hardcode the dev server URL. The dev server (Next.js, Astro, Vite, etc.) prints its actual URL on startup, and that may differ across runs (different port if 3000 is busy, IPv6 binding, https when configured). Capture it from the server's stdout.
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:3021/ || npm run dev &
+# Step 1: only check fallback_url to see if a dev server is already up.
+# (Don't hardcode a port list — the dev server prints its own URL when started.)
+DEV_URL=""
+if curl -s -o /dev/null -w "%{http_code}" "$cfg.dev.fallback_url/" 2>/dev/null | grep -qE "^(200|301|302|404)$"; then
+    DEV_URL="$cfg.dev.fallback_url"
+    echo "Detected existing dev server at $DEV_URL — not starting a new one."
+fi
+
+# Step 2: if nothing answered, start the server and parse its stdout for the URL
+if [ -z "$DEV_URL" ]; then
+    LOG=$(mktemp)
+    eval "$cfg.dev.cmd" > "$LOG" 2>&1 &
+    SERVER_PID=$!
+    # Poll log up to cfg.dev.startup_timeout_seconds for a URL matching cfg.dev.url_regex
+    DEADLINE=$(( $(date +%s) + cfg.dev.startup_timeout_seconds ))
+    while [ $(date +%s) -lt $DEADLINE ]; do
+        DEV_URL=$(grep -oE "$cfg.dev.url_regex" "$LOG" | head -1)
+        [ -n "$DEV_URL" ] && break
+        sleep 1
+    done
+    if [ -z "$DEV_URL" ]; then
+        echo "Dev server did not print URL within timeout; using fallback $cfg.dev.fallback_url"
+        DEV_URL="$cfg.dev.fallback_url"
+    fi
+fi
+echo "DEV_URL=$DEV_URL"
 ```
 
-(Port from project conventions; default 3021.)
+**Important:** never kill `$SERVER_PID` if the user already had a dev server running (per CLAUDE.md "Never kill external processes"). Only stop servers this skill itself started.
 
 ### 8.2 Open in Chrome
 
-Navigate to `http://localhost:3021/[slug]` (or whatever URL pattern matches `cfg.url.post_path`).
+Navigate to `$DEV_URL + cfg.url.post_path.replace("{slug}", slug)`.
+
+Example: if the dev server prints `http://localhost:3000` and `cfg.url.post_path = "/blog/{slug}"`, the preview URL is `http://localhost:3000/blog/[slug]`.
 
 ### 8.3 Visual Checklist (scroll full page, screenshot each viewport)
 
@@ -910,7 +943,7 @@ Apply consensus mechanical fixes silently (these are formatting bugs, no taste c
 
 Only escalate to user if a real problem requires content change (e.g., a section that doesn't render).
 
-If Chrome tools unavailable: ask user to preview at `http://localhost:3021/[slug]` and confirm.
+If Chrome tools unavailable: ask user to preview at `$DEV_URL + cfg.url.post_path` (substituted with slug) and confirm.
 
 ### 8.6 Final Summary
 
@@ -926,7 +959,7 @@ If Chrome tools unavailable: ask user to preview at `http://localhost:3021/[slug
 
 ### Next Steps
 1. Image already generated and optimized.
-2. Preview: `npm run dev` → `/[slug]`
+2. Preview: `cfg.dev.cmd` → `$DEV_URL/[slug]` (URL captured from dev-server stdout in 8.1)
 3. Commit when ready.
 ```
 
