@@ -364,6 +364,72 @@ AskUserQuestion options:
 
 Do NOT proceed until user approves.
 
+---
+
+## Phase 3: Write Draft
+
+### 3.1 Writing Guidelines
+
+**Audience-first:** Write at THEIR level, use THEIR language, address THEIR constraints, answer THEIR questions, give THEM actionable steps.
+
+**DO:** First person, specific numbers with source links, relatable anecdotes, acknowledge uncertainty, vary sentence length, tables for comparisons, exit ramps ("If you're in situation X, try Y instead"), short paragraphs (5-6 lines max).
+
+**BANNED AI Patterns:**
+- Words: delve, crucial, enhance, foster, landscape, tapestry, underscore, pivotal, showcasing, vibrant, revolutionary, game-changing, seamless, robust, leverage, synergy, groundbreaking
+- Patterns: "**Bold Header:** text" in lists, "It's not just X, it's Y", rule of three for everything, em dash (—) excess, "Additionally/Furthermore/Moreover" starters, generic conclusions, curly quotes
+
+### 3.2 Blog Structure (APP + Persuasion)
+
+```markdown
+# [Title — speaks to THEIR situation]
+
+<!-- APP FORMULA -->
+[AGREE → PROMISE → PREVIEW]
+
+## Problem (as THEY experience it)
+## Quick Background (only if THEY need it — skip if they'd know)
+## Solution (why it fits THEIR situation, alternatives for different constraints)
+## Implementation (at THEIR level, code they can use)
+## Trade-offs (relevant to THEM, honest)
+## Results (at their scale, SOCIAL PROOF)
+## Is This Right for You? (good fit / not good fit / middle-ground)
+[Closing: personal note + question for engagement]
+
+---
+
+## References (bare list, links inserted in Phase 4.9)
+
+- [topic-1]: <https://source.example/article-a>
+- [topic-2]: <https://docs.example.com/section>
+- [topic-3]: <https://blog.example/post>
+```
+
+**IMPORTANT:** Cite sources only as bare URLs in this list during Phase 3. Do NOT yet embed inline markdown links in prose. Phase 4.9 inserts curated links after fact-check + grading.
+
+### 3.3 Frontmatter
+
+```yaml
+---
+title: "[under 46 chars]"
+slug: [kebab-case]
+date: [ISO today]
+last_updated: [ISO today]
+excerpt: "[120-160 chars]"
+feature_image: /images/posts/[slug]/header.jpg
+featured: 1
+type: post
+status: published
+visibility: public
+show_title_and_feature_image: 1
+---
+```
+
+(Field names follow `.write-blog.cfg` `frontmatter` schema; adjust if cfg overrides.)
+
+### 3.4 Audience Check Per Section
+
+After each section: Would [audience] understand? Am I explaining things they know? (cut) Assuming things they don't? (explain) At their scale? Helps them specifically?
+
 <!-- PHASES_END -->
 
 ## Quick Reference
