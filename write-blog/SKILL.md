@@ -137,6 +137,146 @@ gemini -p "<prompt>" 2>/dev/null       # 30s timeout, default gemini-2.5-pro
 
 Both return text/JSON; parse score field. On failure of one, continue with the other and flag in final report. If both fail in humanize loop: skip detection, run 2 fixed humanizer passes, present to user with note. If both fail in link grading: drop to Claude-only, surface to user before insertion.
 
+---
+
+## Phase 0: Audience Definition (REQUIRED)
+
+If no audience provided, STOP. AskUserQuestion:
+
+```
+"Who specifically is this blog for? Examples:
+- 'Junior devs learning React for the first time'
+- 'Solo founders building their first SaaS'
+- 'Backend devs who've never touched Docker'
+Who's your target reader?"
+```
+
+### Audience Profile Template
+
+```markdown
+## Target Audience Profile
+**Who:** [specific description]
+**Experience Level:** [beginner / intermediate / advanced with THIS topic]
+**Current Situation:** [pain they have]
+**Goal:** [what they want]
+**Constraints:** [time, budget, team, stack]
+
+### Already Know
+- [assumed knowledge]
+
+### Don't Know (gaps to fill)
+- [knowledge gap]
+
+### Likely Questions
+- [question they'd ask]
+- [objection they'd have]
+
+### What Makes This Useful to Them
+- [specific outcome]
+```
+
+Keep profile visible throughout all phases. Every decision references it.
+
+---
+
+## Phase 1: Research
+
+### 1.1 Load SEO Rules
+
+Read `.claude/SEO-RULES.md` if exists. Extract: title max length (usually 46 chars + suffix), meta description (120-160), image requirements, URL format.
+
+### 1.2 GSC Keyword Research (if MCP available)
+
+**Step 1:** Existing rankings — `enhanced_search_analytics` with `queryFilter: [topic]`, `filterOperator: "contains"`, 90-day range, `rowLimit: 50`
+
+**Step 2:** Quick wins — same query with `enableQuickWins: true`. Queries ranking 4-10 with low CTR = title/heading candidates.
+
+**Step 3:** Compile:
+
+```markdown
+## GSC Keyword Analysis
+**Existing rankings:** [table: Query, Impressions, Clicks, CTR, Position]
+**Quick wins (rank 4-10, low CTR):** [list]
+**Title recommendations:** [2 options with char counts]
+**Slug recommendation:** [primary keyword]
+```
+
+If GSC MCP unavailable, skip — rely on competitive analysis.
+
+### 1.3 Audience-Focused Competitive Analysis
+
+Search: `"[topic] for [audience type]"`, `"[topic] guide [experience level]"`, `"how to [topic] [audience constraint]"`
+
+For top 3-5 results, analyze from audience's perspective:
+
+| Article | Assumes Reader Knows | Skips/Glosses Over | Audience Gap |
+|---------|---------------------|-------------------|--------------|
+| [URL] | [prereqs assumed] | [what they skip] | [what YOUR audience needs] |
+
+### 1.4 Fact Research
+
+Search for data relevant to audience's situation: stats at their scale, benchmarks at their level, case studies from similar contexts.
+
+### 1.5 Codebase Research (if provided)
+
+Explore for relatable examples: challenges the audience would face, solutions at their complexity level, relevant metrics.
+
+### 1.6 Compile Research Notes
+
+```markdown
+## Target Audience Reminder
+[paste audience profile]
+
+## Competitive Insights
+- Existing content assumes: [knowledge they may not have]
+- Gap I can fill: [specific thing audience needs]
+- My unique angle: [one sentence]
+
+## Key Facts
+1. [fact that matters to them] — [source URL]
+
+## From Experience (if codebase)
+- [relatable example/challenge]
+
+## Questions MY AUDIENCE Would Ask
+- [based on knowledge gaps and constraints]
+```
+
+### 1.7 Site Profile (`.write-blog.cfg`)
+
+**Goal:** Detect once per repo, reuse forever. Stores posts dir, frontmatter shape, URL pattern, sitemap path, link policy, humanize thresholds.
+
+**Routine:**
+
+1. If `.write-blog.cfg` exists at repo root → load it, skip detection.
+2. Otherwise detect:
+   - Framework markers: `next.config.js`, `astro.config.mjs`, `_config.yml` (Hugo/Jekyll), `gatsby-config.js`.
+   - Glob common posts paths: `content/posts/`, `content/blog/`, `src/content/blog/`, `_posts/`, `posts/`.
+   - Read 1-3 existing posts in detected dir; parse frontmatter to infer schema.
+   - Look for `sitemap.xml` (root) or `app/sitemap.{ts,js}` (Next.js).
+   - Read `package.json` `homepage` and `README` for site URL hints.
+3. Render config from the skill's `cfg-template.yaml` (path: `${SKILL_DIR}/cfg-template.yaml`) with detected values + sensible defaults; write to `<repo-root>/.write-blog.cfg`.
+4. AskUserQuestion: show config, "Looks right?" — single confirmation. On "edit", let user revise then save.
+5. If detection ambiguous (two viable post dirs, no clear framework) → ask user which to use before writing config.
+
+**Failure mode:** Cannot detect at all → write minimal cfg with placeholders, ask user to fill in posts dir + URL base before continuing.
+
+### 1.8 Pre-gate Research Review
+
+Apply Pre-gate Review Pattern to research notes + audience profile:
+
+**Subagent prompts (3 parallel `Task` calls):**
+
+1. *Relevance reviewer:* "Are research findings actually relevant to this audience? Flag any tangential facts that pad the post without serving the audience's goal."
+2. *Gap reviewer:* "What's missing from research that this specific audience needs? Identify questions they'd have that aren't answered yet."
+3. *Audience-fit reviewer:* "Are the cited stats / examples at the right scale and experience level for this audience? Flag mismatches."
+
+Apply consensus fixes (rerun research where needed). Then present polished notes to user with light prompt:
+
+> "Research direction looks like: [summary]. Proceed to outline, or refine?"
+
+Wait for confirmation.
+
 <!-- PHASES_END -->
 
 ## Quick Reference
