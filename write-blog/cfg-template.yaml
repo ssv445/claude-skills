@@ -43,8 +43,9 @@ links:
   external:
     min: 1
     max: 10
-    rating_threshold: 6         # 0-10 avg from 3-way grade
-    whitelist_t1: []            # extends global T1 whitelist (auto-pass)
+    rating_threshold: 6         # 0-10 avg from 3-way grade — T2 keep threshold
+    t3_rating_threshold: 8      # higher bar for T3 sources (Medium, dev.to, random blogs)
+    whitelist_t1: []            # extends global T1 whitelist (auto-pass on authority; still relevance-checked)
   internal:
     min: 1
     max: 5
@@ -52,5 +53,5 @@ links:
 
 # Iterative humanization loop
 humanize:
-  target_score: 10              # avg AI-likelihood threshold (0-100, lower = more human)
+  target_score: 25              # avg AI-likelihood threshold (0-100, lower = more human; 15-25 is normal for human technical writing — treat as lint signal, not hard gate)
   max_iterations: 5

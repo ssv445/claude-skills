@@ -3,7 +3,8 @@ name: write-blog
 version: 5.0.0
 description: |
   Write a complete blog post with iterative humanization (multi-model AI-detection
-  via codex + gemini, target avg score < 10, max 5 passes), pre-gate agent-team
+  via codex + gemini, target avg score < 25, max 5 passes — scores treated as lint
+  signals, not hard gates), pre-gate agent-team
   review (no raw AI output reaches user), curated internal + external links
   (3-way value grading by Claude + Codex + Gemini, hard caps 1-10 ext / 1-5 int),
   per-repo .write-blog.cfg site profile, expert persona reviews, and adversarial
@@ -34,7 +35,7 @@ loop, link curation with 3-way grading, pre-gate review on every artifact.
 2. **APP formula** for hooks, **Cialdini** for engagement
 3. **Two user gates** — outline + draft. Pre-gate agent review fixes consensus issues silently before showing user.
 4. **No raw AI output to user.** Every artifact passes through team review first.
-5. **Iterative humanization** — loop until avg AI-likelihood < 10 (max 5 passes), multi-model detection.
+5. **Iterative humanization** — loop until avg AI-likelihood < 25 (max 5 passes), multi-model detection. Scores are lint signals; cap-reached surfaces to user, never publishes silently.
 6. **Curated links** — at least 1 internal + 1 external; max 5 internal, 10 external; all graded.
 7. **Human imagery only** — realistic/natural, never sci-fi or abstract AI art.
 
@@ -77,7 +78,7 @@ Phase 4: Pre-gate Review Bundle
          (Loop-Integrity Filter on subagent outputs)
        → [GATE 2] user approves polished, fact-checked draft
 Phase 4.9: Link Curation & Insertion (3-way grade external + internal, caps + filter)
-Phase 5: Iterative Humanization Loop (max 5; codex + gemini detect; target avg < 10)
+Phase 5: Iterative Humanization Loop (max 5; codex + gemini detect; target avg < 25)
 Phase 5.x: Lint check
 Phase 6: Header image (Gemini)
 Phase 7: Write file
@@ -100,7 +101,7 @@ Consensus rules:
 
 Retry budget: max 2 fix-and-re-review rounds per phase. Third round = escalate to user with diagnosis.
 
-Applies to: Phase 1.8 (research), Phase 2.3 (outline), Phase 4.5+4.7 (draft), Phase 8.5 (rendered output).
+Applies to: Phase 2.3 (outline) and Phase 4.5+4.7 (draft) — the high-stakes gates. Phase 1.8 (research) uses a single-subagent light check instead. Phase 8.5 (rendered output) uses a 3-subagent mechanical check (no retry budget — it's just formatting bugs).
 
 ### Loop-Integrity Filter Team
 
@@ -117,7 +118,7 @@ Synthesis:
 - 2/3 agree → address or document why ignored
 - 1/3 → log only, continue
 
-Applies inside: Phase 5 (humanization, per iteration), Phase 4.9 (link grading per candidate), Phase 4.5 (fact-check outputs), Phase 2.3 + 4.7 (expert reviews).
+Applies inside: Phase 5 (humanization, per iteration — content is being transformed), Phase 4.9 (link grading per candidate — graders may hallucinate content). Skipped on: Phase 4.5 fact-check, Phase 2.3 + 4.7 expert reviews — those are already 3-way consensus reviews on unchanged source content, so the cross-validation LIF would provide is redundant.
 
 ### External CLI Reviewers
 
@@ -259,21 +260,23 @@ Explore for relatable examples: challenges the audience would face, solutions at
 
 **Failure mode:** Cannot detect at all → write minimal cfg with placeholders, ask user to fill in posts dir + URL base before continuing.
 
-### 1.8 Pre-gate Research Review
+### 1.8 Light Research Sanity Check (NOT full pre-gate review)
 
-Apply Pre-gate Review Pattern to research notes + audience profile:
+Research notes are low-blast-radius — outline (Phase 2) and draft (Phase 3) are where errors compound. So this step is intentionally lightweight: a single `Task` subagent reviews the research notes + audience profile and answers three questions:
 
-**Subagent prompts (3 parallel `Task` calls):**
+> "Looking at this research:
+> 1. Any tangential facts that don't serve the audience's goal?
+> 2. Any obvious gap (a question this audience would ask that isn't answered)?
+> 3. Are stats/examples at the right scale for this audience?
+> Output: TANGENTIAL=[list], GAP=[list], SCALE_MISMATCH=[list], or "none" for each."
 
-1. *Relevance reviewer:* "Are research findings actually relevant to this audience? Flag any tangential facts that pad the post without serving the audience's goal."
-2. *Gap reviewer:* "What's missing from research that this specific audience needs? Identify questions they'd have that aren't answered yet."
-3. *Audience-fit reviewer:* "Are the cited stats / examples at the right scale and experience level for this audience? Flag mismatches."
+Address only items the subagent flags concretely (don't speculate). Skip if all three return "none". No retry budget — this is one shot before user.
 
-Apply consensus fixes (rerun research where needed). Then present polished notes to user with light prompt:
+Then present to user with a light prompt:
 
 > "Research direction looks like: [summary]. Proceed to outline, or refine?"
 
-Wait for confirmation.
+Wait for confirmation. Full pre-gate-review pattern (3 subagents, retry budget) kicks in at Phase 2.3 (outline) and 4.5+4.7 (draft) where stakes justify the cost.
 
 ---
 
@@ -339,7 +342,7 @@ Strongest/weakest section? Would it get shared on Twitter/HN? Missing anything?
 [insert outline]
 ```
 
-Run Loop-Integrity Filter Team on the three persona outputs (catch fabricated quotes, blanket harshness that misses what works, gaps in critique).
+(LIF removed at this step: the 3-persona consensus already provides cross-validation. LIF is reserved for transformation steps like humanization where one artifact mutates content; expert review produces three independent critiques, which already gives the disagreement signal.)
 
 **Synthesize:**
 
@@ -352,7 +355,7 @@ Run Loop-Integrity Filter Team on the three persona outputs (catch fabricated qu
 
 **Apply consensus changes silently.** Then present polished outline to user.
 
-### 2.2 GATE 1 — User Approves Polished Outline
+### 2.4 GATE 1 — User Approves Polished Outline
 
 AskUserQuestion options:
 - **Approve outline** — proceed to writing
@@ -483,7 +486,7 @@ Technical depth right? Claims credible? Pacing issues?
 [insert full draft]
 ```
 
-Run Loop-Integrity Filter on persona outputs.
+(LIF removed here for the same reason as Phase 2.3 — three personas already provide consensus.)
 
 **Synthesize:**
 
@@ -499,9 +502,9 @@ Run Loop-Integrity Filter on persona outputs.
 
 **Bar: at least 2/3 would share.** If yes, apply consensus fixes silently. Retry budget: max 2 rounds.
 
-### 4.2 GATE 2 — User Approves Polished Draft
+### 4.8 GATE 2 — User Approves Polished Draft
 
-After 4.5 Must-Fix applied AND 4.7 ≥2/3 share-bar passed AND consensus fixes applied:
+After 4.5 Must-Fix applied AND 4.7 ≥2/3 share-bar passed AND consensus fixes applied (this is sub-phase 4.8 in document order, despite the v4-legacy "GATE 2" name):
 
 AskUserQuestion options:
 - Approve draft / Revise content / Adjust tone / Add-remove sections
@@ -521,12 +524,12 @@ Do NOT proceed until user approves.
 - Reference: `wikipedia.org` (definitional links only)
 - Standards bodies: `iso.org`, `ieee.org`
 
-**T2 — graded, default keep if avg ≥6:**
+**T2 — graded, keep if avg ≥ `cfg.links.external.rating_threshold` (default 6):**
 - Established tech publications: `theverge.com`, `arstechnica.com`, `wired.com`
 - Personal blogs of recognized experts
 - Major company engineering blogs: `engineering.fb.com`, `netflixtechblog.com`, etc.
 
-**T3 — graded, default drop unless avg ≥8:**
+**T3 — graded, default drop unless avg ≥ `cfg.links.external.t3_rating_threshold` (default 8):**
 - Medium articles, dev.to articles, LinkedIn articles, random blogs
 
 Repo extends T1 via `links.external.whitelist_t1` in `.write-blog.cfg`.
@@ -536,34 +539,66 @@ Repo extends T1 via `links.external.whitelist_t1` in `.write-blog.cfg`.
 For each `ref_url` in draft's bare reference list:
 
 1. `domain = extract_domain(ref_url)`
-2. If `domain in whitelist_T1` (global ∪ cfg overrides) → keep, skip grading.
-3. Else, run **3-way value grade in parallel:**
+2. **Pre-grade fetch (mandatory):** `fetched_content = WebFetch(ref_url, "extract: title, author, publish_date, body main content (first 1500 words), paywall_indicator")`. If WebFetch fails (404, timeout, blocked) → drop URL, log reason, do not grade.
+3. **T1 lightweight relevance check** (not full grade — just one Task subagent call): "Does this T1 source's fetched content actually address `<section topic>` for `<audience>`? Yes / No / Tangential." Yes → keep. No / Tangential → drop. Reasoning: official docs are authoritative but not always relevant; auto-pass authority, not insertion.
+4. **T2 / T3 / unknown — 3-way value grade in parallel** using the fetched content:
 
-   **Prompt template (used by all three graders):**
+   **Prompt template (used by all three graders, same body for each):**
 
    ```
-   Rate the value of <URL> for an audience: <audience profile>
+   Rate the value of this external link for an audience: <audience profile>
    reading a section about <section topic>, in the context of this draft.
 
-   Consider: authority of source, relevance to audience, freshness,
-   uniqueness of information vs alternatives.
+   Source URL: <ref_url>
+   Fetched title: <fetched_content.title>
+   Fetched author: <fetched_content.author>
+   Fetched publish date: <fetched_content.publish_date>
+   Fetched body excerpt:
+   <<<
+   <fetched_content.body[:1500]>
+   >>>
+   Paywall indicator: <fetched_content.paywall_indicator>
 
-   Output ONLY valid JSON: {"score": N, "reasons": ["..."]}
-   Score is 0-10 (0 = useless, 10 = essential).
+   Score 0-10 on each dimension, then average:
+   - Authority (source credibility on this topic)
+   - Relevance (does the fetched body actually address the section topic?)
+   - Freshness (current enough for this audience?)
+   - UX (no hard paywall, no broken layout, no excessive ads)
+   - Uniqueness (adds something the draft doesn't already cover)
+
+   Output ONLY valid JSON: {"score": N, "dimensions": {authority: N, relevance: N, freshness: N, ux: N, uniqueness: N}, "reasons": ["..."]}
    ```
 
-   - `claude_grade` ← `Task` subagent
-   - `codex_grade` ← `codex exec "<prompt>"`
-   - `gemini_grade` ← `gemini -p "<prompt>"`
+   - `claude_grade` ← `Task` subagent dispatched as:
+     ```
+     Task(description="Grade external link", prompt="<full prompt above with substitutions>")
+     ```
+     Pass: full audience profile, section topic, fetched_content fields. Subagent returns JSON.
+   - `codex_grade` ← `codex exec "<full prompt above>"` with same substitutions.
+   - `gemini_grade` ← `gemini --skip-trust -p "<full prompt above>"` with same substitutions.
 
-4. Run **Loop-Integrity Filter** on the three grade outputs (catch fabricated relevance claims; ensure none of the graders cite content they didn't fetch).
-5. `avg = mean(scores)`. T2 keep if `avg ≥ 6`; T3 keep if `avg ≥ 8`; otherwise drop.
+   **JSON parse fallback:** If a grader's stdout doesn't parse cleanly, regex-extract the first `{...}` block. If still unparseable, treat that grader as failed and continue with the other two. If 2+ fail, treat as CLI failure (Section 5.5 fallback).
+
+5. Run **Loop-Integrity Filter** on the three grade outputs (catch fabricated relevance claims; ensure graders' reasoning aligns with `fetched_content.body` rather than URL slug).
+6. `avg = mean(scores)`. T2 keep if `avg ≥ cfg.links.external.rating_threshold` (default 6); T3 keep if `avg ≥ cfg.links.external.t3_rating_threshold` (default 8); otherwise drop.
 
 After all refs processed:
 
 - Sort kept refs by `avg` desc.
 - Truncate to `cfg.links.external.max` (default 10).
-- If kept count `< cfg.links.external.min` (default 1) → **fail loud**: surface to user with full grade trace, ask to provide replacement URLs manually.
+- If kept count `< cfg.links.external.min` (default 1) → **fail loud**:
+
+  ```
+  AskUserQuestion("External link minimum (≥1) not met after grading.
+
+  Graded results:
+  [paste grade trace: URL | scores | drop reason]
+
+  Choose:
+  - Provide replacement URL(s) manually (paste below)
+  - Lower min to 0 for this post (allow zero external links)
+  - Restart Phase 4.9.2 with broader source search")
+  ```
 
 ### 4.9.3 Internal Link Pipeline
 
@@ -571,22 +606,38 @@ Goal: 1-5 internal links to other posts/pages on the user's site that build topi
 
 1. **Discover post candidates:**
    - `posts = glob(cfg.posts.dir + "/" + cfg.posts.pattern)` relative to repo root.
-   - For each `post` (excluding the current draft if it's already saved): parse frontmatter, extract `title`, `slug`, `tags`, `excerpt`.
-   - Compute keyword overlap between draft body and post (title + tags + excerpt). Simple bag-of-words intersection over Jaccard is sufficient.
+   - For each `post` (excluding the current draft if it's already saved): parse frontmatter, extract values from fields named in cfg: `cfg.posts.title_field`, `cfg.posts.slug_field`, `cfg.posts.tags_field` (skip if `null`), `cfg.posts.excerpt_field`.
+   - Compute keyword overlap between draft body and post (concatenated title + tags + excerpt fields). Bag-of-words intersection over Jaccard is sufficient.
 
 2. **Discover non-post candidates** (if `cfg.url.sitemap` set):
-   - Fetch sitemap from `cfg.url.base + cfg.url.sitemap`.
-   - Parse `<url><loc>` entries. For each non-post URL, fetch + extract `<title>` and `<meta name="description">`. Compute keyword overlap.
+   - Fetch sitemap from `cfg.url.base + cfg.url.sitemap` via WebFetch.
+   - Parse `<url><loc>` entries. For each non-post URL, WebFetch + extract `<title>` and `<meta name="description">`. Compute keyword overlap.
 
 3. **Shortlist:** Top `2 * cfg.links.internal.max` candidates by overlap (default top 10).
 
-4. **3-way grade** each shortlisted candidate using the same prompt template as 4.9.2 (URL = `cfg.url.base + cfg.url.post_path.replace("{slug}", slug)`).
+4. **Pre-grade fetch** (already covered for non-post candidates in step 2; for post candidates, the frontmatter title + excerpt are sufficient — no extra fetch needed since posts live in the local repo).
 
-5. Run **Loop-Integrity Filter** on grade outputs.
+5. **3-way grade** each shortlisted candidate using the 4.9.2 prompt template adapted for internal links (URL = `cfg.url.base + cfg.url.post_path.replace("{slug}", slug_value)`; `fetched_content` = local frontmatter excerpt for posts, or fetched HTML title+description for non-post pages).
 
-6. Keep candidates with `avg ≥ cfg.links.internal.rating_threshold` (default 6). Sort by `avg` desc. Truncate to `cfg.links.internal.max` (default 5).
+6. Run **Loop-Integrity Filter** on grade outputs.
 
-7. If kept count `< cfg.links.internal.min` (default 1) → **fail loud**: surface top-3 candidates by raw overlap with grade trace, ask user to pick or skip.
+7. Keep candidates with `avg ≥ cfg.links.internal.rating_threshold` (default 6). Sort by `avg` desc. Truncate to `cfg.links.internal.max` (default 5).
+
+8. If kept count `< cfg.links.internal.min` (default 1) → **fail loud**:
+
+   ```
+   AskUserQuestion("Internal link minimum (≥1) not met after grading.
+
+   Top-3 candidates by raw keyword overlap (with grade trace):
+   [paste: post title | overlap score | grade avg | drop reason]
+
+   Choose:
+   - Insert candidate #1 anyway (override grade)
+   - Insert candidate #2 anyway
+   - Insert candidate #3 anyway
+   - Skip internal links for this post (sparse-site override; document reason)
+   - Provide a manual internal URL")
+   ```
 
 ### 4.9.4 Insertion
 
@@ -620,46 +671,66 @@ Append to phase output (internal log; not part of post):
 
 ## Phase 5: Iterative Humanization Loop
 
-**Goal:** Drive avg AI-likelihood score below 10 (0-100 scale, lower = more human) using `humanizer` skill + multi-model detection. Max 5 iterations.
+**Goal:** Drive avg AI-likelihood score below 25 (0-100 scale, lower = more human) using `humanizer` skill + multi-model detection. Max 5 iterations.
+
+**Why 25, not 10?** External LLM "AI detectors" (codex + gemini) are not calibrated detectors — they are subjective judges using a prompt. Real human technical writing typically scores 15-25 because of necessary formal structures (lists, headings, code blocks, qualifying phrases). Forcing avg<10 risks over-humanizing into uncanny territory: fake quirks, lost technical precision, choppy pacing. The 25 ceiling is a *lint signal*: below it = clean; above it = inspect, don't auto-fail.
 
 ### 5.1 Voice Calibration (one-time, before loop)
 
-Read 2-3 of the author's existing posts (from `cfg.posts.dir`). Note: typical sentence length, humor pattern, directness, transitions.
+Read 2-3 of the author's existing posts (from `cfg.posts.dir`). Build a `voice_profile` string capturing: typical sentence length range, humor pattern (dry / direct / none), directness level, common transition words, signature phrases.
+
+**This `voice_profile` is passed into every `/humanizer` invocation in the loop** as part of the focus arg, so the humanizer aligns rewrites with the author's existing voice rather than a generic "more human" target.
 
 ### 5.2 Loop
 
+**State contract:** `draft_v0` is the post-Gate-2 + post-link-curation draft (full markdown body, including frontmatter and inserted links). Each iteration produces `draft_v{N}` which becomes input to iteration N+1. The humanizer skill's contract: it takes a markdown body (and optional focus arg), returns a rewritten markdown body of the same shape — preserving frontmatter, code blocks, link URLs, and structure, while rewriting prose.
+
 ```
+draft_v0 = post-Gate-2, post-link-insertion draft
+detector_reasons = []
 iteration = 0
+
 while iteration < cfg.humanize.max_iterations (default 5):
     iteration += 1
 
     # 1. Run humanizer
-    invoke /humanizer on the full draft
-        (on iteration ≥ 2, pass detector reasons as focus arg:
-         /humanizer "focus on: <reasons from previous detection>")
+    focus_arg = f"voice_profile: {voice_profile}; focus on: {detector_reasons}"
+    draft_v{iteration} = invoke /humanizer with input=draft_v{iteration-1}, focus=focus_arg
+    # /humanizer returns the rewritten full markdown body
 
-    # 2. Loop-Integrity Filter on humanizer output
-    parallel Task subagents:
-      - Loss Detector: did humanizer strip technical detail?
-      - Gap Finder: any audience question lost?
-      - Hallucination Hunter: did humanizer invent anecdote / stat?
-    apply consensus fixes
+    # 2. Loop-Integrity Filter on draft_v{iteration} vs draft_v{iteration-1}
+    parallel Task subagents (each gets BOTH versions for diff analysis):
+      - Loss Detector: did humanizer strip technical detail or signal?
+      - Gap Finder: any audience question now unanswered that was answered before?
+      - Hallucination Hunter: did humanizer invent anecdote / stat / quote not in draft_v{iteration-1}?
+    apply consensus fixes by reverting flagged passages from draft_v{iteration-1}
+    → updated draft_v{iteration}
 
-    # 3. AI-detection vote (parallel)
-    codex_score  = codex exec "<detection prompt>"
-    gemini_score = gemini -p "<detection prompt>"
+    # 3. AI-detection vote (parallel) on draft_v{iteration}
+    codex_response  = codex exec "<detection prompt with draft_v{iteration} body>"
+    gemini_response = gemini --skip-trust -p "<detection prompt with draft_v{iteration} body>"
 
-    # 4. Compute avg + log
-    avg = mean(codex_score, gemini_score)
-    log {iteration, codex_score, gemini_score, avg, reasons}
+    # 4. Parse with JSON fallback
+    for resp in [codex_response, gemini_response]:
+        try: parse JSON directly
+        except: regex-extract first {...} block, parse that
+        if still failing: mark detector as failed for this iteration
+    if both detectors failed: apply Section 5.5 fallback
+    if one failed: continue with single-detector mode
 
-    # 5. Pass / continue / cap
-    if avg < cfg.humanize.target_score (default 10):
-        EXIT loop  # PASS
-    elif iteration == max:
+    # 5. Compute avg + log
+    avg = mean of valid scores
+    iteration_log.append({iteration, codex_score, gemini_score, avg, reasons})
+
+    # 6. Pass / continue / cap
+    if avg < cfg.humanize.target_score (default 25):
+        draft_final = draft_v{iteration}
+        EXIT loop  # PASS — proceed to 5.6
+    elif iteration == cfg.humanize.max_iterations:
         SURFACE to user (see 5.4)
     else:
-        carry detector reasons into next humanizer pass
+        detector_reasons = top 3 reasons across both detectors
+        # next iteration uses these as focus arg
 ```
 
 ### 5.3 Detection Prompt (used by both codex and gemini)
@@ -677,15 +748,15 @@ Text:
 >>>
 ```
 
-Score interpretation:
-- avg < 10 → **pass**
-- 10-30 → minor patterns, continue
-- 30-60 → moderate AI feel, continue with feedback
-- 60+ → strong AI signature, escalate after iteration 3
+Score interpretation (lint bands, not hard gates):
+- avg < 25 → **clean**, exit loop
+- 25-40 → noticeable patterns, continue with detector reasons fed back into next humanizer pass
+- 40-60 → strong AI signature, continue + escalate after iteration 3 with "Loss Detector veto" check (don't strip technical signal to hit a number)
+- 60+ → fundamental issue, surface to user immediately for restructuring decision
 
 ### 5.4 Cap Reached Without Pass
 
-If after 5 iterations avg ≥ 10:
+If after 5 iterations avg ≥ 25:
 
 ```markdown
 ## Humanization Loop — Cap Reached
@@ -706,6 +777,37 @@ AskUserQuestion:
 If neither codex nor gemini responds in a given iteration: skip detection that iteration, run 2 fixed humanizer passes (current + one more), present to user with note "AI-detection unavailable; humanizer ran 2 fixed passes."
 
 If only one CLI responds: continue with single-detector mode (no avg, just that score). Flag in final report.
+
+### 5.6 Post-Humanize Link & Claim Audit (MANDATORY)
+
+The humanizer can rewrite anchors, soften qualifiers, drop caveats, or change wording around cited claims. After loop exits (PASS or cap), run this audit on the deltas between pre-humanize draft and post-humanize draft:
+
+**Step 1 — Link integrity check (mechanical):**
+
+```
+for each link inserted in Phase 4.9:
+  - confirm the URL is unchanged (humanizer must not alter URLs)
+  - confirm the anchor text still exists in surrounding prose and reads naturally
+  - if anchor was removed or orphaned → reinsert at next best matching sentence
+  - if URL was altered → restore to original
+```
+
+**Step 2 — Claim-delta check (3 parallel `Task` subagents on the diff):**
+
+1. *Citation-claim auditor:* "For each linked claim in the post, does the prose still match what the cited source supports? Flag any claim that humanizer softened, exaggerated, or detached from its citation."
+2. *Caveat preservation auditor:* "Did humanizer drop hedging, qualifiers, or scope limits that fact-check (Phase 4.5) had specifically required? List dropped caveats."
+3. *Number/stat auditor:* "Are all numbers, percentages, and dates from Phase 4.5's VERIFIED set still present and unchanged? Flag any silently rewritten figure."
+
+**Step 3 — Apply consensus fixes:**
+
+- 3/3 or 2/3 agreement on a flagged item → restore from pre-humanize draft (claim, caveat, or number)
+- 1/3 → log only
+
+**Step 4 — Final summary line:**
+
+Append to Phase 8.6 summary: `Link integrity: [N]/[N] preserved | Claim audit: [N] restorations`
+
+If restorations > 0, optionally re-run Phase 5 ONE more pass with focus arg `"preserve restored claims and links verbatim"`. Only one extra pass — do not iterate further on this loop.
 
 ---
 
@@ -850,7 +952,7 @@ Or invoke `/commit`.
 | Site profile detection ambiguous | Ask user which posts dir |
 | Internal link candidates < 1 after grading | Fail loud, present top-3 by raw overlap |
 | External link candidates < 1 after grading | Fail loud, ask user for replacement URLs |
-| Humanization cap (5 iter) hit, avg ≥ 10 | Surface trace; accept / manual fix / restructure |
+| Humanization cap (5 iter) hit, avg ≥ 25 | Surface trace; accept / manual fix / restructure |
 | Pre-gate review retries (2) exhausted | Escalate to user with diagnosis |
 | Codex CLI fails | Continue with Gemini only, flag in summary |
 | Gemini CLI fails | Continue with Codex only, flag in summary |
@@ -879,11 +981,11 @@ Or invoke `/commit`.
 ```
 Workflow: Audience → Research → Site Profile → Outline → Expert Review → [GATE 1]
        → Draft (with bare ref list) → Fact Check + Expert Review → [GATE 2]
-       → Link Curation (3-way grade) → Iterative Humanize Loop (max 5, avg<10)
+       → Link Curation (3-way grade) → Iterative Humanize Loop (max 5, avg<25)
        → Lint → Image → Write → Visual Test → Commit
 
 REQUIRED: Target audience (ask if missing)
-MANDATORY: Humanization loop (run until avg<10 or max 5 passes)
+MANDATORY: Humanization loop (run until avg<25 or max 5 passes; scores are lint signals)
 Title: max 46 chars (60 with suffix)
 Meta: 120-160 chars
 External links: ≥1, ≤10 (per cfg)
