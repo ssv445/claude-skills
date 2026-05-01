@@ -618,6 +618,97 @@ Append to phase output (internal log; not part of post):
 **Min thresholds met:** ext ≥1 ✅, int ≥1 ✅
 ```
 
+---
+
+## Phase 5: Iterative Humanization Loop
+
+**Goal:** Drive avg AI-likelihood score below 10 (0-100 scale, lower = more human) using `humanizer` skill + multi-model detection. Max 5 iterations.
+
+### 5.1 Voice Calibration (one-time, before loop)
+
+Read 2-3 of the author's existing posts (from `cfg.posts.dir`). Note: typical sentence length, humor pattern, directness, transitions.
+
+### 5.2 Loop
+
+```
+iteration = 0
+while iteration < cfg.humanize.max_iterations (default 5):
+    iteration += 1
+
+    # 1. Run humanizer
+    invoke /humanizer on the full draft
+        (on iteration ≥ 2, pass detector reasons as focus arg:
+         /humanizer "focus on: <reasons from previous detection>")
+
+    # 2. Loop-Integrity Filter on humanizer output
+    parallel Task subagents:
+      - Loss Detector: did humanizer strip technical detail?
+      - Gap Finder: any audience question lost?
+      - Hallucination Hunter: did humanizer invent anecdote / stat?
+    apply consensus fixes
+
+    # 3. AI-detection vote (parallel)
+    codex_score  = codex exec "<detection prompt>"
+    gemini_score = gemini -p "<detection prompt>"
+
+    # 4. Compute avg + log
+    avg = mean(codex_score, gemini_score)
+    log {iteration, codex_score, gemini_score, avg, reasons}
+
+    # 5. Pass / continue / cap
+    if avg < cfg.humanize.target_score (default 10):
+        EXIT loop  # PASS
+    elif iteration == max:
+        SURFACE to user (see 5.4)
+    else:
+        carry detector reasons into next humanizer pass
+```
+
+### 5.3 Detection Prompt (used by both codex and gemini)
+
+```
+You are an AI-text detector. Rate the following text 0-100 where:
+- 0   = clearly human-written, idiosyncratic, varied, opinionated
+- 100 = clearly AI-generated, formulaic, neutral, predictable
+
+Output ONLY valid JSON: {"score": N, "reasons": ["..."]}
+
+Text:
+<<<
+[full draft body]
+>>>
+```
+
+Score interpretation:
+- avg < 10 → **pass**
+- 10-30 → minor patterns, continue
+- 30-60 → moderate AI feel, continue with feedback
+- 60+ → strong AI signature, escalate after iteration 3
+
+### 5.4 Cap Reached Without Pass
+
+If after 5 iterations avg ≥ 10:
+
+```markdown
+## Humanization Loop — Cap Reached
+| Iter | codex | gemini | avg | top reasons |
+|------|-------|--------|-----|-------------|
+| 1 | ... | ... | ... | ... |
+| ... |
+| 5 | ... | ... | ... | ... |
+```
+
+AskUserQuestion:
+- Accept current state (publish despite score)
+- Apply targeted manual fix on flagged sections
+- Abandon — restructure draft
+
+### 5.5 Both External CLIs Fail
+
+If neither codex nor gemini responds in a given iteration: skip detection that iteration, run 2 fixed humanizer passes (current + one more), present to user with note "AI-detection unavailable; humanizer ran 2 fixed passes."
+
+If only one CLI responds: continue with single-detector mode (no avg, just that score). Flag in final report.
+
 <!-- PHASES_END -->
 
 ## Quick Reference
