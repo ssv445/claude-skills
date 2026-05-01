@@ -1,6 +1,8 @@
 # Claude Code Skills
 
-Custom skills for [Claude Code](https://claude.ai/code).
+Custom skills for [Claude Code](https://claude.ai/code) (and other agents — Cursor, Codex, Cline, Gemini CLI, etc.).
+
+Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claude-skills)**
 
 ## Skills
 
@@ -30,17 +32,33 @@ Custom skills for [Claude Code](https://claude.ai/code).
 
 ## Installation
 
-Clone a single skill into your Claude Code skills directory:
+**Recommended** — via the [`skills`](https://github.com/vercel-labs/skills) CLI by Vercel Labs (default behavior is symlink, so `git pull` updates everything; pass `--copy` for portable install):
 
 ```bash
-mkdir -p ~/.claude/skills
-cp -r <skill-folder> ~/.claude/skills/
+# Install one skill globally (user-level, all detected agents)
+npx skills add ssv445/claude-skills -s write-blog -g
+
+# Install all skills from this repo
+npx skills add ssv445/claude-skills --all -g
+
+# List available skills without installing
+npx skills add ssv445/claude-skills -l
+
+# Update installed skills
+npx skills update
+
+# Remove
+npx skills remove write-blog -g
 ```
 
-Or clone the entire repo:
+Or browse + install from the web index at [skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claude-skills).
+
+**Manual install** — clone the repo and copy or symlink any skill dir:
 
 ```bash
-git clone https://github.com/ssv445/claude-skills.git ~/.claude/skills
+git clone https://github.com/ssv445/claude-skills.git ~/code/claude-skills
+ln -s ~/code/claude-skills/<skill-folder> ~/.claude/skills/<skill-folder>
+# or: cp -r ~/code/claude-skills/<skill-folder> ~/.claude/skills/
 ```
 
 ## Usage
