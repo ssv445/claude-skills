@@ -510,6 +510,114 @@ AskUserQuestion options:
 
 Do NOT proceed until user approves.
 
+---
+
+## Phase 4.9: Link Curation & Insertion
+
+**Inputs:** Approved draft (post-Gate 2) with bare reference list + `.write-blog.cfg` site profile.
+
+### 4.9.1 Whitelist Tiers (External Links)
+
+**T1 — auto-pass, no grading needed:**
+- Official docs: `developer.mozilla.org`, `docs.python.org`, `react.dev`, `nodejs.org`, `tc39.es`, `w3.org`, `whatwg.org`, `rfc-editor.org`
+- Reference: `wikipedia.org` (definitional links only)
+- Standards bodies: `iso.org`, `ieee.org`
+
+**T2 — graded, default keep if avg ≥6:**
+- Established tech publications: `theverge.com`, `arstechnica.com`, `wired.com`
+- Personal blogs of recognized experts
+- Major company engineering blogs: `engineering.fb.com`, `netflixtechblog.com`, etc.
+
+**T3 — graded, default drop unless avg ≥8:**
+- Medium articles, dev.to articles, LinkedIn articles, random blogs
+
+Repo extends T1 via `links.external.whitelist_t1` in `.write-blog.cfg`.
+
+### 4.9.2 External Link Pipeline
+
+For each `ref_url` in draft's bare reference list:
+
+1. `domain = extract_domain(ref_url)`
+2. If `domain in whitelist_T1` (global ∪ cfg overrides) → keep, skip grading.
+3. Else, run **3-way value grade in parallel:**
+
+   **Prompt template (used by all three graders):**
+
+   ```
+   Rate the value of <URL> for an audience: <audience profile>
+   reading a section about <section topic>, in the context of this draft.
+
+   Consider: authority of source, relevance to audience, freshness,
+   uniqueness of information vs alternatives.
+
+   Output ONLY valid JSON: {"score": N, "reasons": ["..."]}
+   Score is 0-10 (0 = useless, 10 = essential).
+   ```
+
+   - `claude_grade` ← `Task` subagent
+   - `codex_grade` ← `codex exec "<prompt>"`
+   - `gemini_grade` ← `gemini -p "<prompt>"`
+
+4. Run **Loop-Integrity Filter** on the three grade outputs (catch fabricated relevance claims; ensure none of the graders cite content they didn't fetch).
+5. `avg = mean(scores)`. T2 keep if `avg ≥ 6`; T3 keep if `avg ≥ 8`; otherwise drop.
+
+After all refs processed:
+
+- Sort kept refs by `avg` desc.
+- Truncate to `cfg.links.external.max` (default 10).
+- If kept count `< cfg.links.external.min` (default 1) → **fail loud**: surface to user with full grade trace, ask to provide replacement URLs manually.
+
+### 4.9.3 Internal Link Pipeline
+
+Goal: 1-5 internal links to other posts/pages on the user's site that build topical authority.
+
+1. **Discover post candidates:**
+   - `posts = glob(cfg.posts.dir + "/" + cfg.posts.pattern)` relative to repo root.
+   - For each `post` (excluding the current draft if it's already saved): parse frontmatter, extract `title`, `slug`, `tags`, `excerpt`.
+   - Compute keyword overlap between draft body and post (title + tags + excerpt). Simple bag-of-words intersection over Jaccard is sufficient.
+
+2. **Discover non-post candidates** (if `cfg.url.sitemap` set):
+   - Fetch sitemap from `cfg.url.base + cfg.url.sitemap`.
+   - Parse `<url><loc>` entries. For each non-post URL, fetch + extract `<title>` and `<meta name="description">`. Compute keyword overlap.
+
+3. **Shortlist:** Top `2 * cfg.links.internal.max` candidates by overlap (default top 10).
+
+4. **3-way grade** each shortlisted candidate using the same prompt template as 4.9.2 (URL = `cfg.url.base + cfg.url.post_path.replace("{slug}", slug)`).
+
+5. Run **Loop-Integrity Filter** on grade outputs.
+
+6. Keep candidates with `avg ≥ cfg.links.internal.rating_threshold` (default 6). Sort by `avg` desc. Truncate to `cfg.links.internal.max` (default 5).
+
+7. If kept count `< cfg.links.internal.min` (default 1) → **fail loud**: surface top-3 candidates by raw overlap with grade trace, ask user to pick or skip.
+
+### 4.9.4 Insertion
+
+For each kept link (external + internal):
+
+1. Locate sentence/phrase in prose that matches the link's topic.
+2. Pick natural anchor text (descriptive — not "click here", not bare URL, not the same anchor twice).
+3. Insert markdown link: `[anchor](URL)`. For internal links use `cfg.url.internal_link_style` (relative / absolute / site-relative).
+
+**Mechanical placement review (no user gate, fix silently):**
+- No more than 2 links per paragraph.
+- Don't cluster all links at top or bottom — distribute through body.
+- Anchor text varies; no repetition.
+- If a link can't find a natural anchor in prose, place it in a "Further reading" footer block.
+
+Remove the bare reference list at the bottom of the draft once links are inserted (the curated link set replaces it).
+
+### 4.9.5 Final Link Audit Report
+
+Append to phase output (internal log; not part of post):
+
+```markdown
+## Link Curation Report
+**External:** [N] kept (T1 auto-pass: [X], graded-keep: [Y], dropped: [Z])
+**Internal:** [N] kept (graded-keep: [X], dropped: [Y])
+**Hard caps respected:** ext [N]/10, int [N]/5
+**Min thresholds met:** ext ≥1 ✅, int ≥1 ✅
+```
+
 <!-- PHASES_END -->
 
 ## Quick Reference
