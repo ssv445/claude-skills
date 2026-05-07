@@ -6,7 +6,7 @@ Pick between options, or evaluate a single open question. Returns tradeoff matri
 
 This mode is self-contained. Use `SKILL.md` utilities for pre-flight, fencing, dispatch, confirm, confidence labels, output validation.
 
-1. **Parse args**: `/theteam decide [--n=N] [--providers=...] [--target=...] [--persona=...] [trailing text]`. Default N=auto (one per detected option, min 2). Cap 8. Default providers=claude.
+1. **Parse args**: `/theteam decide [--n=N] [--providers=...] [--target=...] [--persona=...] [--yes] [trailing text]`. Default N=auto (one per detected option, min 2). Cap 8. Default providers=claude. `--yes` (aliases `-y`, `--no-confirm`, `--do-not-confirm`) skips confirm.
 2. **Pre-flight CLIs** (SKILL.md → CLI pre-flight). Reassign failed slots; track degradations.
 3. **Resolve question + detect options**:
    - `--target` if given → use it as question.
@@ -31,7 +31,7 @@ This mode is self-contained. Use `SKILL.md` utilities for pre-flight, fencing, d
    - **axis**: N distinct angles for the single question.
    - Named-human personas only when user explicitly asks. Default = angles.
 
-6. **Confirm** (binary):
+6. **Confirm** (binary; skip wait if `--yes` flag set, still print summary prefixed `Auto-confirmed (--yes):`):
    ```
    Mode: decide (<advocate|axis>)
    Question: <one line>

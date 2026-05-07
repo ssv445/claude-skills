@@ -6,14 +6,14 @@ Adversarial only. No positives, no balance. For when you already suspect somethi
 
 This mode is self-contained. Use `SKILL.md` utilities for pre-flight, fencing, dispatch, confirm, confidence labels, output validation.
 
-1. **Parse args**: `/theteam critic [--n=N] [--providers=...] [--target=...] [--persona=...] [trailing text]`. Default N=3 (cap 8). Default providers=claude.
+1. **Parse args**: `/theteam critic [--n=N] [--providers=...] [--target=...] [--persona=...] [--yes] [trailing text]`. Default N=3 (cap 8). Default providers=claude. `--yes` (aliases `-y`, `--no-confirm`, `--do-not-confirm`) skips confirm.
 2. **Pre-flight CLIs** (SKILL.md → CLI pre-flight). Reassign failed slots; track degradations.
 3. **Resolve target**:
    - `--target` if given → use it.
    - Trailing text if no `--target` → use it.
    - Else auto-pick: `.tmp/plan*.md` → `PLAN.md` → `docs/plans/*` → `spec.md` → `docs/specs/*` → `git diff` + staged → `git diff origin/main...HEAD` → last assistant message decisions.
 4. **Pick personas**: user `--persona` wins. Else pick N distinct angles from: security · perf · ops · simplicity · DX · data-integrity · UX · cost. One persona per agent. No axis overlap.
-5. **Confirm** (SKILL.md → confirm step). Wait for y.
+5. **Confirm** (SKILL.md → confirm step). Wait for y. Skip wait if `--yes` flag set (still print summary).
 6. **Dispatch in parallel** (SKILL.md → parallel dispatch). Use the prompt template below. Fence target as untrusted.
 7. **Synthesize** with the format below. Apply confidence label + output validation. Drop any positives critics returned despite the prompt.
 
