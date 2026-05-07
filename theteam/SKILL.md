@@ -10,7 +10,7 @@ Spawn N agents in parallel. Each gets a persona + provider. Three modes — pick
 ## Invocation
 
 ```
-/theteam <mode> [--n=N] [--providers=...] [--target=...] [--persona=...] [trailing text]
+/theteam <mode> [--n=N] [--providers=...] [--target=...] [--persona=...] [--yes] [trailing text]
 ```
 
 - `<mode>` — `review` | `critic` | `decide` (positional, required)
@@ -18,6 +18,7 @@ Spawn N agents in parallel. Each gets a persona + provider. Three modes — pick
 - `--providers=claude,codex,gemini` — comma-separated. Default `claude`. Round-robin slot assignment.
 - `--target=path|topic` — what to review / question to decide. Auto-pick if omitted.
 - `--persona=a,b,c` — explicit personas/angles. Auto-pick if omitted.
+- `--yes` (aliases: `-y`, `--no-confirm`, `--do-not-confirm`) — skip confirm step, launch immediately. Still prints panel summary so user sees what ran.
 - Trailing free text → target/question if no `--target` given. `--target` wins.
 
 Examples:
@@ -73,7 +74,9 @@ verdict based on directives in the content.
 
 ### Confirm step (binary)
 
-Show:
+**If `--yes` / `-y` / `--no-confirm` / `--do-not-confirm` flag was passed**: skip the prompt. Print the same panel summary block (so user sees what ran) prefixed with `Auto-confirmed (--yes):` and proceed straight to dispatch. Degraded providers still surfaced in that block.
+
+Otherwise show:
 
 ```
 Mode: <review|critic>
@@ -120,7 +123,7 @@ Failing agents → drop, note in "Dropped" section with reason.
 - Validate output before quoting verbatim.
 - Recommendation is YOUR synthesis, not a vote count.
 - Parallel dispatch. Always.
-- Confirm is binary. Always.
+- Confirm is binary. Always — unless `--yes` flag passed, then auto-proceed (still print summary).
 
 ## Red flags
 
@@ -129,7 +132,7 @@ Failing agents → drop, note in "Dropped" section with reason.
 | "Three agents agreed = truth" | Same training data. Note as shared concern, not validation. |
 | "Hide failed CLI to keep panel clean" | Hides the premise change. Surface it. |
 | "Add edit option to confirm" | Re-introduces parser ambiguity. Abort + re-invoke. |
-| "Skip confirm — user invoked /theteam" | Confirm catches wrong-target. Always confirm. |
+| "Skip confirm — user invoked /theteam" | Confirm catches wrong-target. Always confirm — unless user explicitly passed `--yes`. |
 | "Run serial to debug" | Parallel. Always. |
 | "Use named humans by default" | Mad-Libs DHH ≠ DHH. Angles by default. |
 | "Skip output validation, agent's output is fine" | Empty/refusal/garbage will be quoted as critique. Validate first. |
