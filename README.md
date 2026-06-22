@@ -25,6 +25,7 @@ Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claud
 | [ack](./ack/) | Force agent to acknowledge intent before acting: parse request, rephrase in 1-3 bullets, ask permission, wait for explicit `y`, then execute. Tool whitelist, scope-drift rule, rationalization table. |
 | [devloop](./devloop/) | Tight polish loop after a feature ships. Takes test-stories IDs, runs tests, fixes prioritized issues with a unanimous 3-seat expert panel (adversarial + root-cause + convention) and browser screenshot check, re-runs, repeats until clean. Fire-and-forget. |
 | [rca](./rca/) | Root cause analysis in 5 fresh-subagent rounds. Fixed themes (Surface → Mechanism → Challenge → Alternatives → Synthesize). Adversarial review mandatory each round. Accumulates to `.tmp/rca/rca-<ts>.md`. Ends with 2-3 ranked theories + verification tests. Domain-agnostic (code bugs, traffic drops, churn, funnel leaks). |
+| [domain-rating](./domain-rating/) | Fetch Ahrefs Domain Rating (DR) for any domain via the free public API. No key. Single + batch lookup, caching, error codes, attribution rules. |
 | [theteam](./theteam/) | Spawn a panel of agents in parallel (Claude / Codex / Gemini CLIs) to review, critique, or decide. Three modes: `review` (balanced), `critic` (adversarial), `decide` (advocate-per-option or axis evaluation). Real-call CLI pre-flight, prompt-injection fencing, confidence labels lead synthesis, binary confirm. |
 
 ## Companion skills (install upstream)
