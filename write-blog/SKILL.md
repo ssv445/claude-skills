@@ -3,10 +3,10 @@ name: write-blog
 version: 5.0.0
 description: |
   Write a complete blog post with iterative humanization (multi-model AI-detection
-  via codex + gemini, target avg score < 25, max 3 passes — scores treated as lint
+  via codex + agy (Gemini-pinned), target avg score < 25, max 3 passes — scores treated as lint
   signals, not hard gates), pre-gate agent-team
   review (no raw AI output reaches user), curated internal + external links
-  (3-way value grading by Claude + Codex + Gemini, hard caps 1-10 ext / 1-5 int),
+  (3-way value grading by Claude + Codex + Agy (Gemini-pinned), hard caps 1-10 ext / 1-5 int),
   per-repo .write-blog.cfg site profile, expert persona reviews, and adversarial
   fact-checking. v5: adds iterative humanize loop, external-CLI multi-model
   scoring, and link curation.
@@ -78,7 +78,7 @@ Phase 4: Pre-gate Review Bundle
          (Loop-Integrity Filter on subagent outputs)
        → [GATE 2] user approves polished, fact-checked draft
 Phase 4.9: Link Curation & Insertion (3-way grade external + internal, caps + filter)
-Phase 5: Iterative Humanization Loop (max 3; codex + gemini detect; target avg < 25)
+Phase 5: Iterative Humanization Loop (max 3; codex + agy (Gemini-pinned) detect; target avg < 25)
 Phase 5.x: Lint check
 Phase 6: Header image (Gemini)
 Phase 7: Write file
@@ -134,7 +134,7 @@ Format: `[Phase N.x] <verb-ing> <object>...` — single line, single sentence, p
 
 ### External CLI Reviewers
 
-`codex` and `gemini` CLIs provide independent-model verification. Used for:
+`codex` and `agy` CLIs provide independent-model verification (`agy` pinned to a Gemini model preserves the Google-model perspective the deprecated `gemini` CLI used to give). Used for:
 
 - AI-detection scoring in humanization loop (Phase 5)
 - Value grading of links in audience context (Phase 4.9)
@@ -143,7 +143,7 @@ Invocation:
 
 ```bash
 codex exec "<prompt>" 2>/dev/null      # 30s timeout
-gemini -p "<prompt>" 2>/dev/null       # 30s timeout, default gemini-2.5-pro
+agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions -p "<prompt>" 2>/dev/null   # 30s timeout
 ```
 
 Both return text/JSON; parse score field. On failure of one, continue with the other and flag in final report. If both fail in humanize loop: skip detection, run 2 fixed humanizer passes, present to user with note. If both fail in link grading: drop to Claude-only, surface to user before insertion.
@@ -603,7 +603,7 @@ For each `ref_url` in draft's bare reference list:
      ```
      Pass: full audience profile, section topic, fetched_content fields. Subagent returns JSON.
    - `codex_grade` ← `codex exec "<full prompt above>"` with same substitutions.
-   - `gemini_grade` ← `gemini --skip-trust -p "<full prompt above>"` with same substitutions.
+   - `agy_grade` ← `agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions -p "<full prompt above>"` with same substitutions.
 
    **JSON parse fallback:** If a grader's stdout doesn't parse cleanly, regex-extract the first `{...}` block. If still unparseable, treat that grader as failed and continue with the other two. If 2+ fail, treat as CLI failure (Section 5.5 fallback).
 
@@ -701,7 +701,7 @@ Append to phase output (internal log; not part of post):
 
 **Goal:** Drive avg AI-likelihood score below 25 (0-100 scale, lower = more human) using `humanizer` skill + multi-model detection. Max 5 iterations.
 
-**Why 25, not 10?** External LLM "AI detectors" (codex + gemini) are not calibrated detectors — they are subjective judges using a prompt. Real human technical writing typically scores 15-25 because of necessary formal structures (lists, headings, code blocks, qualifying phrases). Forcing avg<10 risks over-humanizing into uncanny territory: fake quirks, lost technical precision, choppy pacing. The 25 ceiling is a *lint signal*: below it = clean; above it = inspect, don't auto-fail.
+**Why 25, not 10?** External LLM "AI detectors" (codex + agy) are not calibrated detectors — they are subjective judges using a prompt. Real human technical writing typically scores 15-25 because of necessary formal structures (lists, headings, code blocks, qualifying phrases). Forcing avg<10 risks over-humanizing into uncanny territory: fake quirks, lost technical precision, choppy pacing. The 25 ceiling is a *lint signal*: below it = clean; above it = inspect, don't auto-fail.
 
 ### 5.1 Voice Calibration (one-time, before loop)
 
@@ -735,11 +735,11 @@ while iteration < cfg.humanize.max_iterations (default 3):
     → updated draft_v{iteration}
 
     # 3. AI-detection vote (parallel) on draft_v{iteration}
-    codex_response  = codex exec "<detection prompt with draft_v{iteration} body>"
-    gemini_response = gemini --skip-trust -p "<detection prompt with draft_v{iteration} body>"
+    codex_response = codex exec "<detection prompt with draft_v{iteration} body>"
+    agy_response   = agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions -p "<detection prompt with draft_v{iteration} body>"
 
     # 4. Parse with JSON fallback
-    for resp in [codex_response, gemini_response]:
+    for resp in [codex_response, agy_response]:
         try: parse JSON directly
         except: regex-extract first {...} block, parse that
         if still failing: mark detector as failed for this iteration
@@ -748,7 +748,7 @@ while iteration < cfg.humanize.max_iterations (default 3):
 
     # 5. Compute avg + log
     avg = mean of valid scores
-    iteration_log.append({iteration, codex_score, gemini_score, avg, reasons})
+    iteration_log.append({iteration, codex_score, agy_score, avg, reasons})
 
     # 6. Pass / continue / cap
     if avg < cfg.humanize.target_score (default 25):
@@ -761,7 +761,7 @@ while iteration < cfg.humanize.max_iterations (default 3):
         # next iteration uses these as focus arg
 ```
 
-### 5.3 Detection Prompt (used by both codex and gemini)
+### 5.3 Detection Prompt (used by both codex and agy)
 
 ```
 You are an AI-text detector. Rate the following text 0-100 where:
@@ -788,7 +788,7 @@ If after 5 iterations avg ≥ 25:
 
 ```markdown
 ## Humanization Loop — Cap Reached
-| Iter | codex | gemini | avg | top reasons |
+| Iter | codex | agy | avg | top reasons |
 |------|-------|--------|-----|-------------|
 | 1 | ... | ... | ... | ... |
 | ... |
@@ -802,7 +802,7 @@ AskUserQuestion:
 
 ### 5.5 Both External CLIs Fail
 
-If neither codex nor gemini responds in a given iteration: skip detection that iteration, run 2 fixed humanizer passes (current + one more), present to user with note "AI-detection unavailable; humanizer ran 2 fixed passes."
+If neither codex nor agy responds in a given iteration: skip detection that iteration, run 2 fixed humanizer passes (current + one more), present to user with note "AI-detection unavailable; humanizer ran 2 fixed passes."
 
 If only one CLI responds: continue with single-detector mode (no avg, just that score). Flag in final report.
 
@@ -1015,8 +1015,8 @@ Or invoke `/commit`.
 | External link candidates < 1 after grading | Fail loud, ask user for replacement URLs |
 | Humanization cap (5 iter) hit, avg ≥ 25 | Surface trace; accept / manual fix / restructure |
 | Pre-gate review retries (2) exhausted | Escalate to user with diagnosis |
-| Codex CLI fails | Continue with Gemini only, flag in summary |
-| Gemini CLI fails | Continue with Codex only, flag in summary |
+| Codex CLI fails | Continue with agy only, flag in summary |
+| agy CLI fails | Continue with Codex only, flag in summary |
 | Both external CLIs fail (humanize) | Skip detection, 2 fixed humanizer passes, flag |
 | Both external CLIs fail (link grade) | Drop to Claude-only, surface to user before insertion |
 
@@ -1051,7 +1051,7 @@ Title: max 46 chars (60 with suffix)
 Meta: 120-160 chars
 External links: ≥1, ≤10 (per cfg)
 Internal links: ≥1, ≤5 (per cfg)
-External CLIs: codex exec / gemini -p
+External CLIs: codex exec / agy --model "Gemini 3.1 Pro (High)" -p
 Pre-gate review on every artifact (3-subagent team)
 Loop-integrity filter inside every iterative loop
 
@@ -1070,4 +1070,4 @@ Images: Human/realistic/natural — NO sci-fi/abstract/AI art
 
 **[Robert Cialdini](https://www.influenceatwork.com/)** — 6 Principles of Persuasion applied to content.
 
-**v5 (2026-05-01):** Iterative humanization with multi-model detection (codex + gemini), per-repo `.write-blog.cfg`, link curation with 3-way value grading, pre-gate review pattern, loop-integrity filter team.
+**v5 (2026-05-01):** Iterative humanization with multi-model detection (codex + agy, Gemini-pinned), per-repo `.write-blog.cfg`, link curation with 3-way value grading, pre-gate review pattern, loop-integrity filter team.

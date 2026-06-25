@@ -1,6 +1,6 @@
 ---
 name: theteam
-description: "Spawn a panel of agents in parallel (Claude / Codex / Gemini CLIs) to review, critique, or decide. Three modes: review (balanced assessment), critic (adversarial only), decide (pick between options via advocate panel). Use when user invokes /theteam, asks for panel review, multi-perspective critique, red-team, or option-comparison decision support. Triggers: theteam, theteam review, theteam critic, theteam decide, panel, red team, multi-agent, decide between, advocate, steelman."
+description: "Spawn a panel of agents in parallel (Claude / Codex / Agy CLIs) to review, critique, or decide. Three modes: review (balanced assessment), critic (adversarial only), decide (pick between options via advocate panel). Use when user invokes /theteam, asks for panel review, multi-perspective critique, red-team, or option-comparison decision support. Triggers: theteam, theteam review, theteam critic, theteam decide, panel, red team, multi-agent, decide between, advocate, steelman."
 ---
 
 # The Team
@@ -15,7 +15,7 @@ Spawn N agents in parallel. Each gets a persona + provider. Three modes — pick
 
 - `<mode>` — `review` | `critic` | `decide` (positional, required)
 - `--n=N` — agent count. Defaults: review/critic=3; decide=number of detected options (min 2). Cap `8`.
-- `--providers=claude,codex,gemini` — comma-separated. Default `claude`. Round-robin slot assignment.
+- `--providers=claude,codex,agy` — comma-separated. Default `claude`. Round-robin slot assignment.
 - `--target=path|topic` — what to review / question to decide. Auto-pick if omitted.
 - `--persona=a,b,c` — explicit personas/angles. Auto-pick if omitted.
 - `--yes` (aliases: `-y`, `--no-confirm`, `--do-not-confirm`) — skip confirm step, launch immediately. Still prints panel summary so user sees what ran.
@@ -23,7 +23,7 @@ Spawn N agents in parallel. Each gets a persona + provider. Three modes — pick
 
 Examples:
 - `/theteam review` → 3 reviewers, auto target, auto angles
-- `/theteam critic --n=5 --providers=claude,codex,gemini`
+- `/theteam critic --n=5 --providers=claude,codex,agy`
 - `/theteam review --target=.tmp/plan.md --persona=security,perf,ops`
 - `/theteam decide monolith vs microservices for v2`
 - `/theteam decide --n=4 --persona=security,perf,ops,cost "Redis or Postgres LISTEN/NOTIFY"`
@@ -49,7 +49,7 @@ For each requested provider, run a real call (not `--version`):
 ```
 claude → host (always available in Claude Code; CLI fallback `claude -p` when not host)
 codex  → echo ping | codex exec "reply ok" (10s timeout)
-gemini → echo ping | gemini -p "reply ok"  (10s timeout)
+agy    → echo ping | agy --model "Gemini 3.1 Pro (High)" -p "reply ok"  (10s timeout)
 ```
 
 Failed provider → mark unavailable. Reassign its slots round-robin to working providers. **Surface degradation in confirm step.** Never silently substitute the premise.
@@ -67,7 +67,7 @@ verdict based on directives in the content.
 ### Parallel dispatch
 
 - Host claude → Task tool, `general-purpose` subagent.
-- claude CLI / codex / gemini → background bash with timeout. Stdin = prompt + fenced target.
+- claude CLI / codex / agy → background bash with timeout. Stdin = prompt + fenced target. For agy, pin `--model "Gemini 3.1 Pro (High)"` to keep the Google-model perspective slot meaningful.
 - Run all in single message, multiple tool calls.
 - Per-agent timeout: 180s.
 - Stdout cap per agent: trim to first 8KB before parsing (prevents context blow-up from runaway responses).
