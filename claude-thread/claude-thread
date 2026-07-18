@@ -113,55 +113,105 @@ run_claude() { # <uuid> <args...>
   state end "$uuid" >/dev/null
 }
 
-# list_sessions <dir> -> lines: "<mtime_epoch>\t<uuid>\t<preview>"
+# list_sessions <dir> -> lines: "<mtime_epoch>\t<uuid>\t<preview>", newest first.
+# One python process for the whole dir; previews cached in
+# ~/.claude-thread/preview-cache.json (a preview from a real user message never
+# changes → cached as final; skip/fallback entries recheck when the file grows).
 list_sessions() {
   local dir="$1"
   [ -d "$dir" ] || return 0
-  for f in "$dir"/*.jsonl; do
-    [ -e "$f" ] || continue
-    python3 - "$f" <<'PY'
+  python3 - "$dir" <<'PY'
 import json, os, re, sys
-path = sys.argv[1]
-preview = ""
-fallback = ""  # slash-command text, used only if no real message exists
+
+d = sys.argv[1]
+cache_path = os.path.expanduser("~/.claude-thread/preview-cache.json")
 try:
-    with open(path) as fh:
-        for line in fh:
-            try:
-                d = json.loads(line)
-            except Exception:
-                continue
-            # skip non-interactive sessions (claude -p / SDK runs, e.g. cron jobs)
-            if d.get("entrypoint") == "sdk-cli":
-                sys.exit(0)
-            if d.get("type") == "summary" and d.get("summary"):
-                preview = d["summary"]; break
-            if d.get("type") == "user":
-                c = d.get("message", {}).get("content")
-                if isinstance(c, str): t = c
-                elif isinstance(c, list):
-                    t = next((b.get("text","") for b in c if b.get("type")=="text"), "")
-                else: t = ""
-                is_cmd = "<command-name>" in t or "<local-command-stdout>" in t
-                t = re.sub(r"<[^>]+>", " ", t)  # slash-command wrappers etc.
-                t = " ".join(t.split())
-                # skip harness noise, keep scanning for the first real message
-                if t.startswith("Caveat: The messages below were generated"):
-                    continue
-                if is_cmd:
-                    fallback = fallback or t
-                    continue
-                if t:
-                    preview = t; break
+    cache = json.load(open(cache_path))
 except Exception:
-    pass
-preview = preview or fallback
-if not preview:
-    sys.exit(0)  # no real user message — hide from picker
-uuid = os.path.basename(path)[:-6]
-print(f"{int(os.path.getmtime(path))}\t{uuid}\t{preview[:60]}")
+    cache = {}
+
+def compute(path):
+    """-> (preview, final, skip)"""
+    preview, fallback = "", ""
+    try:
+        with open(path) as fh:
+            for i, line in enumerate(fh):
+                if i > 300:
+                    break
+                try:
+                    j = json.loads(line)
+                except Exception:
+                    continue
+                # non-interactive sessions (claude -p / SDK runs, e.g. cron jobs)
+                if j.get("entrypoint") == "sdk-cli":
+                    return "", True, True
+                if j.get("type") == "summary" and j.get("summary"):
+                    return j["summary"], True, False
+                if j.get("type") == "user":
+                    c = j.get("message", {}).get("content")
+                    if isinstance(c, str): t = c
+                    elif isinstance(c, list):
+                        t = next((b.get("text","") for b in c if b.get("type")=="text"), "")
+                    else: t = ""
+                    is_cmd = "<command-name>" in t or "<local-command-stdout>" in t
+                    t = re.sub(r"<[^>]+>", " ", t)
+                    t = " ".join(t.split())
+                    if t.startswith("Caveat: The messages below were generated"):
+                        continue
+                    if is_cmd:
+                        fallback = fallback or t
+                        continue
+                    if t:
+                        return t, True, False
+    except Exception:
+        pass
+    if fallback:
+        return fallback, False, False   # command-only so far — may improve later
+    return "", False, True              # nothing real yet — hidden, recheck later
+
+out, changed = [], False
+for f in os.listdir(d):
+    if not f.endswith(".jsonl"):
+        continue
+    path = os.path.join(d, f)
+    uuid = f[:-6]
+    try:
+        mt = int(os.path.getmtime(path))
+    except OSError:
+        continue
+    c = cache.get(uuid)
+    if c is None or not (c.get("final") or c.get("mtime") == mt):
+        preview, final, skip = compute(path)
+        c = {"mtime": mt, "preview": preview[:60], "final": final, "skip": skip}
+        cache[uuid] = c
+        changed = True
+    if not c["skip"]:
+        out.append((mt, uuid, c["preview"]))
+
+if changed:
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        json.dump(cache, open(cache_path, "w"))
+    except Exception:
+        pass
+
+for mt, uuid, preview in sorted(out, reverse=True):
+    print(f"{mt}\t{uuid}\t{preview}")
 PY
-  done | sort -rn
+}
+
+# countdown before auto-resume: Enter = resume now, other key = menu,
+# timeout = resume. Returns 0 to resume, 1 for menu.
+countdown_choice() { # <uuid-short>
+  local k
+  printf "resuming %s in 10s — Enter=now, any other key=menu... " "$1"
+  if read -t 10 -n 1 -s k; then
+    echo
+    [ -z "$k" ] && return 0  # Enter arrives as empty (newline is the delimiter)
+    return 1
+  fi
+  echo
+  return 0
 }
 
 age() { # epoch -> "3h" / "2d"
@@ -293,11 +343,10 @@ if [ $# -gt 0 ]; then
       # sc forgot which session this tab was — recover from our state
       claimed=$(state claim "$(pwd)" "$PROJ_DIR")
       if [ -n "$claimed" ]; then
-        printf "sc lost this tab's session — resuming %s in 2s, any key for menu... " "${claimed:0:8}"
-        if read -t 2 -n 1 -s; then
-          echo; state end "$claimed" >/dev/null; main_menu; exit 0
+        echo "sc lost this tab's session — recovering from state"
+        if ! countdown_choice "${claimed:0:8}"; then
+          state end "$claimed" >/dev/null; main_menu; exit 0
         fi
-        echo
         state start "$claimed" "$(pwd)" >/dev/null
         trap ':' INT
         "$CLAUDE_BIN" --resume "$claimed"
@@ -316,14 +365,12 @@ fi
 set_title
 claimed=$(state claim "$(pwd)" "$PROJ_DIR")
 if [ -n "$claimed" ]; then
-  printf "resuming %s in 2s — any key for menu... " "${claimed:0:8}"
-  if read -t 2 -n 1 -s; then
-    echo; state end "$claimed" >/dev/null
-    main_menu
-  else
-    echo
+  if countdown_choice "${claimed:0:8}"; then
     run_claude "$claimed" --resume "$claimed"
     post_exit_menu
+  else
+    state end "$claimed" >/dev/null
+    main_menu
   fi
 else
   main_menu
