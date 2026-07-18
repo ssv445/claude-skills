@@ -1,0 +1,330 @@
+#!/bin/bash
+# claude-thread — session picker + tracker for Zed Terminal Threads.
+# Set as Zed's agent.terminal_init_command; runs in every new/recreated
+# terminal thread. Claude's own ~/.claude/projects store is the source of
+# truth for sessions; ~/.claude-thread/ holds everything this wrapper owns:
+# state.json (status running/ended, pid, last_used — enables auto-resume in
+# recreated threads) and archived/ (session files hidden from claude).
+
+set -u
+
+CLAUDE_BIN="${CLAUDE_BIN:-claude}"
+# default flags for every claude launch (same convention as old ~/cld.sh)
+CLAUDE_THREAD_ARGS="${CLAUDE_THREAD_ARGS:---dangerously-skip-permissions --chrome --remote-control}"
+# claude encodes the cwd by replacing every non-alphanumeric char with '-'
+ENC_CWD="$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
+PROJ_DIR="$HOME/.claude/projects/$ENC_CWD"
+ARCHIVE_DIR="$HOME/.claude-thread/archived/$ENC_CWD"
+
+# state <cmd> [args] — all state-file access goes through here (flock'd).
+#   prune                    mark running-sessions with dead pids as ended
+#   claim <cwd> <projdir>    pick newest ended+existing session for cwd,
+#                            mark it running (this pid), print its uuid
+#   start <uuid> <cwd>       upsert session as running under this pid
+#   end <uuid>               mark session ended
+#   running                  print uuids currently running (for menu marks)
+state() {
+  python3 - "$@" "$$" <<'PY'
+import fcntl, json, os, sys, time
+cmd, *args = sys.argv[1:]
+pid = int(args[-1]); args = args[:-1]
+path = os.path.expanduser("~/.claude-thread/state.json")
+os.makedirs(os.path.dirname(path), exist_ok=True)
+fh = open(path, "a+")
+fcntl.flock(fh, fcntl.LOCK_EX)
+fh.seek(0)
+try:
+    st = json.load(fh)
+except Exception:
+    st = {}
+sess = st.setdefault("sessions", {})
+
+def alive(p):
+    try:
+        os.kill(p, 0); return True
+    except Exception:
+        return False
+
+def prune():
+    for s in sess.values():
+        if s.get("status") == "running" and not alive(s.get("pid", 0)):
+            s["status"] = "ended"
+
+prune()
+out = ""
+if cmd == "claim":
+    cwd, projdir = args
+    cands = [(u, s) for u, s in sess.items()
+             if s.get("cwd") == cwd and s.get("status") == "ended"
+             and os.path.exists(os.path.join(projdir, u + ".jsonl"))]
+    if cands:
+        u, s = max(cands, key=lambda x: x[1].get("last_used", 0))
+        s.update(status="running", pid=pid, last_used=time.time())
+        out = u
+elif cmd == "start":
+    u, cwd = args
+    sess.setdefault(u, {}).update(cwd=cwd, status="running", pid=pid,
+                                  last_used=time.time())
+    sess[u].setdefault("started", time.time())
+elif cmd == "end":
+    u = args[0]
+    if u in sess:
+        sess[u].update(status="ended", last_used=time.time())
+elif cmd == "running":
+    out = "\n".join(u for u, s in sess.items() if s.get("status") == "running")
+
+fh.seek(0); fh.truncate()
+json.dump(st, fh, indent=2)
+fh.close()
+if out:
+    print(out)
+PY
+}
+
+# terminal title = "<worktree-dir>:<branch>" so same-worktree threads share a
+# visible prefix in Zed's sidebar and its filter can match them as a group
+set_title() {
+  local branch name top main title
+  branch=$(git branch --show-current 2>/dev/null)
+  [ -z "$branch" ] && branch=$(git rev-parse --short HEAD 2>/dev/null || true)
+  name=$(basename "$(pwd)")
+  top=$(git rev-parse --show-toplevel 2>/dev/null)
+  if [ -n "$top" ]; then
+    name=$(basename "$top")
+    main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")
+    # Zed nests worktrees as <base>/<wt-name>/<repo-dir> — in that layout the
+    # toplevel basename is just the repo name, so use the parent dir instead
+    if [ "$top" != "$main" ] && [ "$name" = "$(basename "$main")" ]; then
+      name=$(basename "$(dirname "$top")")
+    fi
+  fi
+  title="$name${branch:+:$branch}"
+  printf '\033]0;%s\007' "$title"
+}
+
+# run claude in foreground, keep state current around it
+run_claude() { # <uuid> <args...>
+  local uuid="$1"; shift
+  state start "$uuid" "$(pwd)" >/dev/null
+  trap ':' INT
+  # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
+  "$CLAUDE_BIN" $CLAUDE_THREAD_ARGS "$@"
+  trap - INT
+  state end "$uuid" >/dev/null
+}
+
+# list_sessions <dir> -> lines: "<mtime_epoch>\t<uuid>\t<preview>"
+list_sessions() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*.jsonl; do
+    [ -e "$f" ] || continue
+    python3 - "$f" <<'PY'
+import json, os, re, sys
+path = sys.argv[1]
+preview = ""
+fallback = ""  # slash-command text, used only if no real message exists
+try:
+    with open(path) as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except Exception:
+                continue
+            # skip non-interactive sessions (claude -p / SDK runs, e.g. cron jobs)
+            if d.get("entrypoint") == "sdk-cli":
+                sys.exit(0)
+            if d.get("type") == "summary" and d.get("summary"):
+                preview = d["summary"]; break
+            if d.get("type") == "user":
+                c = d.get("message", {}).get("content")
+                if isinstance(c, str): t = c
+                elif isinstance(c, list):
+                    t = next((b.get("text","") for b in c if b.get("type")=="text"), "")
+                else: t = ""
+                is_cmd = "<command-name>" in t or "<local-command-stdout>" in t
+                t = re.sub(r"<[^>]+>", " ", t)  # slash-command wrappers etc.
+                t = " ".join(t.split())
+                # skip harness noise, keep scanning for the first real message
+                if t.startswith("Caveat: The messages below were generated"):
+                    continue
+                if is_cmd:
+                    fallback = fallback or t
+                    continue
+                if t:
+                    preview = t; break
+except Exception:
+    pass
+preview = preview or fallback
+if not preview:
+    sys.exit(0)  # no real user message — hide from picker
+uuid = os.path.basename(path)[:-6]
+print(f"{int(os.path.getmtime(path))}\t{uuid}\t{preview[:60]}")
+PY
+  done | sort -rn
+}
+
+age() { # epoch -> "3h" / "2d"
+  local s=$(( $(date +%s) - $1 ))
+  if   [ $s -lt 3600 ];   then echo "$((s/60))m"
+  elif [ $s -lt 86400 ];  then echo "$((s/3600))h"
+  else echo "$((s/86400))d"; fi
+}
+
+main_menu() { # $1="all" to show every session (default: 15 newest)
+  local sessions archived running n i total limit=15
+  [ "${1:-}" = "all" ] && limit=100000
+  sessions=$(list_sessions "$PROJ_DIR")
+  archived=$(list_sessions "$ARCHIVE_DIR")
+  running=$(state running)
+
+  echo
+  echo "── claude sessions: $(pwd) ──"
+  n=0
+  if [ -n "$sessions" ]; then
+    total=$(echo "$sessions" | wc -l | tr -d ' ')
+    while IFS=$'\t' read -r mt uuid prev; do
+      n=$((n+1))
+      [ $n -gt $limit ] && break
+      local mark=" "
+      echo "$running" | grep -q "^$uuid$" && mark="●"
+      printf "  %2d)%s%-4s %s  \033[2m%s\033[0m\n" "$n" "$mark" "$(age "$mt")" "$prev" "${uuid:0:8}"
+      eval "S$n=\"\$uuid\""
+    done <<< "$sessions"
+    [ "$total" -gt "$limit" ] && echo "  … +$((total-limit)) older ('m'=show all)"
+  else
+    echo "  (no active sessions)"
+  fi
+  [ -n "$archived" ] && echo "  archived: $(echo "$archived" | wc -l | tr -d ' ') (type 'l' to list/restore)"
+  echo
+  echo "  Enter=new  <n>=resume  a<n>=archive  d<n>=delete  l=archived  m=all  q=shell   ●=open elsewhere"
+  printf "> "
+  read -r ans || exit 0
+
+  case "$ans" in
+    "")      local u; u=$(uuidgen | tr 'A-Z' 'a-z')
+             run_claude "$u" --session-id "$u"; post_exit_menu ;;
+    q)       exit 0 ;;
+    m)       main_menu all ;;
+    l)       archive_menu; main_menu ;;
+    a[0-9]*) i=${ans#a}; local u; u=$(eval echo "\${S$i:-}")
+             if [ -n "$u" ]; then
+               if echo "$running" | grep -q "^$u$"; then echo "session open elsewhere — close it first"
+               else mkdir -p "$ARCHIVE_DIR"; mv "$PROJ_DIR/$u.jsonl" "$ARCHIVE_DIR/"; echo "archived ${u:0:8}"; fi
+             fi
+             main_menu ;;
+    d[0-9]*) i=${ans#d}; local u; u=$(eval echo "\${S$i:-}")
+             if [ -n "$u" ]; then
+               printf "delete %s permanently? [y/N] " "${u:0:8}"; read -r c
+               [ "$c" = "y" ] && rm "$PROJ_DIR/$u.jsonl" && echo "deleted"
+             fi
+             main_menu ;;
+    [0-9]*)  local u; u=$(eval echo "\${S$ans:-}")
+             if [ -n "$u" ]; then
+               if echo "$running" | grep -q "^$u$"; then
+                 printf "session open in another thread — resume anyway? [y/N] "; read -r c
+                 [ "$c" != "y" ] && { main_menu; return; }
+               fi
+               run_claude "$u" --resume "$u"; post_exit_menu
+             else echo "no session $ans"; main_menu; fi ;;
+    *)       main_menu ;;
+  esac
+}
+
+# after claude exits, offer the menu again instead of a bare shell
+post_exit_menu() {
+  set_title  # reclaim title in case claude overwrote it
+  echo
+  printf "claude exited — [Enter]=menu  q=shell > "
+  read -r ans || exit 0
+  [ "$ans" = "q" ] && exit 0
+  main_menu
+}
+
+archive_menu() {
+  local archived n=0
+  archived=$(list_sessions "$ARCHIVE_DIR")
+  [ -z "$archived" ] && { echo "  no archived sessions"; return; }
+  echo
+  echo "── archived ──"
+  while IFS=$'\t' read -r mt uuid prev; do
+    n=$((n+1))
+    printf "  %2d) %-4s %s  \033[2m%s\033[0m\n" "$n" "$(age "$mt")" "$prev" "${uuid:0:8}"
+    eval "A$n=\"\$uuid\""
+  done <<< "$archived"
+  echo "  <n>=restore  Enter=back"
+  printf "> "
+  read -r ans || ans=""
+  case "$ans" in
+    [0-9]*) local u; u=$(eval echo "\${A$ans:-}")
+            [ -n "$u" ] && mv "$ARCHIVE_DIR/$u.jsonl" "$PROJ_DIR/" && echo "restored ${u:0:8}" ;;
+  esac
+}
+
+# ── sc-managed launches (super.engineering command override) ──
+# sc invokes us with its own args (--session-id <new-id> for new tabs,
+# --resume [<id>] for restored ones). Pass them through — PATH resolves
+# `claude` back to sc's wrapper, which re-injects sc's hooks/settings —
+# but record everything in state so a forgotten tab can still auto-resume.
+if [ $# -gt 0 ]; then
+  set_title
+  sid="" prev=""
+  for a in "$@"; do
+    case "$prev" in
+      --resume|--session-id)
+        case "$a" in
+          [a-f0-9]*-*-*-*-*) sid="$a" ;;
+        esac ;;
+    esac
+    prev="$a"
+  done
+  if [ -n "$sid" ]; then
+    # sc knows the session — passthrough, tracked
+    state start "$sid" "$(pwd)" >/dev/null
+    trap ':' INT
+    "$CLAUDE_BIN" "$@"
+    trap - INT
+    state end "$sid" >/dev/null
+    post_exit_menu
+    exit 0
+  fi
+  case "$*" in
+    *--resume*)
+      # sc forgot which session this tab was — recover from our state
+      claimed=$(state claim "$(pwd)" "$PROJ_DIR")
+      if [ -n "$claimed" ]; then
+        printf "sc lost this tab's session — resuming %s in 2s, any key for menu... " "${claimed:0:8}"
+        if read -t 2 -n 1 -s; then
+          echo; state end "$claimed" >/dev/null; main_menu; exit 0
+        fi
+        echo
+        state start "$claimed" "$(pwd)" >/dev/null
+        trap ':' INT
+        "$CLAUDE_BIN" --resume "$claimed"
+        trap - INT
+        state end "$claimed" >/dev/null
+        post_exit_menu
+        exit 0
+      fi ;;
+  esac
+  # nothing to recover — run exactly what sc asked
+  "$CLAUDE_BIN" "$@"
+  exit $?
+fi
+
+# ── entry: try auto-resume of the most recent session this wrapper ran ──
+set_title
+claimed=$(state claim "$(pwd)" "$PROJ_DIR")
+if [ -n "$claimed" ]; then
+  printf "resuming %s in 2s — any key for menu... " "${claimed:0:8}"
+  if read -t 2 -n 1 -s; then
+    echo; state end "$claimed" >/dev/null
+    main_menu
+  else
+    echo
+    run_claude "$claimed" --resume "$claimed"
+    post_exit_menu
+  fi
+else
+  main_menu
+fi
