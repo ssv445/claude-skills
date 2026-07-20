@@ -1,4 +1,13 @@
-# claude-thread
+# bin — helper scripts (not skills)
+
+Plain scripts, symlink into `~/.local/bin`. Not Claude Code skills.
+
+- **`claude-thread`** — session picker/resume wrapper (below)
+- **`statusline.sh`** — Claude Code statusline hook (bottom)
+
+---
+
+## claude-thread
 
 Bash wrapper around `claude` that adds the session management the terminal hosts lack:
 menu to resume/archive/delete sessions per project, auto-resume on terminal recreation,
