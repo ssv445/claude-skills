@@ -44,3 +44,15 @@ Runs in every new terminal thread AND when Zed recreates saved threads on projec
 sc's wrapper override dispatch execs claude-thread with sc's args; PATH resolves `claude` back through sc's own wrapper so sc hook injection stays intact. sc-aware behavior: `--session-id`/`--resume <id>` pass through (tracked); bare `--resume` (sc forgot the tab) auto-resumes from state. NOTE: sc flushes settings.json on quit — edit the file only while sc is NOT running (see `~/.claude-thread/patch-sc-setting.sh` pattern: detached watcher patches after quit).
 
 **Any terminal**: just run `claude-thread` in a project dir.
+
+## statusline.sh (bonus)
+
+Standalone Claude Code statusline hook (two lines: model / project / worktree / git, then context bar / cost / duration / diff). Self-contained, no tmux, requires `jq`. Modernized from claude-wormhole.
+
+```bash
+ln -sf "$(pwd)/statusline.sh" ~/.local/bin/statusline
+```
+```json
+// ~/.claude/settings.json
+{ "statusLine": { "type": "command", "command": "/Users/<you>/.local/bin/statusline" } }
+```
