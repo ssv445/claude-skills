@@ -17,6 +17,14 @@ one state file tracking which session runs where.
 
 ## Install
 
+Symlink so this repo copy stays the single source of truth (edits go live everywhere, git tracks real content):
+
+```bash
+ln -sf "$(pwd)/claude-thread" ~/.local/bin/claude-thread   # run from this dir
+```
+
+Or a standalone copy if you don't want the repo dependency:
+
 ```bash
 cp claude-thread ~/.local/bin/claude-thread && chmod +x ~/.local/bin/claude-thread
 ```
