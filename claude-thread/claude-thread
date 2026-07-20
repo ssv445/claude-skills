@@ -25,7 +25,7 @@ ARCHIVE_DIR="$HOME/.claude-thread/archived/$ENC_CWD"
 #   running                  print uuids currently running (for menu marks)
 state() {
   python3 - "$@" "$$" <<'PY'
-import fcntl, json, os, sys, time
+import fcntl, json, os, re, subprocess, sys, time
 cmd, *args = sys.argv[1:]
 pid = int(args[-1]); args = args[:-1]
 path = os.path.expanduser("~/.claude-thread/state.json")
@@ -45,9 +45,29 @@ def alive(p):
     except Exception:
         return False
 
+# session UUIDs referenced by ANY live claude process, regardless of who
+# launched it (sc passthrough, Zed, manual, a crashed terminal that never
+# updated state). This is the source of truth for "is it already open".
+def live_uuids():
+    try:
+        ps = subprocess.run(["ps", "-eo", "command"], capture_output=True,
+                            text=True, timeout=3).stdout
+    except Exception:
+        return set()
+    found = set()
+    for line in ps.splitlines():
+        if "claude" not in line:
+            continue
+        for m in re.finditer(r"--(?:resume|session-id)\s+([0-9a-f-]{36})", line):
+            found.add(m.group(1))
+    return found
+
+open_now = live_uuids()
+
 def prune():
-    for s in sess.values():
-        if s.get("status") == "running" and not alive(s.get("pid", 0)):
+    for u, s in sess.items():
+        if s.get("status") == "running" and not alive(s.get("pid", 0)) \
+           and u not in open_now:
             s["status"] = "ended"
 
 prune()
@@ -56,6 +76,7 @@ if cmd == "claim":
     cwd, projdir = args
     cands = [(u, s) for u, s in sess.items()
              if s.get("cwd") == cwd and s.get("status") == "ended"
+             and u not in open_now  # never resume a session already open elsewhere
              and os.path.exists(os.path.join(projdir, u + ".jsonl"))]
     if cands:
         u, s = max(cands, key=lambda x: x[1].get("last_used", 0))
@@ -71,7 +92,9 @@ elif cmd == "end":
     if u in sess:
         sess[u].update(status="ended", last_used=time.time())
 elif cmd == "running":
-    out = "\n".join(u for u, s in sess.items() if s.get("status") == "running")
+    # union of state-tracked running + any live claude process
+    marked = {u for u, s in sess.items() if s.get("status") == "running"}
+    out = "\n".join(marked | open_now)
 
 fh.seek(0); fh.truncate()
 json.dump(st, fh, indent=2)
