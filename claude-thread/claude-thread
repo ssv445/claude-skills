@@ -372,6 +372,11 @@ if [ -n "$claimed" ]; then
     state end "$claimed" >/dev/null
     main_menu
   fi
+elif [ -z "$(list_sessions "$PROJ_DIR")" ] && [ -z "$(list_sessions "$ARCHIVE_DIR")" ]; then
+  # nothing to pick from — go straight into a fresh session
+  u=$(uuidgen | tr 'A-Z' 'a-z')
+  run_claude "$u" --session-id "$u"
+  post_exit_menu
 else
   main_menu
 fi
