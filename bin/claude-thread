@@ -304,14 +304,11 @@ main_menu() { # $1="all" to show every session (default: 15 newest)
   esac
 }
 
-# after claude exits, offer the menu again instead of a bare shell
+# claude exited → we exit too, back to the shell. Run `claude-thread` (or the
+# `cld` alias) to get the picker again; exit should mean exit.
 post_exit_menu() {
   set_title  # reclaim title in case claude overwrote it
-  echo
-  printf "claude exited — [Enter]=menu  q=shell > "
-  read -r ans || exit 0
-  [ "$ans" = "q" ] && exit 0
-  main_menu
+  exit 0
 }
 
 archive_menu() {
