@@ -269,13 +269,31 @@ main_menu() { # $1="all" to show every session (default: 15 newest)
     echo "  (no active sessions)"
   fi
   [ -n "$archived" ] && echo "  archived: $(echo "$archived" | wc -l | tr -d ' ') (type 'l' to list/restore)"
+  # Enter always means "continue": resume the newest session that isn't already
+  # open elsewhere (falls back to new when there's nothing to continue).
+  local default_i=0 j=1
+  while [ $j -le $n ] && [ $j -le $limit ]; do
+    local cand; cand=$(eval echo "\${S$j:-}")
+    if [ -n "$cand" ] && ! echo "$running" | grep -q "^$cand$"; then
+      default_i=$j; break
+    fi
+    j=$((j+1))
+  done
+
   echo
-  echo "  Enter=new  <n>=resume  a<n>=archive  d<n>=delete  l=archived  m=all  q=shell   ●=open elsewhere"
+  if [ "$default_i" -gt 0 ]; then
+    echo "  Enter=resume #$default_i  <n>=resume  n=new  a<n>=archive  d<n>=delete  l=archived  m=all  q=shell   ●=open elsewhere"
+  else
+    echo "  Enter=new  <n>=resume  a<n>=archive  d<n>=delete  l=archived  m=all  q=shell   ●=open elsewhere"
+  fi
   printf "> "
   read -r ans || exit 0
 
+  # Enter → continue (newest free session), or new when none is free
+  [ -z "$ans" ] && { [ "$default_i" -gt 0 ] && ans=$default_i || ans=n; }
+
   case "$ans" in
-    "")      local u; u=$(uuidgen | tr 'A-Z' 'a-z')
+    n)       local u; u=$(uuidgen | tr 'A-Z' 'a-z')
              run_claude "$u" --session-id "$u"; post_exit_menu ;;
     q)       exit 0 ;;
     m)       main_menu all ;;
