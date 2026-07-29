@@ -34,7 +34,7 @@ Plain executables, not skills — symlink them onto your `PATH` (`ln -s "$PWD/bi
 
 | Script | Description |
 |--------|-------------|
-| [shyambot-chrome](./bin/shyambot-chrome) | **The** browser entry point for agents. Starts/focuses one shared, logged-in Chrome profile and prints its CDP port. Idempotent, works headless under `claude -p`, keeps logins across restarts, never touches your daily Chrome. |
+| [shyambot-chrome](./bin/shyambot-chrome) | Browser entry point for work on the **real internet** — dashboards, consoles, logged-in accounts, research. Starts/focuses one shared, logged-in Chrome profile and prints its CDP port. Idempotent, works headless under `claude -p`, keeps logins across restarts, never touches your daily Chrome. (Testing your own project? Use plain `agent-browser` on its own clean browser instead.) |
 | [agent-chrome](./bin/agent-chrome) | Manages those profiles: `start`/`stop`/`list`/`port`/`url`/`clone`. Each profile gets its own `user-data-dir` + CDP port, launched with flags so there's no "Allow remote debugging?" prompt. |
 | [claude-thread](./bin/claude-thread) | Keeps a Claude session per worktree and restores it. Sessions are keyed by cwd, so each worktree gets its own thread back — reopen it (or let the terminal be recreated) and you resume where you left off instead of starting cold. Tracks running/ended state in `~/.claude-thread/`, archives sessions you want hidden, and titles the terminal `<worktree-dir>:<branch>`. Wired in as Zed's `agent.terminal_init_command`, but the session logic isn't Zed-specific. |
 | [statusline.sh](./bin/statusline.sh) | Claude Code status line command. |
