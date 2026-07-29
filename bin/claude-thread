@@ -10,7 +10,10 @@ set -u
 
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 # default flags for every claude launch (same convention as old ~/cld.sh)
-CLAUDE_THREAD_ARGS="${CLAUDE_THREAD_ARGS:---dangerously-skip-permissions --chrome --remote-control}"
+# --chrome dropped: the Chrome extension only pairs in interactive sessions, so
+# routines built on it break under `claude -p`. Browser work goes through
+# `shyambot-chrome` + `agent-browser --cdp` instead, which behaves the same in both.
+CLAUDE_THREAD_ARGS="${CLAUDE_THREAD_ARGS:---dangerously-skip-permissions --remote-control}"
 # claude encodes the cwd by replacing every non-alphanumeric char with '-'
 ENC_CWD="$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
 PROJ_DIR="$HOME/.claude/projects/$ENC_CWD"
