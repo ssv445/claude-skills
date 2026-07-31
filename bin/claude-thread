@@ -226,18 +226,26 @@ for mt, uuid, preview in sorted(out, reverse=True):
 PY
 }
 
-# countdown before auto-resume: Enter = resume now, other key = menu,
-# timeout = resume. Returns 0 to resume, 1 for menu.
+# countdown before auto-resume: Enter = resume now, n = fresh session, other
+# key = menu, timeout = resume. Returns 0 resume, 1 menu, 2 new.
 countdown_choice() { # <uuid-short>
   local k
-  printf "resuming %s in 10s — Enter=now, any other key=menu... " "$1"
+  printf "resuming %s in 10s — Enter=now, n=new, any other key=menu... " "$1"
   if read -t 10 -n 1 -s k; then
     echo
     [ -z "$k" ] && return 0  # Enter arrives as empty (newline is the delimiter)
+    case "$k" in n|N) return 2 ;; esac
     return 1
   fi
   echo
   return 0
+}
+
+# fresh session — no listing, no previews. The fast path.
+new_session() {
+  local u; u=$(uuidgen | tr 'A-Z' 'a-z')
+  run_claude "$u" --session-id "$u"
+  post_exit_menu
 }
 
 age() { # epoch -> "3h" / "2d"
@@ -296,8 +304,7 @@ main_menu() { # $1="all" to show every session (default: 15 newest)
   [ -z "$ans" ] && { [ "$default_i" -gt 0 ] && ans=$default_i || ans=n; }
 
   case "$ans" in
-    n)       local u; u=$(uuidgen | tr 'A-Z' 'a-z')
-             run_claude "$u" --session-id "$u"; post_exit_menu ;;
+    n)       new_session ;;
     q)       exit 0 ;;
     m)       main_menu all ;;
     l)       archive_menu; main_menu ;;
@@ -359,6 +366,11 @@ archive_menu() {
 # but record everything in state so a forgotten tab can still auto-resume.
 if [ $# -gt 0 ]; then
   set_title
+  # `cld new` / `cld -n` — straight into a fresh session, no picker at all.
+  # Unambiguous: sc only ever passes flags starting with `--`.
+  case "$1" in
+    new|-n) new_session ;;
+  esac
   sid="" prev=""
   for a in "$@"; do
     case "$prev" in
@@ -385,8 +397,11 @@ if [ $# -gt 0 ]; then
       claimed=$(state claim "$(pwd)" "$PROJ_DIR")
       if [ -n "$claimed" ]; then
         echo "sc lost this tab's session — recovering from state"
-        if ! countdown_choice "${claimed:0:8}"; then
-          state end "$claimed" >/dev/null; main_menu; exit 0
+        countdown_choice "${claimed:0:8}"; choice=$?
+        if [ $choice -ne 0 ]; then
+          state end "$claimed" >/dev/null
+          [ $choice -eq 2 ] && new_session
+          main_menu; exit 0
         fi
         state start "$claimed" "$(pwd)" >/dev/null
         trap ':' INT
@@ -406,18 +421,15 @@ fi
 set_title
 claimed=$(state claim "$(pwd)" "$PROJ_DIR")
 if [ -n "$claimed" ]; then
-  if countdown_choice "${claimed:0:8}"; then
-    run_claude "$claimed" --resume "$claimed"
-    post_exit_menu
-  else
-    state end "$claimed" >/dev/null
-    main_menu
-  fi
+  countdown_choice "${claimed:0:8}"; choice=$?
+  case $choice in
+    0) run_claude "$claimed" --resume "$claimed"; post_exit_menu ;;
+    2) state end "$claimed" >/dev/null; new_session ;;
+    *) state end "$claimed" >/dev/null; main_menu ;;
+  esac
 elif [ -z "$(list_sessions "$PROJ_DIR")" ] && [ -z "$(list_sessions "$ARCHIVE_DIR")" ]; then
   # nothing to pick from — go straight into a fresh session
-  u=$(uuidgen | tr 'A-Z' 'a-z')
-  run_claude "$u" --session-id "$u"
-  post_exit_menu
+  new_session
 else
   main_menu
 fi
