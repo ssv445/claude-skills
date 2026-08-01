@@ -27,6 +27,7 @@ Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claud
 | [rca](./rca/) | Root cause analysis in 5 fresh-subagent rounds. Fixed themes (Surface → Mechanism → Challenge → Alternatives → Synthesize). Adversarial review mandatory each round. Accumulates to `.tmp/rca/rca-<ts>.md`. Ends with 2-3 ranked theories + verification tests. Domain-agnostic (code bugs, traffic drops, churn, funnel leaks). |
 | [domain-rating](./domain-rating/) | Fetch Ahrefs Domain Rating (DR) for any domain via the free public API. No key. Single + batch lookup, caching, error codes, attribution rules. |
 | [theteam](./theteam/) | Spawn a panel of agents in parallel (Claude / Codex / Gemini CLIs) to review, critique, or decide. Three modes: `review` (balanced), `critic` (adversarial), `decide` (advocate-per-option or axis evaluation). Real-call CLI pre-flight, prompt-injection fencing, confidence labels lead synthesis, binary confirm. |
+| [detect-ai-writing](./detect-ai-writing/) | Sentence-level AI-generation detector. Flags suspicious spans only (verbatim quote + signal id + why + confidence + fix direction) so a fixer pass (e.g. `humanizer`) can act mechanically. 40+ signal catalog (Wikipedia WP:AISIGNS + 2025-26 practitioner tells), calibration rules against false positives, density verdict — never an "X% AI" score, never a rewrite. |
 
 ## Scripts (`bin/`)
 
