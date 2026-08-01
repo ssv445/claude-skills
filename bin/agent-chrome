@@ -145,8 +145,15 @@ PY
       || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $title" "$pl"
     # Re-apply the custom icon, else a re-clone after a Chrome update silently
     # reverts to the stock Chrome mark.
+    # CFBundleIconName wins over CFBundleIconFile on modern macOS: it resolves
+    # "AppIcon" out of the compiled Assets.car, so app.icns is never consulted and
+    # the clone keeps showing the stock Chrome mark however good our icns is.
+    # Dropping the key is what makes macOS fall back to CFBundleIconFile=app.icns.
     icon="$ROOT/icons/$name.icns"
-    [[ -f "$icon" ]] && cp "$icon" "$dest/Contents/Resources/app.icns"
+    if [[ -f "$icon" ]]; then
+      cp "$icon" "$dest/Contents/Resources/app.icns"
+      /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$pl" 2>/dev/null || true
+    fi
     # Editing Info.plist invalidates the signature; macOS then refuses to launch.
     # xattr -cr first, else codesign rejects "resource fork ... detritus".
     xattr -cr "$dest"
