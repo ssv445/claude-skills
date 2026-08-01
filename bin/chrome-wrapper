@@ -120,46 +120,55 @@ generate_icon() {
   command -v python3 >/dev/null 2>&1 || { echo "  (no python3 — skipping icon)"; return 0; }
   python3 -c "import PIL" 2>/dev/null || { echo "  (no PIL — skipping icon; drop one at $out)"; return 0; }
 
-  local tmp; tmp="$(mktemp -d)"
-  sips -s format png -Z 1024 "$CHROME_APP/Contents/Resources/app.icns" \
-       --out "$tmp/chrome.png" >/dev/null 2>&1 || { rm -rf "$tmp"; return 0; }
+  local tmp full
+  tmp="$(mktemp -d)"
+  full="$(label_of "$name")"
+  [[ -n "$full" ]] || full="$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")${name:1}"
 
   # Never fatal. `new` has already registered the port and label by this point, so a
   # throw here would abort under set -e and leave a half-created identity that `new`
   # then refuses to retry ("already exists"), recoverable only by hand-editing the
   # registries. Everything downstream already copes with a missing icns.
   local ok=1
-  CW_OUT="$tmp" CW_COLOR="$(color_of "$port")" CW_LETTERS="$(initials "$name")" python3 - <<'PY' || ok=0
+  CW_OUT="$tmp" CW_COLOR="$(color_of "$port")" \
+  CW_SHORT="$(initials "$name")" CW_FULL="$full" python3 - <<'PY' || ok=0
 import os
 from PIL import Image, ImageDraw, ImageFont
 
-tmp     = os.environ["CW_OUT"]
-color   = tuple(int(c) for c in os.environ["CW_COLOR"].split(",")) + (255,)
-letters = os.environ["CW_LETTERS"]
-FONT    = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
-S       = 1024
+tmp   = os.environ["CW_OUT"]
+color = tuple(int(c) for c in os.environ["CW_COLOR"].split(",")) + (255,)
+short = os.environ["CW_SHORT"]
+full  = os.environ["CW_FULL"]
+FONT  = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+S     = 1024
 
-chrome = Image.open(f"{tmp}/chrome.png").convert("RGBA")
+def fit(draw, text, target_w):
+    """Largest font size whose rendered width stays under target_w."""
+    size = 10
+    while size <= 900:
+        f = ImageFont.truetype(FONT, size)
+        if draw.textbbox((0, 0), text, font=f)[2] >= target_w:
+            return ImageFont.truetype(FONT, max(size - 10, 10))
+        size += 10
+    return ImageFont.truetype(FONT, 900)
 
-# Colour tile carries the identity; the Chrome mark keeps it readable as a browser;
-# the letters disambiguate. All three have to survive at 64px, which is the only
-# size that actually matters — that is what rules out watermarks and thin banners.
+# Three signals, each carrying at a different size: the colour tile identifies the
+# identity peripherally, the circled short name is the only thing still legible at
+# 32px, and the full name reads at Dock size and above. No Chrome mark — at 64px it
+# is a dot and at 32px it is noise, and it competes with the circle for the same eye.
 tile = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-ImageDraw.Draw(tile).rounded_rectangle([0, 0, S - 1, S - 1], int(S * 0.22), fill=color)
-
-mark = chrome.resize((int(S * 0.34), int(S * 0.34)), Image.LANCZOS)
-tile.paste(mark, (int((S - S * 0.34) / 2), int(S * 0.13)), mark)
-
 d = ImageDraw.Draw(tile)
-size = 10
-while True:
-    f = ImageFont.truetype(FONT, size)
-    if d.textbbox((0, 0), letters, font=f)[2] >= int(S * 0.52) or size > 900:
-        f = ImageFont.truetype(FONT, size - 1)
-        break
-    size += 10
-bb = d.textbbox((0, 0), letters, font=f)
-d.text(((S - bb[2]) / 2, int(S * 0.56)), letters, font=f, fill=(255, 255, 255, 255))
+d.rounded_rectangle([0, 0, S - 1, S - 1], int(S * 0.22), fill=color)
+
+cy, r = int(S * 0.38), int(S * 0.21)
+d.ellipse([S // 2 - r, cy - r, S // 2 + r, cy + r], fill=(255, 255, 255, 255))
+f = fit(d, short, int(r * 1.35))
+bb = d.textbbox((0, 0), short, font=f)
+d.text(((S - bb[2]) / 2, cy - (bb[3] + bb[1]) / 2), short, font=f, fill=color)
+
+f2 = fit(d, full, int(S * 0.86))
+bb2 = d.textbbox((0, 0), full, font=f2)
+d.text(((S - bb2[2]) / 2, int(S * 0.68)), full, font=f2, fill=(255, 255, 255, 255))
 
 # Every slot is a downscale from 1024, so nothing is ever upscaled.
 os.makedirs(f"{tmp}/i.iconset", exist_ok=True)
