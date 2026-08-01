@@ -12,7 +12,7 @@ CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 # default flags for every claude launch (same convention as old ~/cld.sh)
 # --chrome dropped: the Chrome extension only pairs in interactive sessions, so
 # routines built on it break under `claude -p`. Browser work goes through
-# `shyambot-chrome` + `agent-browser --cdp` instead, which behaves the same in both.
+# `chrome-wrapper-<identity>` + `agent-browser --cdp` instead, same in both modes.
 CLAUDE_THREAD_ARGS="${CLAUDE_THREAD_ARGS:---dangerously-skip-permissions --remote-control}"
 # claude encodes the cwd by replacing every non-alphanumeric char with '-'
 ENC_CWD="$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
