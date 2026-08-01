@@ -28,6 +28,44 @@ Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claud
 | [domain-rating](./domain-rating/) | Fetch Ahrefs Domain Rating (DR) for any domain via the free public API. No key. Single + batch lookup, caching, error codes, attribution rules. |
 | [theteam](./theteam/) | Spawn a panel of agents in parallel (Claude / Codex / Gemini CLIs) to review, critique, or decide. Three modes: `review` (balanced), `critic` (adversarial), `decide` (advocate-per-option or axis evaluation). Real-call CLI pre-flight, prompt-injection fencing, confidence labels lead synthesis, binary confirm. |
 
+## Scripts (`bin/`)
+
+Plain executables, not skills — symlink them onto your `PATH` (`ln -s "$PWD/bin/<name>" ~/.local/bin/<name>`).
+
+| Script | Description |
+|--------|-------------|
+| [shyambot-chrome](./bin/shyambot-chrome) | Browser entry point for work on the **real internet** — dashboards, consoles, logged-in accounts, research. Starts/focuses one shared, logged-in Chrome profile and prints its CDP port. Idempotent, works headless under `claude -p`, keeps logins across restarts, never touches your daily Chrome. (Testing your own project? Use plain `agent-browser` on its own clean browser instead.) |
+| [agent-chrome](./bin/agent-chrome) | Manages those profiles: `start`/`stop`/`list`/`port`/`url`/`clone`. Each profile gets its own `user-data-dir` + CDP port, launched with flags so there's no "Allow remote debugging?" prompt. |
+| [claude-thread](./bin/claude-thread) | Keeps a Claude session per worktree and restores it. Sessions are keyed by cwd, so each worktree gets its own thread back — reopen it (or let the terminal be recreated) and you resume where you left off instead of starting cold. Tracks running/ended state in `~/.claude-thread/`, archives sessions you want hidden, and titles the terminal `<worktree-dir>:<branch>`. Wired in as Zed's `agent.terminal_init_command`, but the session logic isn't Zed-specific. |
+| [statusline.sh](./bin/statusline.sh) | Claude Code status line command. |
+
+### Why `shyambot-chrome` exists
+
+Claude Code's Chrome extension is an **interactive-session pairing, not an MCP server**. Under
+`claude -p` (cron, dispatchers, headless agents) the `mcp__claude-in-chrome__*` tools are simply
+absent, so any routine built on them silently degrades — ours fell back to API-only totals for 25
+days without failing loudly. Driving a dedicated CDP profile instead works identically in both
+modes.
+
+```bash
+shyambot-chrome                      # launch or focus; prints CDP port
+shyambot-chrome https://example.com  # launch and navigate
+agent-browser --cdp $(shyambot-chrome --port) eval "document.title"
+shyambot-chrome --stop
+```
+
+Logins persist in `~/.agent-browsers/<profile>/` — sign in once by hand, and every agent inherits
+the session. Never hand credentials to an agent.
+
+`agent-chrome clone <name>` additionally builds `~/Applications/<name>-chrome.app`: an APFS
+block-clone of Chrome (≈no extra disk) with its own `CFBundleIdentifier`, name, and icon, so the
+profile is a **separate app in Cmd+Tab** rather than another anonymous "Google Chrome" window.
+Editing `Info.plist` invalidates Chrome's signature, so the script runs `xattr -cr` then re-signs
+ad-hoc — skip either step and macOS kills the app at launch with no error. Re-run after Chrome
+auto-updates; the clone does not update itself.
+
+macOS only (Chrome paths, `codesign`, `PlistBuddy`).
+
 ## Companion skills (install upstream)
 
 These skills aren't kept in this repo because the upstream repos already publish them in a `skills`-CLI-compatible format. Install directly from upstream:
