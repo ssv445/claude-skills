@@ -75,6 +75,11 @@ prompt nobody can see.
 Logins persist in `~/.chrome-wrapper/<name>/` — sign in once by hand, and every agent inherits the
 session. Never hand credentials to an agent.
 
+**Agent-driven install**: paste this to your agent —
+`Install chrome-wrapper by following https://raw.githubusercontent.com/ssv445/claude-skills/main/bin/install-chrome-wrapper.md`
+— [install-chrome-wrapper.md](./bin/install-chrome-wrapper.md) walks it through the whole setup,
+including where it must stop and hand the terminal back to you.
+
 Each identity's bundle at `~/Applications/chrome-wrapper-<name>.app` is an APFS block-clone of
 Chrome (~1 MB of real disk, since blocks are shared) with its own `CFBundleIdentifier`, name and
 icon, so it is a **separate app in Cmd+Tab** rather than another anonymous "Google Chrome" window.
