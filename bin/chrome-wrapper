@@ -95,7 +95,11 @@ initials() {
 # override: drop a real brand icon there and it is never overwritten, by this or by
 # any later bundle refresh.
 generate_icon() {
-  local name="$1" port="$2" out="$ICONS/$name.icns"
+  # Separate statements on purpose: the shell expands every word of a `local` line
+  # before the builtin runs, so `local name="$1" out="$ICONS/$name.icns"` would build
+  # the path from the *old* global $name, not the one being assigned beside it.
+  local name="$1" port="$2" out
+  out="$ICONS/$name.icns"
   [[ -f "$out" ]] && return 0
   command -v python3 >/dev/null 2>&1 || { echo "  (no python3 — skipping icon)"; return 0; }
   python3 -c "import PIL" 2>/dev/null || { echo "  (no PIL — skipping icon; drop one at $out)"; return 0; }
@@ -104,7 +108,12 @@ generate_icon() {
   sips -s format png -Z 1024 "$CHROME_APP/Contents/Resources/app.icns" \
        --out "$tmp/chrome.png" >/dev/null 2>&1 || { rm -rf "$tmp"; return 0; }
 
-  CW_OUT="$tmp" CW_COLOR="$(color_of "$port")" CW_LETTERS="$(initials "$name")" python3 - <<'PY'
+  # Never fatal. `new` has already registered the port and label by this point, so a
+  # throw here would abort under set -e and leave a half-created identity that `new`
+  # then refuses to retry ("already exists"), recoverable only by hand-editing the
+  # registries. Everything downstream already copes with a missing icns.
+  local ok=1
+  CW_OUT="$tmp" CW_COLOR="$(color_of "$port")" CW_LETTERS="$(initials "$name")" python3 - <<'PY' || ok=0
 import os
 from PIL import Image, ImageDraw, ImageFont
 
@@ -144,6 +153,10 @@ for px, nm in [(16,"16x16"),(32,"16x16@2x"),(32,"32x32"),(64,"32x32@2x"),
     tile.resize((px, px), Image.LANCZOS).save(f"{tmp}/i.iconset/icon_{nm}.png")
 PY
 
+  if [[ "$ok" != 1 ]]; then
+    echo "  (icon generation failed — continuing without one; drop an icns at $out)" >&2
+    rm -rf "$tmp"; return 0
+  fi
   mkdir -p "$ICONS"
   iconutil -c icns "$tmp/i.iconset" -o "$out" 2>/dev/null && echo "  icon generated → $out"
   rm -rf "$tmp"
