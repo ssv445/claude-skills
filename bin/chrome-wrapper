@@ -256,12 +256,6 @@ usage() {
 
 mkdir -p "$ROOT" "$ICONS"; touch "$PORTS" "$LABELS"
 
-# Old layout still in place and nothing migrated yet — say so plainly rather than
-# quietly behaving as if there are no identities.
-if [[ ! -s "$PORTS" && -f "$HOME/.agent-browsers/ports" ]]; then
-  echo "note: identities still live in ~/.agent-browsers — run the migration first" >&2
-fi
-
 # Called through a per-identity symlink (chrome-wrapper-ecomitram)? Then the identity is
 # in the command name, and the argument is a url or a flag.
 self="${0##*/}"
