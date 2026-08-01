@@ -1,0 +1,384 @@
+#!/usr/bin/env bash
+# chrome-wrapper — persistent, isolated Chrome identities for you and your agents.
+#
+# One identity = one set of logins. Each gets its own user-data-dir (so sessions
+# never mix), its own CDP port (so agents can drive them concurrently), and its
+# own macOS app bundle (so they are tellable apart in the Dock and Cmd+Tab).
+#
+# The port IS the identity. That is the whole safety property: an agent pointed at
+# the wrong port hits a logged-out browser and stops, instead of silently acting as
+# the wrong account. Never collapse two identities onto one port.
+#
+#   chrome-wrapper new <name> [--label "EcoMitram"]   create one (needs you: see below)
+#   chrome-wrapper open <name> [url]                  launch/focus, optionally navigate
+#   chrome-wrapper stop <name>                        quit it
+#   chrome-wrapper rm <name>                          delete it (needs you)
+#   chrome-wrapper list                               all identities: port + state
+#   chrome-wrapper port <name>                        CDP port, for scripts
+#   chrome-wrapper url <name>                         ws:// CDP endpoint, for playwright
+#   chrome-wrapper system-profiles                    your DAILY Chrome's profiles (read-only)
+#
+# Each identity also gets a command of its own, so agents have one memorable word:
+#   chrome-wrapper-ecomitram [url] | --port | --stop
+#
+# `new` and `rm` refuse to run without a terminal. Both need a human — `new` because
+# only you can sign into the accounts, `rm` because it destroys logins. An agent that
+# needs one must ask you rather than run it blind.
+set -euo pipefail
+
+CHROME_APP="/Applications/Google Chrome.app"
+ROOT="$HOME/.chrome-wrapper"
+PORTS="$ROOT/ports"          # registry: "<name> <port>" — two columns, see assign_port
+LABELS="$ROOT/labels"        # "<name><TAB><display label>", kept out of ports on purpose
+ICONS="$ROOT/icons"
+APPS="$HOME/Applications"
+BIN="$HOME/.local/bin"
+BASE_PORT=9301
+
+# Distinct window/icon colour per identity so instances are tellable apart at a
+# glance. Stable, because it is derived from the identity's registered port.
+COLORS=("217,48,37" "26,115,232" "24,128,56" "227,116,0" "154,60,220" "0,131,143" "194,24,91" "93,64,55")
+
+app_of()   { echo "$APPS/chrome-wrapper-$1.app"; }
+bundle_id(){ echo "com.shyam.chrome-wrapper-$1"; }
+port_of()  { awk -v n="$1" '$1==n{print $2}' "$PORTS" 2>/dev/null; }
+label_of() { awk -F'\t' -v n="$1" '$1==n{print $2}' "$LABELS" 2>/dev/null; }
+plist_get(){ /usr/libexec/PlistBuddy -c "Print :$2" "$1/Contents/Info.plist" 2>/dev/null || true; }
+running()  { [[ -n "${1:-}" ]] && curl -sf --max-time 2 "http://127.0.0.1:$1/json/version" >/dev/null 2>&1; }
+
+die() { echo "$*" >&2; exit 1; }
+
+# Anchor on the field, never on a substring of the line: a bare `grep " $p$"` would
+# also have to be end-of-line, which silently breaks the moment the registry grows
+# a third column. Field-matching survives that.
+assign_port() {
+  local name="$1" p
+  p=$(port_of "$name")
+  if [[ -z "$p" ]]; then
+    p=$BASE_PORT
+    while awk -v p="$p" '$2==p{found=1} END{exit !found}' "$PORTS"; do p=$((p+1)); done
+    printf '%s %s\n' "$name" "$p" >> "$PORTS"
+  fi
+  echo "$p"
+}
+
+color_of() {
+  local port="$1"
+  echo "${COLORS[$(( (port - BASE_PORT) % ${#COLORS[@]} ))]}"
+}
+
+# Anything that needs a human must say so and stop, not hang. Under `claude -p`
+# there is no terminal, and a prompt nobody can see is a deadlock, not a safeguard.
+require_tty() {
+  [[ -t 0 && -t 1 ]] || cat >&2 <<EOF
+chrome-wrapper $1: needs a person, refusing to run unattended.
+
+  $2
+
+Ask Shyam to run it in a terminal. Do not try to work around this.
+EOF
+  [[ -t 0 && -t 1 ]] || exit 2
+}
+
+# Letters for the generated icon: prefer the capitals someone chose in the label
+# ("EcoMitram" -> EM), since that is the brand's own shorthand. Fall back to the
+# first two characters of the name.
+initials() {
+  local name="$1" label caps
+  label="$(label_of "$name")"
+  caps="$(printf '%s' "$label" | tr -cd 'A-Z' | cut -c1-3)"
+  if [[ ${#caps} -ge 2 ]]; then echo "$caps"
+  else printf '%s' "${name:0:2}" | tr '[:lower:]' '[:upper:]'; fi
+}
+
+# Generate an icon only when none exists. ~/.chrome-wrapper/icons/<name>.icns is the
+# override: drop a real brand icon there and it is never overwritten, by this or by
+# any later bundle refresh.
+generate_icon() {
+  local name="$1" port="$2" out="$ICONS/$name.icns"
+  [[ -f "$out" ]] && return 0
+  command -v python3 >/dev/null 2>&1 || { echo "  (no python3 — skipping icon)"; return 0; }
+  python3 -c "import PIL" 2>/dev/null || { echo "  (no PIL — skipping icon; drop one at $out)"; return 0; }
+
+  local tmp; tmp="$(mktemp -d)"
+  sips -s format png -Z 1024 "$CHROME_APP/Contents/Resources/app.icns" \
+       --out "$tmp/chrome.png" >/dev/null 2>&1 || { rm -rf "$tmp"; return 0; }
+
+  CW_OUT="$tmp" CW_COLOR="$(color_of "$port")" CW_LETTERS="$(initials "$name")" python3 - <<'PY'
+import os
+from PIL import Image, ImageDraw, ImageFont
+
+tmp     = os.environ["CW_OUT"]
+color   = tuple(int(c) for c in os.environ["CW_COLOR"].split(",")) + (255,)
+letters = os.environ["CW_LETTERS"]
+FONT    = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+S       = 1024
+
+chrome = Image.open(f"{tmp}/chrome.png").convert("RGBA")
+
+# Colour tile carries the identity; the Chrome mark keeps it readable as a browser;
+# the letters disambiguate. All three have to survive at 64px, which is the only
+# size that actually matters — that is what rules out watermarks and thin banners.
+tile = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+ImageDraw.Draw(tile).rounded_rectangle([0, 0, S - 1, S - 1], int(S * 0.22), fill=color)
+
+mark = chrome.resize((int(S * 0.34), int(S * 0.34)), Image.LANCZOS)
+tile.paste(mark, (int((S - S * 0.34) / 2), int(S * 0.13)), mark)
+
+d = ImageDraw.Draw(tile)
+size = 10
+while True:
+    f = ImageFont.truetype(FONT, size)
+    if d.textbbox((0, 0), letters, font=f)[2] >= int(S * 0.52) or size > 900:
+        f = ImageFont.truetype(FONT, size - 1)
+        break
+    size += 10
+bb = d.textbbox((0, 0), letters, font=f)
+d.text(((S - bb[2]) / 2, int(S * 0.56)), letters, font=f, fill=(255, 255, 255, 255))
+
+# Every slot is a downscale from 1024, so nothing is ever upscaled.
+os.makedirs(f"{tmp}/i.iconset", exist_ok=True)
+for px, nm in [(16,"16x16"),(32,"16x16@2x"),(32,"32x32"),(64,"32x32@2x"),
+               (128,"128x128"),(256,"128x128@2x"),(256,"256x256"),(512,"256x256@2x"),
+               (512,"512x512"),(1024,"512x512@2x")]:
+    tile.resize((px, px), Image.LANCZOS).save(f"{tmp}/i.iconset/icon_{nm}.png")
+PY
+
+  mkdir -p "$ICONS"
+  iconutil -c icns "$tmp/i.iconset" -o "$out" 2>/dev/null && echo "  icon generated → $out"
+  rm -rf "$tmp"
+}
+
+# Build (or refresh) the identity's app bundle. Cmd+Tab groups by bundle identity,
+# not by argv[0], so a separate switcher entry needs a separate bundle — an APFS
+# clone, which costs ~1MB of real disk because the blocks are shared.
+build_bundle() {
+  local name="$1" dest title icon
+  dest="$(app_of "$name")"
+  title="$(label_of "$name")"
+  [[ -n "$title" ]] || title="$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")${name:1}"
+  title="$title Chrome"
+
+  rm -rf "$dest"
+  mkdir -p "$APPS"
+  cp -Rc "$CHROME_APP" "$dest"
+  local pl="$dest/Contents/Info.plist"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $(bundle_id "$name")" "$pl"
+  /usr/libexec/PlistBuddy -c "Set :CFBundleName $title" "$pl"
+  /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $title" "$pl" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $title" "$pl"
+  # Keystone identifies products by KSProductID, and this clone is not registered with
+  # the updater. Leaving Chrome's own ID on it means the bundle claims to be a product
+  # it cannot receive updates for; drop it so nothing can act on that claim.
+  /usr/libexec/PlistBuddy -c "Delete :KSProductID" "$pl" 2>/dev/null || true
+
+  icon="$ICONS/$name.icns"
+  if [[ -f "$icon" ]]; then
+    cp "$icon" "$dest/Contents/Resources/app.icns"
+    # CFBundleIconName wins over CFBundleIconFile on modern macOS: it resolves
+    # "AppIcon" out of the compiled Assets.car, so app.icns is never consulted and the
+    # clone keeps showing the stock Chrome mark however good our icns is.
+    /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$pl" 2>/dev/null || true
+  fi
+
+  # Editing Info.plist invalidates the signature and macOS then refuses to launch.
+  # xattr -cr first, else codesign rejects "resource fork ... detritus".
+  xattr -cr "$dest"
+  codesign --force --sign - "$dest" 2>/dev/null
+  codesign --verify "$dest" 2>/dev/null || die "codesign failed for $dest"
+}
+
+# Chrome auto-updates /Applications; a clone is a point-in-time copy that never hears
+# about it. Left alone it silently rots — which is how a browser holding live logins
+# ends up a major version behind on security patches. Refresh on drift instead.
+# Safe here and only here: the identity is provably stopped at this point.
+refresh_bundle_if_stale() {
+  local name="$1" dest live cur
+  dest="$(app_of "$name")"
+  [[ -d "$dest" ]] || return 0
+  live="$(plist_get "$CHROME_APP" CFBundleShortVersionString)"
+  cur="$(plist_get "$dest" CFBundleShortVersionString)"
+  [[ -n "$live" && "$cur" != "$live" ]] || return 0
+  # stderr, not stdout: launch() is read via $(...) for the port, and a stray line here
+  # would be captured as part of it.
+  echo "chrome $cur → $live — refreshing '$name' bundle" >&2
+  build_bundle "$name"
+}
+
+launch() {
+  local name="$1" port bin
+  port="$(assign_port "$name")"
+  running "$port" && { echo "$port"; return 0; }
+
+  mkdir -p "$ROOT/$name"
+  refresh_bundle_if_stale "$name"
+  bin="$(app_of "$name")/Contents/MacOS/Google Chrome"
+  [[ -x "$bin" ]] || bin="$CHROME_APP/Contents/MacOS/Google Chrome"
+
+  # exec -a renames argv[0] so ps/pgrep/Activity Monitor show "chrome-wrapper-<name>"
+  # instead of a wall of identical "Google Chrome" rows. Browser process only; helpers
+  # still report as "Google Chrome Helper".
+  ( exec -a "chrome-wrapper-$name" "$bin" \
+      --user-data-dir="$ROOT/$name" \
+      --remote-debugging-port="$port" \
+      --install-autogenerated-theme="$(color_of "$port")" \
+      --restore-last-session \
+      --no-first-run --no-default-browser-check \
+      >/dev/null 2>&1 ) &
+  disown
+
+  # A first launch of a fresh profile has been observed to take well over 10s, so wait
+  # generously — and then actually verify. Claiming success on a port nothing is
+  # listening to just moves the failure somewhere harder to read.
+  local i
+  for i in $(seq 1 60); do running "$port" && break; sleep 0.5; done
+  running "$port" || die "'$name' failed to start — no CDP on port $port after 30s"
+  echo "$port"
+}
+
+# The browser process is the only one WITHOUT a --type= flag; helpers inherit the same
+# --user-data-dir, so picking the first pgrep hit usually kills a helper and leaves the
+# browser running. Match the dir as a whole field too, or stopping 'test' also matches
+# 'test2' and kills someone else's browser.
+browser_pid() {
+  local name="$1" p
+  for p in $(pgrep -f -- "--user-data-dir=$ROOT/$name " 2>/dev/null || \
+             pgrep -f -- "--user-data-dir=$ROOT/$name$" 2>/dev/null || true); do
+    ps -o args= -p "$p" 2>/dev/null | grep -q -- "--type=" || { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+usage() {
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+  exit 1
+}
+
+mkdir -p "$ROOT" "$ICONS"; touch "$PORTS" "$LABELS"
+
+# Old layout still in place and nothing migrated yet — say so plainly rather than
+# quietly behaving as if there are no identities.
+if [[ ! -s "$PORTS" && -f "$HOME/.agent-browsers/ports" ]]; then
+  echo "note: identities still live in ~/.agent-browsers — run the migration first" >&2
+fi
+
+# Called through a per-identity symlink (chrome-wrapper-ecomitram)? Then the identity is
+# in the command name, and the argument is a url or a flag.
+self="${0##*/}"
+if [[ "$self" == chrome-wrapper-* ]]; then
+  name="${self#chrome-wrapper-}"
+  case "${1:-}" in
+    # awk exits 0 even when it matches nothing, so test the value, not the exit status.
+    --port) p="$(port_of "$name")"; [[ -n "$p" ]] || die "unknown identity '$name'"; echo "$p"; exit 0 ;;
+    --stop) set -- stop "$name" ;;
+    *)      set -- open "$name" ${1:+"$1"} ;;
+  esac
+fi
+
+cmd="${1:-list}"; name="${2:-}"
+
+case "$cmd" in
+  new)
+    [[ -n "$name" ]] || die "usage: chrome-wrapper new <name> [--label \"Display Name\"]"
+    [[ -z "$(port_of "$name")" ]] || die "identity '$name' already exists"
+    require_tty new "It opens a browser window that only you can sign into — an agent cannot enter your credentials."
+    label=""
+    [[ "${3:-}" == "--label" ]] && label="${4:-}"
+    [[ -n "$label" ]] && printf '%s\t%s\n' "$name" "$label" >> "$LABELS"
+
+    port="$(assign_port "$name")"
+    mkdir -p "$ROOT/$name"
+    generate_icon "$name" "$port"
+    build_bundle "$name"
+    ln -sf "$BIN/chrome-wrapper" "$BIN/chrome-wrapper-$name"
+    launch "$name" >/dev/null
+    open -b "$(bundle_id "$name")" 2>/dev/null || true
+
+    cat <<EOF
+
+'$name' created — CDP 127.0.0.1:$port, command: chrome-wrapper-$name
+
+  YOUR MOVE: sign into $name's accounts in the window that just opened.
+  Nothing else can do this step. Agents inherit whatever you log in here.
+
+  Log those same accounts OUT of every other identity afterwards. An account
+  reachable from two identities means a wrong pick still succeeds, and you
+  never find out the routing was wrong.
+EOF
+    ;;
+
+  open)
+    [[ -n "$name" ]] || die "usage: chrome-wrapper open <name> [url]"
+    port="$(launch "$name")"
+    # Focus BEFORE navigating. The other order looks fine but isn't: `open -b` can raise
+    # a different window, so the tab we just navigated stops being the active target and
+    # the caller's next `eval` reads the wrong page.
+    open -b "$(bundle_id "$name")" 2>/dev/null || true
+    [[ -n "${3:-}" ]] && agent-browser --cdp "$port" open "$3" >/dev/null 2>&1 || true
+    echo "chrome-wrapper-$name ready — CDP 127.0.0.1:$port"
+    ;;
+
+  stop)
+    [[ -n "$name" ]] || die "usage: chrome-wrapper stop <name>"
+    [[ -n "$(port_of "$name")" ]] || die "unknown identity '$name'"
+    if pid="$(browser_pid "$name")"; then
+      kill "$pid"
+      for _ in $(seq 1 50); do kill -0 "$pid" 2>/dev/null || break; sleep 0.2; done
+      sleep 0.5
+      pkill -f -- "--user-data-dir=$ROOT/$name " 2>/dev/null || true
+      echo "'$name' stopped"
+    else
+      echo "'$name' not running"
+    fi
+    ;;
+
+  rm)
+    [[ -n "$name" ]] || die "usage: chrome-wrapper rm <name>"
+    [[ -n "$(port_of "$name")" ]] || die "unknown identity '$name'"
+    require_tty rm "It deletes $ROOT/$name, which is where that identity's logins live. There is no undo."
+    read -r -p "Delete identity '$name' and all its logins? [y/N] " ans
+    [[ "$ans" == "y" || "$ans" == "Y" ]] || { echo "aborted"; exit 0; }
+    "$0" stop "$name" >/dev/null 2>&1 || true
+    rm -rf "$ROOT/$name" "$(app_of "$name")" "$BIN/chrome-wrapper-$name"
+    grep -v "^$name " "$PORTS" > "$PORTS.tmp" 2>/dev/null || true; mv "$PORTS.tmp" "$PORTS"
+    grep -v "^$name$(printf '\t')" "$LABELS" > "$LABELS.tmp" 2>/dev/null || true; mv "$LABELS.tmp" "$LABELS"
+    echo "'$name' removed (icon kept at $ICONS/$name.icns)"
+    ;;
+
+  list)
+    printf "%-18s %-6s %-9s %s\n" "IDENTITY" "PORT" "STATE" "LABEL"
+    while read -r n p; do
+      [[ -n "$n" ]] || continue
+      if running "$p"; then s="running"; else s="stopped"; fi
+      printf "%-18s %-6s %-9s %s\n" "$n" "$p" "$s" "$(label_of "$n")"
+    done < "$PORTS"
+    ;;
+
+  port)
+    [[ -n "$name" ]] || die "usage: chrome-wrapper port <name>"
+    p="$(port_of "$name")"; [[ -n "$p" ]] || die "unknown identity '$name'"
+    echo "$p"
+    ;;
+
+  url)
+    [[ -n "$name" ]] || die "usage: chrome-wrapper url <name>"
+    p="$(port_of "$name")"; [[ -n "$p" ]] || die "unknown identity '$name'"
+    curl -sf "http://127.0.0.1:$p/json/version" | sed -n 's/.*"webSocketDebuggerUrl": *"\([^"]*\)".*/\1/p'
+    ;;
+
+  system-profiles)
+    # Your DAILY Chrome's profiles. Read-only, and NOT drivable over CDP — listed only
+    # so you can see which account lives where when deciding what an identity should hold.
+    python3 - <<'PY'
+import json, os
+path = os.path.expanduser('~/Library/Application Support/Google/Chrome/Local State')
+cache = json.load(open(path))['profile']['info_cache']
+print(f"{'DIR':<12} {'NAME':<22} ACCOUNT")
+for dir_, info in sorted(cache.items()):
+    print(f"{dir_:<12} {info.get('name','?'):<22} {info.get('user_name','')}")
+PY
+    ;;
+
+  -h|--help|help) usage ;;
+  *) die "unknown command '$cmd' — try: chrome-wrapper --help" ;;
+esac

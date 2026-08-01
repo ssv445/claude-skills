@@ -34,12 +34,11 @@ Plain executables, not skills — symlink them onto your `PATH` (`ln -s "$PWD/bi
 
 | Script | Description |
 |--------|-------------|
-| [shyambot-chrome](./bin/shyambot-chrome) | Browser entry point for work on the **real internet** — dashboards, consoles, logged-in accounts, research. Starts/focuses one shared, logged-in Chrome profile and prints its CDP port. Idempotent, works headless under `claude -p`, keeps logins across restarts, never touches your daily Chrome. (Testing your own project? Use plain `agent-browser` on its own clean browser instead.) |
-| [agent-chrome](./bin/agent-chrome) | Manages those profiles: `start`/`stop`/`list`/`port`/`url`/`clone`. Each profile gets its own `user-data-dir` + CDP port, launched with flags so there's no "Allow remote debugging?" prompt. |
+| [chrome-wrapper](./bin/chrome-wrapper) | Persistent, isolated Chrome **identities** for the **real internet** — dashboards, consoles, logged-in accounts, research. One identity = one set of logins, with its own `user-data-dir`, CDP port and Cmd+Tab app. `new`/`open`/`stop`/`rm`/`list`/`port`/`url`. Each identity also gets its own `chrome-wrapper-<name>` command. Works headless under `claude -p`, keeps logins across restarts, never touches your daily Chrome. (Testing your own project? Use plain `agent-browser` on its own clean browser instead.) |
 | [claude-thread](./bin/claude-thread) | Keeps a Claude session per worktree and restores it. Sessions are keyed by cwd, so each worktree gets its own thread back — reopen it (or let the terminal be recreated) and you resume where you left off instead of starting cold. Tracks running/ended state in `~/.claude-thread/`, archives sessions you want hidden, and titles the terminal `<worktree-dir>:<branch>`. Wired in as Zed's `agent.terminal_init_command`, but the session logic isn't Zed-specific. |
 | [statusline.sh](./bin/statusline.sh) | Claude Code status line command. |
 
-### Why `shyambot-chrome` exists
+### Why `chrome-wrapper` exists
 
 Claude Code's Chrome extension is an **interactive-session pairing, not an MCP server**. Under
 `claude -p` (cron, dispatchers, headless agents) the `mcp__claude-in-chrome__*` tools are simply
@@ -47,24 +46,52 @@ absent, so any routine built on them silently degrades — ours fell back to API
 days without failing loudly. Driving a dedicated CDP profile instead works identically in both
 modes.
 
+An **identity** is one set of logins. Each gets its own `user-data-dir`, its own CDP port, and its
+own macOS app bundle.
+
 ```bash
-shyambot-chrome                      # launch or focus; prints CDP port
-shyambot-chrome https://example.com  # launch and navigate
-agent-browser --cdp $(shyambot-chrome --port) eval "document.title"
-shyambot-chrome --stop
+chrome-wrapper new ecomitram --label "EcoMitram"   # create (needs a terminal — see below)
+chrome-wrapper list                                # identities: port + state + label
+chrome-wrapper-ecomitram                           # launch or focus
+chrome-wrapper-ecomitram https://example.com       # launch and navigate
+agent-browser --cdp $(chrome-wrapper-ecomitram --port) eval "document.title"
+chrome-wrapper-ecomitram --stop
 ```
 
-Logins persist in `~/.agent-browsers/<profile>/` — sign in once by hand, and every agent inherits
-the session. Never hand credentials to an agent.
+Every identity gets its own `chrome-wrapper-<name>` command, all symlinks to the one script, which
+dispatches on `argv[0]`. Nothing is duplicated per identity.
 
-`agent-chrome clone <name>` additionally builds `~/Applications/<name>-chrome.app`: an APFS
-block-clone of Chrome (≈no extra disk) with its own `CFBundleIdentifier`, name, and icon, so the
-profile is a **separate app in Cmd+Tab** rather than another anonymous "Google Chrome" window.
-Editing `Info.plist` invalidates Chrome's signature, so the script runs `xattr -cr` then re-signs
-ad-hoc — skip either step and macOS kills the app at launch with no error. Re-run after Chrome
-auto-updates; the clone does not update itself.
+**The port is the identity.** That is the safety property: an agent pointed at the wrong port hits a
+logged-out browser and stops, rather than silently acting as the wrong account. It only holds if an
+account is logged in at exactly one identity — so after signing in somewhere, sign out everywhere
+else. Two identities that can both reach an account means a wrong pick still succeeds and you never
+find out.
 
-macOS only (Chrome paths, `codesign`, `PlistBuddy`).
+`new` and `rm` refuse to run without a TTY. `new` opens a window only a human can sign into; `rm`
+destroys logins. Under `claude -p` they exit with instructions to ask, instead of hanging on a
+prompt nobody can see.
+
+Logins persist in `~/.chrome-wrapper/<name>/` — sign in once by hand, and every agent inherits the
+session. Never hand credentials to an agent.
+
+Each identity's bundle at `~/Applications/chrome-wrapper-<name>.app` is an APFS block-clone of
+Chrome (~1 MB of real disk, since blocks are shared) with its own `CFBundleIdentifier`, name and
+icon, so it is a **separate app in Cmd+Tab** rather than another anonymous "Google Chrome" window.
+Three non-obvious things this requires:
+
+- Editing `Info.plist` invalidates Chrome's signature, so the script runs `xattr -cr` then re-signs
+  ad-hoc — skip either and macOS kills the app at launch with no error.
+- `CFBundleIconName` resolves `AppIcon` out of the compiled `Assets.car` and **wins over**
+  `CFBundleIconFile`, so a custom `app.icns` is ignored until that key is deleted.
+- A clone is a point-in-time copy that Keystone never updates. `open` compares its version against
+  `/Applications/Google Chrome.app` on every launch (~17 ms) and re-clones on drift (~1 s), because
+  a browser holding live logins must not silently fall behind on security patches.
+
+Icons are generated on `new` — identity colour, initials, Chrome mark — but never overwrite an
+existing `~/.chrome-wrapper/icons/<name>.icns`, which is the drop-in override for a real brand icon.
+
+macOS only (Chrome paths, `codesign`, `PlistBuddy`); icon generation additionally needs `python3`
+with PIL, and degrades to "no icon" rather than failing if absent.
 
 ## Companion skills (install upstream)
 
