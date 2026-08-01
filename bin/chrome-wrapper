@@ -188,6 +188,37 @@ PY
   rm -rf "$tmp"
 }
 
+# Seed a new profile's preferences before Chrome ever runs, so an identity starts
+# quiet instead of relying on someone remembering to tick seven boxes. Every one of
+# these stops the browser sending something to Google that an agent profile has no
+# reason to send. Verified to survive a Chrome restart rather than being rewritten.
+#
+# Not seeded: safebrowsing. Left at Chrome's default, which is Standard protection —
+# hashed prefixes only. Enhanced would send full URLs and page content; disabling it
+# entirely would drop phishing protection on a browser holding live logins.
+seed_prefs() {
+  local name="$1" dir
+  dir="$ROOT/$name/Default"
+  mkdir -p "$dir"
+  # Only ever seed a profile that has none. An existing Preferences file is someone's
+  # actual configuration, not a default to be overwritten.
+  [[ -f "$dir/Preferences" ]] && return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  CW_PREFS="$dir/Preferences" python3 - <<'PY' || echo "  (could not seed prefs — set them by hand)" >&2
+import json, os
+json.dump({
+    "search":     {"suggest_enabled": False},        # omnibox keystrokes -> Google
+    "spellcheck": {"use_spelling_service": False},   # typed text -> Google
+    "browser":    {"enable_spellchecking": False},
+    "translate":  {"enabled": False},                # page text -> Google
+    "net":        {"network_prediction_options": 2}, # no preloading/prefetch
+    # Chrome-level sign-in blocked: website logins still work, but the browser itself
+    # cannot sign in, which keeps sync and account-linking out of an agent profile.
+    "signin":     {"allowed": False, "allowed_on_next_startup": False},
+}, open(os.environ["CW_PREFS"], "w"), separators=(",", ":"))
+PY
+}
+
 # Build (or refresh) the identity's app bundle. Cmd+Tab groups by bundle identity,
 # not by argv[0], so a separate switcher entry needs a separate bundle — an APFS
 # clone, which costs ~1MB of real disk because the blocks are shared.
@@ -326,6 +357,7 @@ case "$cmd" in
 
     port="$(assign_port "$name")"
     mkdir -p "$ROOT/$name"
+    seed_prefs "$name"
     generate_icon "$name" "$port"
     build_bundle "$name"
     ln -sf "$BIN/chrome-wrapper" "$BIN/chrome-wrapper-$name"
