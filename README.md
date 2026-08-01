@@ -52,6 +52,7 @@ own macOS app bundle.
 ```bash
 chrome-wrapper new ecomitram --label "EcoMitram"   # create (needs a terminal — see below)
 chrome-wrapper list                                # identities: port + state + label
+chrome-wrapper rebuild ecomitram                   # reapply bundle + icon (must be stopped)
 chrome-wrapper-ecomitram                           # launch or focus
 chrome-wrapper-ecomitram https://example.com       # launch and navigate
 agent-browser --cdp $(chrome-wrapper-ecomitram --port) eval "document.title"

@@ -13,6 +13,7 @@
 #   chrome-wrapper open <name> [url]                  launch/focus, optionally navigate
 #   chrome-wrapper stop <name>                        quit it
 #   chrome-wrapper rm <name>                          delete it (needs you)
+#   chrome-wrapper rebuild <name>                     rebuild its app bundle + icon
 #   chrome-wrapper list                               all identities: port + state
 #   chrome-wrapper port <name>                        CDP port, for scripts
 #   chrome-wrapper url <name>                         ws:// CDP endpoint, for playwright
@@ -380,6 +381,20 @@ EOF
     grep -v "^$name " "$PORTS" > "$PORTS.tmp" 2>/dev/null || true; mv "$PORTS.tmp" "$PORTS"
     grep -v "^$name$(printf '\t')" "$LABELS" > "$LABELS.tmp" 2>/dev/null || true; mv "$LABELS.tmp" "$LABELS"
     echo "'$name' removed (icon kept at $ICONS/$name.icns)"
+    ;;
+
+  rebuild)
+    # Bundles otherwise only rebuild on Chrome version drift, which leaves no way to
+    # reapply a changed icon, recover an identity whose icon generation failed, or pick
+    # up a label change. Composes the same two steps `new` uses; adds no new mechanism.
+    [[ -n "$name" ]] || die "usage: chrome-wrapper rebuild <name>"
+    p="$(port_of "$name")"; [[ -n "$p" ]] || die "unknown identity '$name'"
+    running "$p" && die "stop '$name' first — its bundle cannot be replaced while it runs"
+    # Regenerates only when icons/<name>.icns is absent, same as everywhere else:
+    # delete that file first if you want a fresh one.
+    generate_icon "$name" "$p"
+    build_bundle "$name"
+    echo "'$name' bundle rebuilt"
     ;;
 
   list)
