@@ -30,6 +30,40 @@ Local multi-provider CLI. Replaces the deprecated `gemini` CLI. Single binary `a
 
 `agy help` prints full flag list. `agy plugin help` for plugin subcommands.
 
+## Arg-order trap — `-p` takes the prompt as its VALUE
+
+`-p` / `--print` / `--prompt` is a **string** flag, not a boolean. Whatever follows `-p` becomes the prompt. Put `-p "<prompt>"` **last**, after every other flag.
+
+```bash
+# ✅ prompt is the value of -p, flags come first
+agy --model "Gemini 3.1 Pro (High)" --sandbox -p "what is 2+2"
+
+# ❌ prompt becomes the literal string "--sandbox"; the real question is dropped
+agy -p --sandbox "what is 2+2"
+```
+
+Failure is **silent** — you get a confident, well-formed answer about the flag name. Verified 2026-08-07: `agy -p --json-schema s.json "What is 2+2?"` returned an essay about JSON Schema and never saw the question.
+
+## Structured output
+
+`--json-schema` only takes effect with `--output-format json`. The validated object lands in `.structured_output`:
+
+```bash
+agy --output-format json --json-schema schema.json -p "..." | jq .structured_output
+```
+
+Without `--output-format json` the schema is ignored and you get prose.
+
+## Headless permissions
+
+In print mode agy cannot prompt, so any tool needing the `command` permission is **auto-denied** and the run produces no output (stderr: `no output produced — a tool required the "command" permission`). Exit code is still 0.
+
+Pair `--sandbox` with `--dangerously-skip-permissions` — auto-approve tools, terminal still restricted:
+
+```bash
+agy --sandbox --dangerously-skip-permissions -p "..."
+```
+
 ## Available models
 
 Run `agy models` for the live list. Current snapshot:
