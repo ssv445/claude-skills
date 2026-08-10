@@ -6,7 +6,8 @@ hand back to the user.
 
 `chrome-wrapper` manages persistent, isolated Chrome **identities**: one identity = one set
 of logins, with its own profile directory, its own fixed CDP port, and its own macOS app
-bundle. You (the agent) drive it via `agent-browser --cdp`.
+bundle. You (the agent) drive it via `agent-browser --cdp`; the user clicks the bundle in
+the Dock, which opens that identity — never a bare Chrome on their daily profile.
 
 ## 0. Preconditions — check, don't assume
 
