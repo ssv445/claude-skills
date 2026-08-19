@@ -1,9 +1,9 @@
 ---
-name: nbj-write-clearly
+name: google-writing-style
 description: Drafts, revises, and audits reader-first technical and product documentation. Use when working on developer docs, procedures, release notes, technical explanations, help-center content, or UI copy where clarity, source fidelity, accessibility, or global readability matters. Do not auto-apply it to marketing, legal, academic, fictional, or personal writing unless the user explicitly requests this style.
 ---
 
-# NBJ Write Clearly
+# Google Writing Style
 
 ## Outcome
 
