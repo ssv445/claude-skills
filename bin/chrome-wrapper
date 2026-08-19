@@ -35,8 +35,9 @@
 # rebuilt for a Chrome update keeps the same code signature identity. The macOS Keychain
 # pins its permission to that identity: without it, every rebuild reads as a new app,
 # Chrome loses the key that decrypts the profile's cookies, and the identity is logged
-# out of everything it held. Answer the "Chrome Safe Storage" prompt with ALWAYS ALLOW
-# once per identity; after that, updates are silent. See `signing-identity`.
+# out of everything it held. Answer the "Chrome Safe Storage" prompt with ALWAYS ALLOW the
+# first time you see it — one approval covers every identity, because every clone's
+# chrome-real shares that identifier and certificate. See `signing-identity`.
 set -euo pipefail
 
 CHROME_APP="/Applications/Google Chrome.app"
@@ -614,13 +615,14 @@ EOF
     if [[ "$pinned_before" == 0 ]]; then
       cat <<EOF
 
-  This bundle was not pinned to '$SIGN_CN' before, so its Keychain permission does not
-  carry over. On the next launch macOS asks whether Chrome may use "Chrome Safe Storage":
+  This bundle was not pinned to '$SIGN_CN' before. If no other identity has been approved
+  yet, the next launch asks whether Chrome may use "Chrome Safe Storage":
 
     click ALWAYS ALLOW — once. Deny it, or leave it unanswered, and this identity's
     cookies are dropped and it is logged out of everything.
 
-  Every rebuild after that one is silent, because the signature no longer changes.
+  Every rebuild after that one is silent, because the signature no longer changes — and
+  so is every other identity, which shares this signature.
 EOF
     fi
     ;;

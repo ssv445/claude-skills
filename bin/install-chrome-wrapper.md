@@ -75,7 +75,9 @@ When you're done, tell me — I can use it from then on.
 
 The first launch of a new identity raises a macOS dialog: *"Google Chrome wants to use your
 confidential information stored in Chrome Safe Storage in your keychain."* The user must
-click **Always Allow** — once per identity.
+click **Always Allow** — once per machine. Every clone's `chrome-real` carries the same
+signing identifier and certificate, so that single approval covers every identity you have
+now and every one you create later; only the first identity ever raises the dialog.
 
 That key is what decrypts the profile's cookies. Denied or left unanswered, Chrome drops
 every encrypted cookie in that profile and the identity is logged out of everything it
