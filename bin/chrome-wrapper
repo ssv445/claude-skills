@@ -14,6 +14,7 @@
 #   chrome-wrapper stop <name>                        quit it
 #   chrome-wrapper rm <name>                          delete it (needs you)
 #   chrome-wrapper rebuild <name>                     rebuild its app bundle + icon
+#   chrome-wrapper signing-identity                   the signing cert + which bundles are pinned
 #   chrome-wrapper list                               all identities: port + state
 #   chrome-wrapper port <name>                        CDP port, for scripts
 #   chrome-wrapper url <name>                         ws:// CDP endpoint, for playwright
@@ -29,6 +30,14 @@
 # `new` and `rm` refuse to run without a terminal. Both need a human — `new` because
 # only you can sign into the accounts, `rm` because it destroys logins. An agent that
 # needs one must ask you rather than run it blind.
+#
+# Clones are signed with one long-lived self-signed certificate, not ad-hoc, so a bundle
+# rebuilt for a Chrome update keeps the same code signature identity. The macOS Keychain
+# pins its permission to that identity: without it, every rebuild reads as a new app,
+# Chrome loses the key that decrypts the profile's cookies, and the identity is logged
+# out of everything it held. Answer the "Chrome Safe Storage" prompt with ALWAYS ALLOW the
+# first time you see it — one approval covers every identity, because every clone's
+# chrome-real shares that identifier and certificate. See `signing-identity`.
 set -euo pipefail
 
 CHROME_APP="/Applications/Google Chrome.app"
@@ -39,6 +48,21 @@ ICONS="$ROOT/icons"
 APPS="$HOME/Applications"
 BIN="$HOME/.local/bin"
 BASE_PORT=9301
+
+# Every rebuild re-signs the clone, and the signature is what the macOS Keychain pins
+# its ACL entries to. An ad-hoc signature (`--sign -`) has no identity beyond its own
+# content hash, so the designated requirement is a bare `cdhash H"..."` and each rebuild
+# produces a stranger. Chrome then cannot read "Chrome Safe Storage", every encrypted
+# cookie in that profile fails to decrypt, and the cookie store drops them — the identity
+# is silently logged out of everything it was signed into. Measured 2026-08-19: a Chrome
+# update triggered a 01:00 rebuild, the keychain prompt went unanswered because everyone
+# was asleep, and the profile lost its whole cookie jar (History, on its own database,
+# survived — which is what made it look like a Google problem rather than a signing one).
+#
+# Signing with a stable self-signed certificate instead makes the requirement
+# `identifier "..." and certificate leaf = H"..."`, which content changes do not affect.
+# One "Always Allow" then survives every future Chrome update.
+SIGN_CN="chrome-wrapper-signing"
 
 # Distinct window/icon colour per identity so instances are tellable apart at a
 # glance. Stable, because it is derived from the identity's registered port.
@@ -122,6 +146,67 @@ chrome-wrapper $1: needs a person, refusing to run unattended.
 Ask Shyam to run it in a terminal. Do not try to work around this.
 EOF
   [[ -t 0 && -t 1 ]] || exit 2
+}
+
+cert_sha1()  { security find-certificate -c "$SIGN_CN" -Z 2>/dev/null | sed -n 's/^SHA-1 hash: //p' | head -1 | tr 'A-F' 'a-f'; }
+have_identity() { [[ -n "$(cert_sha1)" ]]; }
+# Ad-hoc prints its requirement commented out ("# designated => ..."), a real signature
+# prints it bare. Read both, so an ad-hoc bundle is recognised rather than read as empty.
+current_dr() { codesign -d -r- "$1" 2>&1 | sed -n 's/^#\{0,1\} *designated => //p' | head -1; }
+
+# What a rebuild WILL produce. Comparing it against what the bundle carries now is how
+# we know whether rebuilding changes the Keychain's view of this app — the one and only
+# reason a rebuild needs a human at the machine.
+signature_is_pinned() {
+  local name="$1" hash
+  hash="$(cert_sha1)"
+  [[ -n "$hash" ]] || return 1
+  [[ "$(current_dr "$(app_of "$name")")" == "identifier \"$(bundle_id "$name")\" and certificate leaf = H\"$hash\"" ]]
+}
+
+# Self-signed and long-lived on purpose. The ACL pins the leaf certificate's hash, so a
+# certificate that expires and gets replaced costs exactly the logout this mechanism
+# exists to prevent — which is also why this is not your Apple Development identity, as
+# those are renewed yearly. Keep the key: losing it costs one re-approval per identity.
+create_identity() {
+  have_identity && return 0
+  require_tty signing-identity "It writes a code-signing key to your login keychain, and macOS asks you to approve that."
+  command -v openssl >/dev/null 2>&1 || die "openssl not found — cannot create the signing identity"
+  local tmp; tmp="$(mktemp -d)"
+  # Extensions via a config file, not -addext: macOS ships LibreSSL as /usr/bin/openssl,
+  # which ACCEPTS -addext and silently drops it — producing a certificate with no
+  # codeSigning usage, which codesign then refuses. -config works on both.
+  cat > "$tmp/cnf" <<EOF
+[req]
+distinguished_name = dn
+x509_extensions    = v3
+prompt             = no
+[dn]
+CN = $SIGN_CN
+[v3]
+basicConstraints   = critical,CA:false
+keyUsage           = critical,digitalSignature
+extendedKeyUsage   = critical,codeSigning
+EOF
+  openssl req -x509 -newkey rsa:2048 -keyout "$tmp/k.pem" -out "$tmp/c.pem" -days 7300 -nodes \
+    -config "$tmp/cnf" 2>/dev/null \
+    || { rm -rf "$tmp"; die "could not generate the signing certificate"; }
+  # OpenSSL 3 defaults to AES-256 + SHA-256 here, which macOS's PKCS#12 importer rejects
+  # outright ("MAC verification failed"). Ask for the algorithms `security import` can
+  # read; older LibreSSL builds lack those flags and already default to them, so fall back.
+  openssl pkcs12 -export -out "$tmp/id.p12" -inkey "$tmp/k.pem" -in "$tmp/c.pem" \
+    -passout pass:cw -name "$SIGN_CN" \
+    -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1 2>/dev/null \
+    || openssl pkcs12 -export -out "$tmp/id.p12" -inkey "$tmp/k.pem" -in "$tmp/c.pem" \
+         -passout pass:cw -name "$SIGN_CN" 2>/dev/null \
+    || { rm -rf "$tmp"; die "could not package the signing certificate"; }
+  # -T /usr/bin/codesign and nothing else: this key signs bundles and does no other job.
+  security import "$tmp/id.p12" -k "$HOME/Library/Keychains/login.keychain-db" -P cw -T /usr/bin/codesign >/dev/null \
+    || { rm -rf "$tmp"; die "could not import the signing certificate into your login keychain"; }
+  rm -rf "$tmp"
+  have_identity || die "certificate imported but not findable as '$SIGN_CN'"
+  echo "signing identity '$SIGN_CN' created (leaf $(cert_sha1))"
+  echo "  macOS may ask for your login password the first time it signs — that is the key being used."
 }
 
 # Letters for the generated icon: prefer the capitals someone chose in the label
@@ -256,6 +341,10 @@ build_bundle() {
   [[ -n "$title" ]] || title="$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")${name:1}"
   title="$title Chrome"
 
+  # Before rm -rf, not after: without an identity this function cannot finish, and
+  # failing halfway leaves no bundle at all where a working one used to be.
+  have_identity || die "no signing identity '$SIGN_CN' — run: chrome-wrapper signing-identity"
+
   rm -rf "$dest"
   mkdir -p "$APPS"
   cp -Rc "$CHROME_APP" "$dest"
@@ -302,9 +391,12 @@ EOF
   # is bound to Google's Info.plist, and once the binary is no longer the main executable
   # codesign stops re-signing it with the bundle and starts verifying it as a nested
   # component — against a plist we have edited, which it correctly calls invalid.
-  codesign --force --sign - "$(real_bin "$name")" 2>/dev/null
-  codesign --force --sign - "$dest" 2>/dev/null
+  codesign --force --sign "$SIGN_CN" "$(real_bin "$name")" 2>/dev/null
+  codesign --force --sign "$SIGN_CN" "$dest" 2>/dev/null
   codesign --verify "$dest" 2>/dev/null || die "codesign failed for $dest"
+  # The point of the whole exercise: prove the bundle carries the stable requirement,
+  # not a content hash. A signature that verifies but is not pinned still costs logins.
+  signature_is_pinned "$name" || die "'$name' signed but not pinned to '$SIGN_CN' — refusing to leave it that way"
 }
 
 # Chrome auto-updates /Applications; a clone is a point-in-time copy that never hears
@@ -316,20 +408,30 @@ EOF
 # launches as your daily Chrome — so it is repaired on the same pass rather than
 # waiting for a Chrome release to come along.
 refresh_bundle_if_stale() {
-  local name="$1" dest live cur
+  local name="$1" dest live cur why=""
   dest="$(app_of "$name")"
   [[ -d "$dest" ]] || return 0
-  if [[ ! -x "$(real_bin "$name")" ]]; then
-    echo "'$name' bundle predates the launch shim — rebuilding" >&2
-    build_bundle "$name"
-    return 0
-  fi
   live="$(plist_get "$CHROME_APP" CFBundleShortVersionString)"
   cur="$(plist_get "$dest" CFBundleShortVersionString)"
-  [[ -n "$live" && "$cur" != "$live" ]] || return 0
+  if   [[ ! -x "$(real_bin "$name")" ]];        then why="bundle predates the launch shim"
+  elif [[ -n "$live" && "$cur" != "$live" ]];   then why="chrome $cur → $live"
+  else return 0; fi
+
+  # A rebuild that reproduces the SAME designated requirement is invisible to the
+  # Keychain, so it is safe to do unattended and the clone keeps getting patched on its
+  # own. A rebuild that CHANGES the requirement — an ad-hoc bundle from before this
+  # mechanism, or one signed by a certificate we no longer have — makes macOS ask a
+  # human for permission. Unattended that dialog is answered by nobody, Chrome loses the
+  # key, and the profile's cookies are dropped. So that case waits for a person.
+  #
   # stderr, not stdout: launch() is read via $(...) for the port, and a stray line here
   # would be captured as part of it.
-  echo "chrome $cur → $live — refreshing '$name' bundle" >&2
+  if ! signature_is_pinned "$name" && [[ ! -t 0 || ! -t 1 ]]; then
+    echo "'$name' bundle is stale ($why) but re-signing it would need your keychain approval." >&2
+    echo "  Leaving it stale — rebuilding now would log this identity out. Run: chrome-wrapper rebuild $name" >&2
+    return 0
+  fi
+  echo "$why — refreshing '$name' bundle" >&2
   build_bundle "$name"
 }
 
@@ -414,6 +516,7 @@ case "$cmd" in
     [[ "${3:-}" == "--label" ]] && label="${4:-}"
     [[ -n "$label" ]] && printf '%s\t%s\n' "$name" "$label" >> "$LABELS"
 
+    create_identity
     port="$(assign_port "$name")"
     mkdir -p "$ROOT/$name"
     seed_prefs "$name"
@@ -429,6 +532,9 @@ case "$cmd" in
 
   YOUR MOVE: sign into $name's accounts in the window that just opened.
   Nothing else can do this step. Agents inherit whatever you log in here.
+
+  If macOS asks whether Chrome may use "Chrome Safe Storage", click ALWAYS ALLOW.
+  That is what keeps these logins alive across Chrome updates.
 
   Log those same accounts OUT of every other identity afterwards. An account
   reachable from two identities means a wrong pick still succeeds, and you
@@ -496,19 +602,62 @@ EOF
     [[ -n "$name" ]] || die "usage: chrome-wrapper rebuild <name>"
     p="$(port_of "$name")"; [[ -n "$p" ]] || die "unknown identity '$name'"
     running "$p" && die "stop '$name' first — its bundle cannot be replaced while it runs"
+    create_identity
+    # A rebuild re-signs, and re-signing an identity that is not pinned yet costs one
+    # keychain approval. Say so before doing it, rather than leaving someone to wonder
+    # what the dialog behind the terminal is.
+    pinned_before=0; signature_is_pinned "$name" && pinned_before=1
     # Regenerates only when icons/<name>.icns is absent, same as everywhere else:
     # delete that file first if you want a fresh one.
     generate_icon "$name" "$p"
     build_bundle "$name"
     echo "'$name' bundle rebuilt"
+    if [[ "$pinned_before" == 0 ]]; then
+      cat <<EOF
+
+  This bundle was not pinned to '$SIGN_CN' before. If no other identity has been approved
+  yet, the next launch asks whether Chrome may use "Chrome Safe Storage":
+
+    click ALWAYS ALLOW — once. Deny it, or leave it unanswered, and this identity's
+    cookies are dropped and it is logged out of everything.
+
+  Every rebuild after that one is silent, because the signature no longer changes — and
+  so is every other identity, which shares this signature.
+EOF
+    fi
+    ;;
+
+  signing-identity)
+    # The certificate every clone is signed with. Exposed as a command because it is the
+    # thing to check when an identity unexpectedly asks for keychain permission.
+    create_identity
+    echo "identity:  $SIGN_CN"
+    echo "leaf sha1: $(cert_sha1)"
+    echo
+    printf "%-18s %s\n" "IDENTITY" "BUNDLE SIGNATURE"
+    while read -r n p; do
+      [[ -n "$n" ]] || continue
+      if   [[ ! -d "$(app_of "$n")" ]];   then s="no bundle"
+      elif signature_is_pinned "$n";      then s="pinned"
+      else s="NOT pinned — run: chrome-wrapper rebuild $n"; fi
+      printf "%-18s %s\n" "$n" "$s"
+    done < "$PORTS"
     ;;
 
   list)
-    printf "%-18s %-6s %-9s %s\n" "IDENTITY" "PORT" "STATE" "LABEL"
+    printf "%-18s %-6s %-9s %-10s %s\n" "IDENTITY" "PORT" "STATE" "BUNDLE" "LABEL"
+    live="$(plist_get "$CHROME_APP" CFBundleShortVersionString)"
     while read -r n p; do
       [[ -n "$n" ]] || continue
       if running "$p"; then s="running"; else s="stopped"; fi
-      printf "%-18s %-6s %-9s %s\n" "$n" "$p" "$s" "$(label_of "$n")"
+      # Two different kinds of "needs attention", and they are not interchangeable:
+      # stale = running an unpatched Chrome, unpinned = the next rebuild costs a login.
+      cur="$(plist_get "$(app_of "$n")" CFBundleShortVersionString)"
+      if   [[ ! -d "$(app_of "$n")" ]];                 then b="missing"
+      elif ! signature_is_pinned "$n";                  then b="unpinned"
+      elif [[ -n "$live" && "$cur" != "$live" ]];       then b="stale"
+      else b="ok"; fi
+      printf "%-18s %-6s %-9s %-10s %s\n" "$n" "$p" "$s" "$b" "$(label_of "$n")"
     done < "$PORTS"
     ;;
 

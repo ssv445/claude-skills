@@ -71,6 +71,22 @@ A new Chrome window will open. Sign into the accounts this identity should hold.
 When you're done, tell me — I can use it from then on.
 ```
 
+## 3b. The keychain prompt — also the user's
+
+The first launch of a new identity raises a macOS dialog: *"Google Chrome wants to use your
+confidential information stored in Chrome Safe Storage in your keychain."* The user must
+click **Always Allow** — once per machine. Every clone's `chrome-real` carries the same
+signing identifier and certificate, so that single approval covers every identity you have
+now and every one you create later; only the first identity ever raises the dialog.
+
+That key is what decrypts the profile's cookies. Denied or left unanswered, Chrome drops
+every encrypted cookie in that profile and the identity is logged out of everything it
+holds. Identities are signed with one long-lived certificate (`chrome-wrapper
+signing-identity`) precisely so this is asked once and never again — an ad-hoc signature
+changes on every Chrome update, and each change re-asks.
+
+You cannot answer this dialog. Tell the user to expect it.
+
 ## 4. Verify
 
 After the user confirms:
@@ -96,3 +112,8 @@ it does not launch).
 - `new` and `rm` always need the user at a terminal. Ask; don't work around.
 - Need a login the identity doesn't have? Ask the user to sign in once in that identity's
   window. Never handle credentials yourself.
+- An identity that was logged in yesterday and is logged out today, with its cookies gone
+  but its history intact, is a signing problem, not an account problem. Run
+  `chrome-wrapper signing-identity`: any bundle reported `NOT pinned` needs one
+  `chrome-wrapper rebuild <name>` with the user at the terminal to answer the keychain
+  prompt. `chrome-wrapper list` shows the same thing in its BUNDLE column.
