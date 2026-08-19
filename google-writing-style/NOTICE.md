@@ -2,7 +2,7 @@
 
 ## Upstream
 
-Vendored from [daniel-p-green/nbj-write-clearly](https://github.com/daniel-p-green/nbj-write-clearly) (MIT License, Copyright (c) 2026 Daniel Green) on 2026-08-19. `agents/openai.yaml` (Codex interface metadata) was dropped; content otherwise unmodified.
+Vendored from [daniel-p-green/nbj-write-clearly](https://github.com/daniel-p-green/nbj-write-clearly) (MIT License, Copyright (c) 2026 Daniel Green) on 2026-08-19. `agents/openai.yaml` (Codex interface metadata) was dropped; content otherwise unmodified; renamed locally from `nbj-write-clearly` to `google-writing-style`.
 
 ## Google Developer Documentation Style Guide
 
