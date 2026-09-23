@@ -8,6 +8,8 @@ Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claud
 
 | Skill | Description |
 |-------|-------------|
+| [offload-grunt-work](./offload-grunt-work/) | Route context-heavy grunt work to the cheapest lane that can be right — cheap-tier subagent, `codex`/`agy` CLI, or yourself. Verified flags, silent-failure modes. |
+| [agy](./agy/) | Antigravity 2.0 CLI (Gemini / Claude / GPT-OSS locally). Replaces the deprecated `gemini` CLI. Arg-order traps and structured output. |
 | [write-blog](./write-blog/) | Blog post creation with audience-first approach, APP formula, Cialdini's persuasion principles, and mandatory humanization. |
 | [xterm-js](./xterm-js/) | Best practices for building terminal apps with xterm.js, React, and WebSockets. |
 | [ios-safari-quirks](./ios-safari-quirks/) | 55+ documented iOS Safari JavaScript quirks with fixes. |
