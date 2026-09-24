@@ -174,7 +174,10 @@ PY
 # every caller degrades to plain recency ranking.
 zed_terminal_id() {
   [ "${ZED_TERM:-}" = "true" ] || return 0
-  [ -e /dev/tty ] || return 0
+  # /dev/tty can exist yet be unopenable (no controlling terminal — sourced in a
+  # script, piped, under a daemon). Probe it, or the failing redirect below
+  # prints "Device not configured" before 2>/dev/null can swallow it.
+  ( : > /dev/tty ) 2>/dev/null || return 0
   local db nonce
   db=$(ls -dt "$HOME/Library/Application Support/Zed/db"/*/db.sqlite 2>/dev/null | head -1)
   [ -n "$db" ] || return 0
@@ -383,6 +386,87 @@ age() { # epoch -> "3h" / "2d"
   else echo "$((s/86400))d"; fi
 }
 
+# Every project claude has transcripts for, newest first:
+# "<mtime>\t<session count>\t<cwd>". Zed forgets a terminal thread the moment you
+# close it — the row survives in its sqlite but nothing in the UI offers it back —
+# so this is the only route to a session whose tab is gone and whose folder you
+# have no tab open in.
+#
+# The directory name under ~/.claude/projects is a lossy encoding of the path
+# (every non-alphanumeric became '-', so '/a/b-c' and '/a-b/c' collide), which
+# makes it unusable as a path. The transcript records its own cwd, so read that.
+project_list() {
+  python3 - "$HOME/.claude/projects" <<'PROJ'
+import json, os, sys
+root = sys.argv[1]
+rows = []
+for d in os.listdir(root):
+    p = os.path.join(root, d)
+    if not os.path.isdir(p):
+        continue
+    files = [os.path.join(p, f) for f in os.listdir(p) if f.endswith(".jsonl")]
+    if not files:
+        continue
+    newest = max(files, key=os.path.getmtime)
+    cwd = ""
+    try:
+        with open(newest) as fh:
+            for i, line in enumerate(fh):
+                if i > 50:
+                    break
+                try:
+                    j = json.loads(line)
+                except Exception:
+                    continue
+                if j.get("cwd"):
+                    cwd = j["cwd"]
+                    break
+    except OSError:
+        continue
+    # skip subagent scratch dirs and projects whose folder is gone — resuming
+    # into a path that no longer exists just strands you somewhere useless
+    if not cwd or cwd.startswith(("/private/tmp", "/tmp", "/var/folders")):
+        continue
+    if not os.path.isdir(cwd):
+        continue
+    rows.append((int(os.path.getmtime(newest)), len(files), cwd))
+for mt, n, cwd in sorted(rows, reverse=True):
+    print(f"{mt}\t{n}\t{cwd}")
+PROJ
+}
+
+# Pick a project, then hand off to its session menu. Switching project means
+# this tab adopts that folder, so PROJ_DIR/ARCHIVE_DIR move with it.
+project_menu() {
+  local projects n=0 ans c
+  projects=$(project_list)
+  [ -z "$projects" ] && { echo "  no projects with sessions"; return; }
+  echo
+  echo "── projects ──"
+  while IFS=$'\t' read -r mt cnt cwd; do
+    n=$((n+1))
+    printf "  %2d) %-4s %-42s \033[2m%s session%s\033[0m\n" \
+           "$n" "$(age "$mt")" "${cwd/#$HOME/~}" "$cnt" "$([ "$cnt" = 1 ] || echo s)"
+    eval "R$n=\"\$cwd\""
+  done <<< "$projects"
+  echo
+  echo "  <n>=open project  Enter=back"
+  printf "> "
+  read -r ans || return
+  case "$ans" in
+    [0-9]*)
+      c=$(eval echo "\${R$ans:-}")
+      [ -z "$c" ] && { echo "no project $ans"; return; }
+      cd "$c" || return
+      ENC_CWD="$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
+      PROJ_DIR="$HOME/.claude/projects/$ENC_CWD"
+      ARCHIVE_DIR="$HOME/.claude-thread/archived/$ENC_CWD"
+      set_title
+      main_menu
+      ;;
+  esac
+}
+
 main_menu() { # $1="all" to show every session (default: 15 newest)
   local sessions archived running n i total limit=15
   [ "${1:-}" = "all" ] && limit=100000
@@ -421,9 +505,9 @@ main_menu() { # $1="all" to show every session (default: 15 newest)
 
   echo
   if [ "$default_i" -gt 0 ]; then
-    echo "  Enter=resume #$default_i  <n>=resume  n=new  a<n>=archive  d<n>=delete  l=archived  m=all  q=shell   ●=open elsewhere"
+    echo "  Enter=resume #$default_i  <n>=resume  n=new  a<n>=archive  d<n>=delete  l=archived  m=all  p=projects  q=shell   ●=open elsewhere"
   else
-    echo "  Enter=new  <n>=resume  a<n>=archive  d<n>=delete  l=archived  m=all  q=shell   ●=open elsewhere"
+    echo "  Enter=new  <n>=resume  a<n>=archive  d<n>=delete  l=archived  m=all  p=projects  q=shell   ●=open elsewhere"
   fi
   printf "> "
   read -r ans || exit 0
@@ -435,6 +519,7 @@ main_menu() { # $1="all" to show every session (default: 15 newest)
     n)       new_session ;;
     q)       exit 0 ;;
     m)       main_menu all ;;
+    p)       project_menu; main_menu ;;
     l)       archive_menu; main_menu ;;
     a[0-9]*) i=${ans#a}; local u; u=$(eval echo "\${S$i:-}")
              if [ -n "$u" ]; then
@@ -501,7 +586,8 @@ if [ $# -gt 0 ]; then
   # `cld new` / `cld -n` — straight into a fresh session, no picker at all.
   # Unambiguous: sc only ever passes flags starting with `--`.
   case "$1" in
-    new|-n) new_session ;;
+    new|-n)       new_session ;;
+    projects|-p)  project_menu; exit 0 ;;
   esac
   sid="" prev=""
   for a in "$@"; do
