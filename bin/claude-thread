@@ -21,11 +21,16 @@ ARCHIVE_DIR="$HOME/.claude-thread/archived/$ENC_CWD"
 
 # state <cmd> [args] — all state-file access goes through here (flock'd).
 #   prune                    mark running-sessions with dead pids as ended
-#   claim <cwd> <projdir>    pick newest ended+existing session for cwd,
-#                            mark it running (this pid), print its uuid
-#   start <uuid> <cwd>       upsert session as running under this pid
+#   claim <cwd> <projdir> <tid>   the session this Zed thread (tid) held last
+#                                 time, else the most recently active one for
+#                                 cwd; marks it running, prints its uuid
+#   start <uuid> <cwd> <tid>      upsert session as running under this pid, and
+#                                 bind it to this Zed thread
 #   end <uuid>               mark session ended
-#   running                  print uuids currently running (for menu marks)
+#   bound <tid> <projdir>    print the session this thread holds, if resumable
+#   hold <uuid> <tid>        thread is parked on this session without running
+#                            claude — keeps other tabs off it
+#   running                  print uuids running or held (for menu marks)
 state() {
   python3 - "$@" "$$" <<'PY'
 import fcntl, json, os, re, subprocess, sys, time
@@ -68,35 +73,73 @@ def live_uuids():
 open_now = live_uuids()
 
 def prune():
+    # "held" = a parked wrapper shell owns it; same liveness rule as running,
+    # so closing a parked tab releases its session
     for u, s in sess.items():
-        if s.get("status") == "running" and not alive(s.get("pid", 0)) \
+        if s.get("status") in ("running", "held") and not alive(s.get("pid", 0)) \
            and u not in open_now:
             s["status"] = "ended"
 
 prune()
 out = ""
+threads = st.setdefault("threads", {})
+
+def bind(tid, u, cwd):
+    if tid:
+        threads[tid] = {"session": u, "cwd": cwd, "updated": time.time()}
+
+def activity(projdir, u):
+    """True last-activity time: claude appends to the jsonl on every turn."""
+    try:
+        return os.path.getmtime(os.path.join(projdir, u + ".jsonl"))
+    except OSError:
+        return 0
+
 if cmd == "claim":
-    cwd, projdir = args
+    cwd, projdir, tid = args
     cands = [(u, s) for u, s in sess.items()
              if s.get("cwd") == cwd and s.get("status") == "ended"
              and u not in open_now  # never resume a session already open elsewhere
              and os.path.exists(os.path.join(projdir, u + ".jsonl"))]
     if cands:
-        u, s = max(cands, key=lambda x: x[1].get("last_used", 0))
+        # First choice: whatever this very thread was holding before the restart.
+        want = threads.get(tid, {}).get("session") if tid else None
+        pick = next((c for c in cands if c[0] == want), None)
+        # Otherwise the most recently *active* session, ranked by jsonl mtime and
+        # not by last_used: a hard Zed quit kills claude before `state end` runs,
+        # so last_used stays frozen at session start and the session you were
+        # actually working in loses to an idle one that was closed cleanly.
+        if pick is None:
+            pick = max(cands, key=lambda x: activity(projdir, x[0]))
+        u, s = pick
         s.update(status="running", pid=pid, last_used=time.time())
+        bind(tid, u, cwd)
         out = u
 elif cmd == "start":
-    u, cwd = args
+    u, cwd, tid = args
     sess.setdefault(u, {}).update(cwd=cwd, status="running", pid=pid,
                                   last_used=time.time())
     sess[u].setdefault("started", time.time())
+    bind(tid, u, cwd)
 elif cmd == "end":
     u = args[0]
     if u in sess:
         sess[u].update(status="ended", last_used=time.time())
+elif cmd == "bound":
+    tid, projdir = args
+    u = threads.get(tid, {}).get("session") if tid else None
+    # prune() already demoted stale holds, so "ended" here means genuinely free
+    if u and sess.get(u, {}).get("status") == "ended" and u not in open_now \
+       and os.path.exists(os.path.join(projdir, u + ".jsonl")):
+        out = u
+elif cmd == "hold":
+    u, tid = args
+    if u in sess:
+        sess[u].update(status="held", pid=pid)   # not last_used: parking is not activity
+        bind(tid, u, sess[u].get("cwd", ""))
 elif cmd == "running":
-    # union of state-tracked running + any live claude process
-    marked = {u for u, s in sess.items() if s.get("status") == "running"}
+    # union of state-tracked running/held + any live claude process
+    marked = {u for u, s in sess.items() if s.get("status") in ("running", "held")}
     out = "\n".join(marked | open_now)
 
 fh.seek(0); fh.truncate()
@@ -105,6 +148,43 @@ fh.close()
 if out:
     print(out)
 PY
+}
+
+# Which Zed terminal thread are we? Zed hands the spawned shell no identifying
+# handle at all — verified 2026-09-22: every thread's environment is byte-identical
+# (only ZED_TERM/ZED_ENVIRONMENT/WINDOWID, and WINDOWID is per *window*), and the
+# terminal does not answer the CSI 21 t title report. But the title is a write
+# channel: Zed persists an OSC-set title into its own sqlite within milliseconds,
+# and terminal_id survives a restart. So stamp a nonce into the title, then read
+# back which row it landed in. Prints the terminal_id, or nothing if unavailable —
+# every caller degrades to plain recency ranking.
+zed_terminal_id() {
+  [ "${ZED_TERM:-}" = "true" ] || return 0
+  [ -e /dev/tty ] || return 0
+  local db nonce
+  db=$(ls -dt "$HOME/Library/Application Support/Zed/db"/*/db.sqlite 2>/dev/null | head -1)
+  [ -n "$db" ] || return 0
+  nonce="ct-$$-${RANDOM}-$(date +%s)"
+  # to /dev/tty, not stdout — stdout is captured by the caller's $( )
+  printf '\033]0;%s\007' "$nonce" > /dev/tty 2>/dev/null || return 0
+  python3 - "$nonce" "$db" <<'ZTID'
+import sqlite3, sys, time
+nonce, db = sys.argv[1], sys.argv[2]
+deadline = time.time() + 3
+while time.time() < deadline:
+    try:
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=0.5)
+        row = con.execute(
+            "select terminal_id from sidebar_terminal_threads where title=?",
+            (nonce,)).fetchone()
+        con.close()
+        if row:
+            print(row[0])
+            break
+    except Exception:
+        pass   # schema moved, db locked, not a Zed build we know — just give up
+    time.sleep(0.05)
+ZTID
 }
 
 # terminal title = "<worktree-dir>:<branch>" so same-worktree threads share a
@@ -131,7 +211,7 @@ set_title() {
 # run claude in foreground, keep state current around it
 run_claude() { # <uuid> <args...>
   local uuid="$1"; shift
-  state start "$uuid" "$(pwd)" >/dev/null
+  state start "$uuid" "$(pwd)" "$TERMINAL_ID" >/dev/null
   trap ':' INT
   # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
   "$CLAUDE_BIN" $CLAUDE_THREAD_ARGS "$@"
@@ -239,6 +319,40 @@ countdown_choice() { # <uuid-short>
   fi
   echo
   return 0
+}
+
+# one session's cached listing line: "<mtime>\t<uuid>\t<preview>"
+session_line() { # <uuid>
+  list_sessions "$PROJ_DIR" | awk -F'\t' -v u="$1" '$2 == u {print; exit}'
+}
+
+# A thread Zed just restored. Its terminal_id already tells us which session it
+# holds, so don't spend a claude process finding that out: each one is ~360MB
+# resident and idles at ~1% of a core, so restoring 14 tabs eagerly costs ~5GB
+# to render 14 conversations you are not looking at. Park on the session instead
+# (held, so no other tab claims it) and wait — the tab you type in is the one
+# that wanted to be running.
+lazy_resume() { # <uuid>
+  local u="$1" line mt prev
+  line=$(session_line "$u")
+  mt=$(printf '%s' "$line" | cut -f1)
+  prev=$(printf '%s' "$line" | cut -f3)
+  [ -z "$prev" ] && prev="${u:0:8}"
+  state hold "$u" "$TERMINAL_ID" >/dev/null
+  # sidebar still reads as the conversation; ◦ marks it as not running
+  printf '\033]0;◦ %s\007' "$prev"
+  echo
+  printf "  \033[2m◦\033[0m %s  \033[2m%s%s\033[0m\n" \
+         "$prev" "$(basename "$(pwd)")" "${mt:+ · $(age "$mt")}"
+  echo "  Enter=resume  n=new  m=menu  q=shell"
+  printf "> "
+  read -r ans || { state end "$u" >/dev/null; exit 0; }
+  case "$ans" in
+    n) state end "$u" >/dev/null; new_session ;;
+    m) state end "$u" >/dev/null; main_menu ;;
+    q) state end "$u" >/dev/null; set_title; exit 0 ;;
+    *) run_claude "$u" --resume "$u"; post_exit_menu ;;
+  esac
 }
 
 # fresh session — no listing, no previews. The fast path.
@@ -359,6 +473,10 @@ archive_menu() {
   esac
 }
 
+# Resolved once, before any launch path: which Zed thread this shell is. The
+# nonce briefly replaces the tab title; the set_title calls below put it back.
+TERMINAL_ID="$(zed_terminal_id)"
+
 # ── sc-managed launches (super.engineering command override) ──
 # sc invokes us with its own args (--session-id <new-id> for new tabs,
 # --resume [<id>] for restored ones). Pass them through — PATH resolves
@@ -383,7 +501,7 @@ if [ $# -gt 0 ]; then
   done
   if [ -n "$sid" ]; then
     # sc knows the session — passthrough, tracked
-    state start "$sid" "$(pwd)" >/dev/null
+    state start "$sid" "$(pwd)" "$TERMINAL_ID" >/dev/null
     trap ':' INT
     "$CLAUDE_BIN" "$@"
     trap - INT
@@ -394,7 +512,7 @@ if [ $# -gt 0 ]; then
   case "$*" in
     *--resume*)
       # sc forgot which session this tab was — recover from our state
-      claimed=$(state claim "$(pwd)" "$PROJ_DIR")
+      claimed=$(state claim "$(pwd)" "$PROJ_DIR" "$TERMINAL_ID")
       if [ -n "$claimed" ]; then
         echo "sc lost this tab's session — recovering from state"
         countdown_choice "${claimed:0:8}"; choice=$?
@@ -403,7 +521,7 @@ if [ $# -gt 0 ]; then
           [ $choice -eq 2 ] && new_session
           main_menu; exit 0
         fi
-        state start "$claimed" "$(pwd)" >/dev/null
+        state start "$claimed" "$(pwd)" "$TERMINAL_ID" >/dev/null
         trap ':' INT
         "$CLAUDE_BIN" --resume "$claimed"
         trap - INT
@@ -417,9 +535,16 @@ if [ $# -gt 0 ]; then
   exit $?
 fi
 
-# ── entry: try auto-resume of the most recent session this wrapper ran ──
+# ── entry ──
 set_title
-claimed=$(state claim "$(pwd)" "$PROJ_DIR")
+# A thread Zed restored comes back with its terminal_id, so we know what it held
+# before the quit — offer that without launching anything. A thread you just
+# opened yourself has no binding and falls through to the eager path below,
+# because asking for a terminal is asking to work in it.
+parked=$(state bound "$TERMINAL_ID" "$PROJ_DIR")
+[ -n "$parked" ] && lazy_resume "$parked"
+
+claimed=$(state claim "$(pwd)" "$PROJ_DIR" "$TERMINAL_ID")
 if [ -n "$claimed" ]; then
   countdown_choice "${claimed:0:8}"; choice=$?
   case $choice in
