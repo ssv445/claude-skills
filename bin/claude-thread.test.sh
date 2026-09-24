@@ -105,6 +105,26 @@ json.dump(st, open(p, "w"), indent=2)
 EOF
   check "H: closing a parked tab releases its session" \
         "$A" "$(state bound term-abc "$PROJ")"
+
+  # a session moved to a different tab must not stay claimed by the old one,
+  # or both tabs park on it after a restart
+  reset
+  python3 - "$B" <<'EOF'
+import json, os, sys, time
+p = os.path.expanduser("~/.claude-thread/state.json")
+st = json.load(open(p))
+st.setdefault("threads", {})["term-old"] = {
+    "session": sys.argv[1], "cwd": "/tmp/proj", "updated": time.time()}
+json.dump(st, open(p, "w"), indent=2)
+EOF
+  state start "$B" /tmp/proj term-new >/dev/null   # same session, different tab
+  check "M: rebinding a session drops the previous tab's claim" \
+        "" "$(state bound term-old "$PROJ")"
+  local n; n=$(python3 -c "
+import json, os
+th = json.load(open(os.path.expanduser('~/.claude-thread/state.json')))['threads']
+print(sum(1 for v in th.values() if v['session'] == '$B'))")
+  check "N: exactly one tab holds that session" "1" "$n"
   rm -rf "$SB"
 }
 

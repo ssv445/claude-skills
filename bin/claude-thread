@@ -79,14 +79,28 @@ def prune():
         if s.get("status") in ("running", "held") and not alive(s.get("pid", 0)) \
            and u not in open_now:
             s["status"] = "ended"
+    # bindings for tabs closed long ago are dead weight — Zed never hands that
+    # terminal_id out again. Long TTL: a tab you have not touched in months is
+    # still a tab, it just falls back to activity ranking once forgotten.
+    cutoff = time.time() - 90 * 86400
+    for t in [t for t, v in st.get("threads", {}).items()
+              if v.get("updated", 0) < cutoff]:
+        del st["threads"][t]
 
 prune()
 out = ""
 threads = st.setdefault("threads", {})
 
 def bind(tid, u, cwd):
-    if tid:
-        threads[tid] = {"session": u, "cwd": cwd, "updated": time.time()}
+    if not tid:
+        return
+    # one session ↔ one tab: a session can only be where it was most recently
+    # opened, so drop any older tab still claiming it (tabs get closed without
+    # telling us, and a stale duplicate would have two tabs park on one session)
+    for other in [t for t, v in threads.items()
+                  if v.get("session") == u and t != tid]:
+        del threads[other]
+    threads[tid] = {"session": u, "cwd": cwd, "updated": time.time()}
 
 def activity(projdir, u):
     """True last-activity time: claude appends to the jsonl on every turn."""
