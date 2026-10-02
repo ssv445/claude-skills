@@ -13,7 +13,16 @@ CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 # --chrome dropped: the Chrome extension only pairs in interactive sessions, so
 # routines built on it break under `claude -p`. Browser work goes through
 # `chrome-wrapper-<identity>` + `agent-browser --cdp` instead, same in both modes.
-CLAUDE_THREAD_ARGS="${CLAUDE_THREAD_ARGS:---dangerously-skip-permissions --remote-control}"
+# bypass for cld/claude-thread sessions only (Shyam's call, 2026-10-02); plain
+# `claude` stays on auto via settings.json defaultMode.
+# Always applied, on every launch path including sc/arg passthrough — never
+# replaced by CLAUDE_THREAD_ARGS, which only appends extra flags.
+CLAUDE_FIXED_ARGS=(--dangerously-skip-permissions --remote-control)
+CLAUDE_THREAD_ARGS="${CLAUDE_THREAD_ARGS:-}"
+claude_cmd() {
+  # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
+  "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" $CLAUDE_THREAD_ARGS "$@"
+}
 # claude encodes the cwd by replacing every non-alphanumeric char with '-'
 ENC_CWD="$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
 PROJ_DIR="$HOME/.claude/projects/$ENC_CWD"
@@ -230,8 +239,7 @@ run_claude() { # <uuid> <args...>
   local uuid="$1"; shift
   state start "$uuid" "$(pwd)" "$TERMINAL_ID" >/dev/null
   trap ':' INT
-  # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
-  "$CLAUDE_BIN" $CLAUDE_THREAD_ARGS "$@"
+  claude_cmd "$@"
   trap - INT
   state end "$uuid" >/dev/null
 }
@@ -603,7 +611,7 @@ if [ $# -gt 0 ]; then
     # sc knows the session — passthrough, tracked
     state start "$sid" "$(pwd)" "$TERMINAL_ID" >/dev/null
     trap ':' INT
-    "$CLAUDE_BIN" "$@"
+    claude_cmd "$@"
     trap - INT
     state end "$sid" >/dev/null
     post_exit_menu
@@ -623,15 +631,15 @@ if [ $# -gt 0 ]; then
         fi
         state start "$claimed" "$(pwd)" "$TERMINAL_ID" >/dev/null
         trap ':' INT
-        "$CLAUDE_BIN" --resume "$claimed"
+        claude_cmd --resume "$claimed"
         trap - INT
         state end "$claimed" >/dev/null
         post_exit_menu
         exit 0
       fi ;;
   esac
-  # nothing to recover — run exactly what sc asked
-  "$CLAUDE_BIN" "$@"
+  # nothing to recover — run what sc asked (plus the fixed flags)
+  claude_cmd "$@"
   exit $?
 fi
 
