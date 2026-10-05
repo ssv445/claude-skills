@@ -16,6 +16,7 @@ Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claud
 | [ios-safari-quirks](./ios-safari-quirks/) | 55+ documented iOS Safari JavaScript quirks with fixes. |
 | [gh-discussion](./gh-discussion/) | Create and manage GitHub Discussions via GraphQL API. |
 | [test-stories](./test-stories/) | AI-driven user story testing with browser automation subagents. |
+| [repo-standards](./repo-standards/) | Installs agentic repo standards into one repo, opt-in: spec with Expectations, two reviewers + arbiter, TDD red→green, doc map, prod-shaped seeds, decision log, enforced by local pre-push and `bin/ship` hooks. |
 | [nightshift](./nightshift/) | Autonomous overnight GitHub issue processing. 7-step TDD pipeline with review gates, expert panels, and thin orchestrator pattern. |
 | [commit](./commit/) | Commit staged changes following repo conventions. Simple and focused. |
 | [brainstorm](./brainstorm/) | One-question-at-a-time ideation to build detailed specs. Inspired by [obra/superpowers](https://github.com/obra/superpowers) by Jesse Vincent. |

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# bin/ship [pr]: the only merge path. Runs the pre-merge gates, then squash-merges.
+. "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
+[ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
+json="$(gh pr view "$pr" --json headRefName,headRefOid,labels,closingIssuesReferences)" || exit 1
+head_ref="$(printf '%s' "$json" | jq -r .headRefName)"
+head_oid="$(printf '%s' "$json" | jq -r .headRefOid)"
+
+echo "repo-standards ship: PR #$pr ($head_ref)"
+[ "$(git rev-parse --abbrev-ref HEAD)" = "$head_ref" ] || { red "FAIL ship: check out $head_ref first"; exit 1; }
+[ -z "$(git status --porcelain --untracked-files=no)" ] || { red "FAIL ship: uncommitted changes"; exit 1; }
+[ "$(git rev-parse HEAD)" = "$head_oid" ] || { red "FAIL ship: local HEAD differs from the PR head — push (through the pre-push gate) first"; exit 1; }
+git fetch -q origin "$BASE_BRANCH"
+git merge-base --is-ancestor "origin/$BASE_BRANCH" HEAD || { red "FAIL ship: branch is behind origin/$BASE_BRANCH — rebase and push"; exit 1; }
+green "PASS branch current and pushed"
+
+fail=0
+"$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate" "Pre-merge gate" || fail=1
+
+# Owner approval must postdate the head commit: new commits after approval need re-approval.
+repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+# label_check <issue-or-pr number> <label>: stdout = time the label was last added;
+# messages go to stderr so callers can capture the time.
+label_check() {
+  local ev
+  ev="$(gh api "repos/$repo/issues/$1/events" --paginate \
+        -q "[.[] | select(.event==\"labeled\" and .label.name==\"$2\")] | last | \"\(.actor.login) \(.created_at)\"")"
+  gh "$3" view "$1" --json labels -q '.labels[].name' | grep -qx "$2" || ev=""
+  set -- "$1" "$2" "$3" $ev
+  if [ -z "$4" ] || [ "$4" = "null" ]; then red "  miss #$1 has no '$2' label" >&2; return 1; fi
+  if [ -n "$OWNER" ] && [ "$4" != "$OWNER" ]; then red "  miss '$2' on #$1 was added by $4, not $OWNER" >&2; return 1; fi
+  info "ok   '$2' on #$1 by $4 at $5" >&2
+  printf '%s\n' "$5"
+}
+if approved_at="$(label_check "$pr" approved pr)"; then
+  commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
+  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve"; fail=1; fi
+else fail=1; fi
+
+spec="$(issue_dir)/spec.md"
+if [ -f "$spec" ] && grep -q '^owner-approval: required' "$spec"; then
+  label_check "$(issue_number)" spec-approved issue >/dev/null || fail=1
+fi
+
+run_cmd e2e "$E2E_CMD" || fail=1
+run_cmd perf "$PERF_CMD" || fail=1
+
+[ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
+gh pr merge "$pr" --squash --delete-branch && green "shipped #$pr"

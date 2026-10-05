@@ -1,0 +1,8 @@
+# Doc map: when a file matching the pattern changes, the doc on the right must change in the same branch.
+# Format: <pattern> -> <doc path>
+# Patterns are shell globs where * also matches "/" (src/billing/* covers everything under src/billing/).
+# Escape hatch, in the issue's decisions.md:  docs-unchanged: <doc path> — <reason>
+#
+# Examples:
+# src/billing/* -> docs/guidelines/billing.md
+# db/migrations/* -> docs/guidelines/schema.md
