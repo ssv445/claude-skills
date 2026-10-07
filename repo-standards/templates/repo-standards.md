@@ -1,11 +1,11 @@
 # Repo standards
 
-The rulebook for every change in this repo. Agents execute; the owner decides and validates. Comprehension lives in the repo and the tools, not in anyone's head — so context is written down, every claim carries evidence, and the hooks check what can be checked.
+The rulebook for every change in this repo. Agents execute, approve and ship; the owner decides and validates where the gates say so (see Approval and shipping). Comprehension lives in the repo and the tools, not in anyone's head — so context is written down, every claim carries evidence, and the hooks check what can be checked.
 
 ## Approval and shipping
 
 These gates exist so that AI agents decide for themselves whether a change is approved and ships. When every gate passes, the agent runs `bin/ship <pr>` and it merges — no waiting for the owner. The agent's own approval (`.standards/checks/agent-approval.sh`) needs: one `## Pre-merge gate` with `Verdict: PASS`; both reviewers `PASS`, or exactly one `PASS` and the arbiter `PASS`; a `Reviewed: <sha>` (hex, present locally) where every file the branch changes has the content it has at HEAD, `decisions.md` aside. If git cannot find the base or list the changes, the owner decides. The owner is needed only where the gates say so:
-- **Gate files changed** (renames included) — `bin/`, `.standards/`, `.claude/`, `.github/`, `CLAUDE.md`, `AGENTS.md`, `docs/doc-map.txt`, this rulebook. An agent never approves a change to the rules that judge it. Not covered: scripts that `E2E_CMD` / `PERF_CMD` call — a change that weakens them needs `owner-review: required`.
+- **Gate files changed** (renames included) — `bin/`, `.standards/`, `.claude/`, `.github/`, `.husky/`, `lefthook.yml`/`.yaml`, `.pre-commit-config.yaml`, `CLAUDE.md`, `AGENTS.md`, `docs/doc-map.txt`, this rulebook. An agent never approves a change to the rules that judge it. Not covered: scripts and lint/test config that the `*_CMD` commands in `config.sh` read — a change that weakens them needs `owner-review: required`.
 - **`owner-review: required — <reason>`** in `decisions.md` — any agent or reviewer adds it to hand a taste or product call to the owner. Removing it, or `owner-approval: required` from a spec, on the branch also needs the owner.
 - **Blast-radius spec** (`owner-approval: required`) — the owner's `spec-approved` label at the spec stage. That is enough: no final approval when every later gate passes.
 

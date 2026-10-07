@@ -141,6 +141,12 @@ review "$ok" "$ok" ""
 git commit -qam "record pre-merge gate"
 aa pass "only decisions.md changed since the reviewed commit"
 git reset -q --hard HEAD~1
+echo "v1" > "src/café.txt"; git add src; git commit -qm "café v1"
+reviewed="$(git rev-parse HEAD)"
+echo "v2" > "src/café.txt"; git commit -qam "café v2"
+review "$ok" "$ok" "" "$reviewed"
+aa fail "non-ASCII file changed after review"
+git checkout -q docs; git reset -q --hard HEAD~2
 review "$ok" "$ok" "" "HEAD"
 aa fail "Reviewed: HEAD (symbolic name)"
 review "$ok" "$ok" "" "feat/7-mul"
@@ -192,6 +198,15 @@ git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag loose"
 review "$ok" "$ok" ""
 aa fail "loose owner-review flag removed on the branch"
 git reset -q --hard HEAD~2
+# A flag dropped only while resolving a merge.
+feat="$(git rev-parse HEAD)"
+echo "owner-review: required — merge test" >> "$dec"; git commit -qam "flag"
+git checkout -q -b side; echo "side" > side.txt; git add side.txt; git commit -qm side
+git checkout -q feat/7-mul; git merge -q --no-ff --no-commit side
+git checkout -q "$feat" -- "$dec"; git commit -qm "merge side, dropping the flag"
+review "$ok" "$ok" ""
+aa fail "owner-review flag removed in a merge commit"
+git checkout -q docs; git reset -q --hard "$feat"; git branch -q -D side
 echo "owner-review: required — copy tone" >> "$dec"; git commit -qam "flag"
 git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag"
 review "$ok" "$ok" ""
@@ -213,6 +228,15 @@ git add .github && git commit -qm "gate dir"
 review "$ok" "$ok" ""
 aa fail "gate file (.github/) in the diff"
 git reset -q --hard HEAD~1
+mkdir -p .github && echo "x" > ".github/wörk.yml"
+git add .github && git commit -qm "non-ASCII gate file"
+review "$ok" "$ok" ""
+aa fail "non-ASCII gate file under .github/"
+git reset -q --hard HEAD~1
+echo "x" > lefthook.yml; git add lefthook.yml && git commit -qm "hook manager config"
+review "$ok" "$ok" ""
+aa fail "gate file lefthook.yml in the diff"
+git reset -q --hard HEAD~1
 git mv .standards/hooks/pre-push pre-push-moved && git commit -qm "move a gate file out"
 review "$ok" "$ok" ""
 aa fail "gate file renamed out of .standards/"
@@ -233,6 +257,10 @@ expect pass "file-size: small files" .standards/checks/file-size.sh
 for i in $(seq 1 30); do echo "x$i() { :; }"; done > src/big.sh
 git add src && git commit -qm big
 expect fail "file-size: 30-line file over max 20" .standards/checks/file-size.sh
+git reset -q --hard HEAD~1
+for i in $(seq 1 30); do echo "x$i() { :; }"; done > "src/grö.sh"
+git add src && git commit -qm "big, non-ASCII name"
+expect fail "file-size: non-ASCII file name over max 20" .standards/checks/file-size.sh
 git reset -q --hard HEAD~1
 
 echo "roadmap"

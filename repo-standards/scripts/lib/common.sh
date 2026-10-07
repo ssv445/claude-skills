@@ -17,9 +17,10 @@ base_commit() {
   git merge-base "origin/$BASE_BRANCH" HEAD 2>/dev/null || git merge-base "$BASE_BRANCH" HEAD
 }
 
-# Files added/copied/modified/renamed on this branch, one per line.
+# Files added/copied/modified/renamed on this branch, one per line, unquoted: -z keeps
+# git from C-quoting non-ASCII names ("caf\303\251"), which would never match a glob.
 changed_files() {
-  git diff --name-only --diff-filter=ACMR "$(base_commit)" HEAD
+  git -c core.quotePath=false diff -z --name-only --diff-filter=ACMR "$(base_commit)" HEAD | tr '\0' '\n'
 }
 
 # matches_any <file> <space-separated globs>. Globs are matched with [[ == ]], where

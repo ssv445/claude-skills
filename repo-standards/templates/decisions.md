@@ -1,6 +1,6 @@
 # Decisions — #<issue> <title>
 
-The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`, and approves on its own when both pre-merge reviewers say `PASS` (or exactly one does and the arbiter does), `Reviewed:` names (as a hex sha) the commit they read and every file the branch changes is the same at HEAD as there (this file aside), and no owner review is flagged.
+The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`. When `bin/ship` approves on its own, and when it needs the owner: "Approval and shipping" in `docs/guidelines/repo-standards.md`.
 
 To hand a taste or product call to the owner, add a line at column 0 anywhere in this file (indented here so it is not itself a flag); `bin/ship` then waits for the owner's `approved` label:
 
