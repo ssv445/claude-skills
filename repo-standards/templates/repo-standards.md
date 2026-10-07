@@ -4,8 +4,11 @@ The rulebook for every change in this repo. Agents execute, approve and ship; th
 
 ## Approval and shipping
 
-These gates exist so that AI agents decide for themselves whether a change is approved and ships. When every gate passes, the agent runs `bin/ship <pr>` and it merges — no waiting for the owner. The agent's own approval (`.standards/checks/agent-approval.sh`) needs: one `## Pre-merge gate` with `Verdict: PASS`; both reviewers `PASS`, or exactly one `PASS` and the arbiter `PASS`; a `Reviewed: <sha>` (hex, present locally) where every file the branch changes has the content it has at HEAD, `decisions.md` aside. If git cannot find the base or list the changes, the owner decides. The owner is needed only where the gates say so:
-- **Gate files changed** (renames included) — `bin/`, `.standards/`, `.claude/`, `.github/`, `.husky/`, `lefthook.yml`/`.yaml`, `.pre-commit-config.yaml`, `CLAUDE.md`, `AGENTS.md`, `docs/doc-map.txt`, this rulebook — matched ignoring case. An agent never approves a change to the rules that judge it. One exception: raising the single number in `.standards/coverage-baseline`. Not covered: scripts and lint/test config that the `*_CMD` commands in `config.sh` read — a change that weakens them needs `owner-review: required`.
+These gates exist so that AI agents decide for themselves whether a change is approved and ships. When every gate passes, the agent runs `bin/ship <pr>` and it merges — no waiting for the owner. The agent's own approval (`.standards/checks/agent-approval.sh`) needs: one `## Pre-merge gate` with `Verdict: PASS`; both reviewers `PASS`, or exactly one `PASS` and the arbiter `PASS`; a `Reviewed: <sha>` (hex, present locally) where every file the branch changes has the content it has at HEAD, `decisions.md` aside. If git cannot find the base or list the changes, the owner decides.
+
+**Gate files** (renames included) — `bin/`, `.standards/`, `.claude/`, `.github/`, `.husky/`, `lefthook.yml`/`.yaml`, `.pre-commit-config.yaml`, `CLAUDE.md`, `AGENTS.md`, `docs/doc-map.txt`, this rulebook — matched ignoring case. A change to them also needs `## Gate-change review` in `decisions.md`: two more independent reviewers, given only the gate-file diff, asked one question — does this weaken, skip or bypass any check, or widen what agents may do without the owner? Both PASS (or split with the arbiter PASS), a `Reviewed:` sha covering HEAD, and a plain-English `Summary:`. Then the agent ships it, and `bin/ship` @-mentions the owner on the PR with the Summary — the owner reads one sentence, not a diff, and reverts if they disagree. A change that does loosen a check carries `owner-review: required`. Raising the single number in `.standards/coverage-baseline` needs no gate-change review. Not covered: scripts and lint/test config that the `*_CMD` commands in `config.sh` read — a change that weakens them needs `owner-review: required`.
+
+The owner is needed only where the gates say so:
 - **`owner-review: required — <reason>`** in `decisions.md` — any agent or reviewer adds it to hand a taste or product call to the owner. Fails closed: any line naming `owner-review` with `required` later on it counts, in any case or markdown, unless indented 4+ spaces (an example). Removing it, or `owner-approval: required` from a spec, on the branch also needs the owner.
 - **Blast-radius spec** (`owner-approval: required`) — the owner's `spec-approved` label at the spec stage. That is enough: no final approval when every later gate passes.
 
@@ -15,12 +18,13 @@ The owner's `approved` label (`bin/approve <pr>`, owner only) replaces the agent
 
 Only these need you; everything else, the agents do and `bin/ship` merges.
 - **Blast-radius spec** (`owner-approval: required`): read it, then `bin/approve --spec <issue>`.
-- **PR that `bin/ship` refuses** (gate file changed, `owner-review` flag, review out of date with the code): validate the evidence table, then `bin/approve <pr>`; the agent re-runs `bin/ship`.
+- **PR that `bin/ship` refuses for you** (`owner-review` flag, an owner flag removed): decide the question, then `bin/approve <pr>`; the agent re-runs `bin/ship`. A review out of date with the code, or a failed gate-change review, is the agents' to fix — not yours.
+- **Gate-change notices**: `bin/ship` @-mentions you on a merged PR that changed the rules. Read the one-line summary; revert if you disagree.
 - **`owner-review: required` flags**: answer the question in the PR or issue.
 - **Repos without `bin/ship`**: say "merge" and the agent merges; nothing to type.
 
 Roles:
-- **Owner** — the human (`OWNER` in `.standards/config.sh`). Approves high-blast-radius specs, rules on inferred Expectations, taste disputes and `owner-review: required` flags, approves changes to the gate files. Does not proofread diffs or approve routine merges.
+- **Owner** — the human (`OWNER` in `.standards/config.sh`). Approves high-blast-radius specs, rules on inferred Expectations, taste disputes and `owner-review: required` flags, hears about gate-file changes after the merge. Does not proofread diffs, approve routine merges, or approve rule changes line by line.
 - **Orchestrator** — the agent running the issue. Delegates work and reviews to subagents.
 - **Reviewers** — two independent agents, no shared context with each other or the author. Their job is to find why it is wrong — the mistakes an honest agent makes, not loopholes a hostile one could exploit (the gates are a speed bump, see Approval and shipping). At most two review rounds per gate; what remains after that is recorded as a known limit or put to the owner as one decision.
 - **Arbiter** — a third independent agent, called only when the two reviewers disagree.
@@ -77,7 +81,7 @@ For every changed file matching `docs/doc-map.txt`, update the mapped doc in thi
 
 ### 10. Pre-merge gate
 Two reviewers on the full diff, spec, and evidence: correctness, missed Expectations, test quality (would these tests catch a regression?), `N/A` and `docs-unchanged` reasons. Arbiter on disagreement.
-Edit the template's reviewer, arbiter, `Reviewed:` and `Verdict:` lines in place — a second copy of any of them needs the owner. Record the commit the reviewers read as `Reviewed: <sha>`; a later change to any file the branch touches (`decisions.md` aside) needs a new review; a rebase onto base changes to other files does not. A reviewer who finds a taste or product call adds `owner-review: required — <reason>` to `decisions.md`. Then ship with `bin/ship <pr>`: it approves and merges on its own when every gate passes; when it reports owner approval needed, ask the owner to validate the evidence table and run `bin/approve <pr>`, then run `bin/ship` again.
+Edit the template's reviewer, arbiter, `Reviewed:` and `Verdict:` lines in place — a second copy of any of them needs the owner. Record the commit the reviewers read as `Reviewed: <sha>`; a later change to any file the branch touches (`decisions.md` aside) needs a new review; a rebase onto base changes to other files does not. A reviewer who finds a taste or product call adds `owner-review: required — <reason>` to `decisions.md`. When the branch changes a gate file, run the gate-change review too and fill `## Gate-change review`. Then ship with `bin/ship <pr>`: it approves and merges on its own when every gate passes; when it reports owner approval needed, ask the owner to validate the evidence table and run `bin/approve <pr>`, then run `bin/ship` again.
 
 Done when: `## Pre-merge gate` has `Verdict: PASS` and `bin/ship` succeeds.
 
@@ -134,7 +138,7 @@ Seeds are code, reviewed like code. `docs/seed-profile.md` holds production's *s
 | Hook | Checks |
 |---|---|
 | pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
-| `bin/ship` (pre-merge) | branch current with base, pushed, e2e, perf budgets, decision log pre-merge gate PASS, `spec-approved` when required; then approval — the agent's own (`agent-approval.sh`: reviewers PASS or split with arbiter PASS, review covers HEAD, no `owner-review: required` present or removed, no gate file changed) or the owner's `approved` label; then squash merge |
+| `bin/ship` (pre-merge) | branch current with base, pushed, e2e, perf budgets, decision log pre-merge gate PASS, `spec-approved` when required; then approval — the agent's own (`agent-approval.sh`: reviewers PASS or split with arbiter PASS, review covers HEAD, no `owner-review: required` present or removed, gate files changed only with a passing gate-change review) or the owner's `approved` label; then squash merge, and on a gate-file change @-mention the owner with the Summary |
 | `.claude` guard | blocks raw merges, hook bypass, and agents touching owner labels |
 
 A red hook means the work is not done. Fix the cause; never weaken a check in the same PR that it blocks.

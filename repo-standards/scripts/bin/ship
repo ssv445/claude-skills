@@ -114,13 +114,27 @@ green "shipped #$pr ($approval-approved)"
 if [ "$approval" = agent ]; then
   # The gate list comes from the check that ran, so the record cannot drift from it.
   gates="$(sed -n 's/^GATE_FILES="\(.*\)"$/\1/p' "$checker")"
+  # Gate files changed: agent-approval.sh passed them on a gate-change review. The owner is
+  # told after the merge, in plain words, and @-mentioned so GitHub notifies them.
+  changed_gates="$(printf '%s\n' "$out" | sed -n 's/^ *ok   gate files changed (gate-change review PASS)://p')"
+  if [ -n "$changed_gates" ]; then
+    summary="$(section_field "$(decisions_file)" "Gate-change review" "Summary:")"
+    who="${OWNER:+@$OWNER }"
+    gate_line="- Gate files changed (\`$changed_gates\`): the gate-change review passed — two more reviewers found no check weakened, skipped or bypassed"
+    notice="
+
+**${who}The rules agents work under changed in this PR.** $summary
+Nothing for you to do if that is fine. If not, revert this PR's squash commit."
+  else
+    gate_line="- No gate file changed (\`$gates\`)"; notice=""
+  fi
   gh pr comment "$pr" --body "Approved by the agent through \`bin/ship\`: every pre-merge gate passed and \`.standards/checks/agent-approval.sh\` found nothing that needs the owner.
 
 - Pre-merge gate \`Verdict: PASS\`: both reviewers PASS, or one PASS and the arbiter PASS
 - \`Reviewed:\` commit covers the head — every file the branch changes matches it, decisions.md aside
 - No \`owner-review: required\` line in decisions.md, and no owner flag removed on the branch
-- No gate file changed (\`$gates\`)
+$gate_line
 - Spec gate, plan gate, e2e, perf and \`spec-approved\` (when the spec requires it) passed
 
-Head: $head_oid" || red "  warn merged, but the approval comment failed — post it by hand"
+Head: $head_oid$notice" || red "  warn merged, but the approval comment failed — post it by hand${changed_gates:+, with the gate-change notice for the owner}"
 fi

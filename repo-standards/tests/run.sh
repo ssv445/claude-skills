@@ -233,7 +233,8 @@ echo "    owner-review: required — indented 4, an example" >> "$dec"
 aa pass "flag indented 4+ spaces is an example, not a flag"
 git checkout -q docs
 review "$ok" "$ok" ""
-echo "- Reviewer B: FAIL — a second B line" >> "$dec"
+# Inside the Pre-merge gate section, which is no longer the file's last.
+awk '{ print } /^## / { s = $0 } s == "## Pre-merge gate" && /^- Reviewer B:/ { print "- Reviewer B: FAIL — a second B line" }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
 aa fail "duplicate reviewer line in the Pre-merge gate"
 git checkout -q docs
 echo "**Owner-Review:required** — loose" >> "$dec"; git commit -qam "loose flag"
@@ -302,6 +303,60 @@ mkdir -p .Claude && echo "{}" > .Claude/settings.json
 git add .Claude && git commit -qm "gate dir, other case"
 review "$ok" "$ok" ""
 aa fail "gate file in a differently-cased dir (.Claude/)"
+git reset -q --hard HEAD~1
+
+# A gate-file change ships on a passing gate-change review with a Summary for the owner.
+# gcr <reviewer A> <reviewer B> <arbiter> <summary> [reviewed sha, default HEAD]
+gcr() {
+  awk -v a="$1" -v b="$2" -v c="$3" -v m="$4" -v r="${5-$(git rev-parse HEAD)}" '
+    /^## / { s = $0 }
+    s == "## Gate-change review" && /^- Reviewer A:/ { $0 = "- Reviewer A: " a }
+    s == "## Gate-change review" && /^- Reviewer B:/ { $0 = "- Reviewer B: " b }
+    s == "## Gate-change review" && /^- Arbiter:/    { $0 = "- Arbiter: " c }
+    s == "## Gate-change review" && /^Reviewed:/     { $0 = "Reviewed: " r }
+    s == "## Gate-change review" && /^Summary:/      { $0 = "Summary: " m }
+    { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
+}
+sum="Agents now keep CLAUDE.md short."
+echo "agents: keep it short" > CLAUDE.md
+git add CLAUDE.md && git commit -qm "gate file"
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
+aa pass "gate file changed, gate-change review PASS + Summary"
+cp "$T/last.log" "$T/aa.log"
+expect pass "agent-approval: names the changed gate files for bin/ship" \
+  grep -q "ok   gate files changed (gate-change review PASS): CLAUDE.md" "$T/aa.log"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$no" "PASS — B misread the diff" "$sum"
+aa pass "gate-change reviewers split, arbiter PASS"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$no" "" "$sum"
+aa fail "gate-change reviewer FAIL, no arbiter"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "<one or two sentences for the owner>"
+aa fail "gate-change Summary left as the template placeholder"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" ""
+aa fail "gate-change Summary empty"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
+sed 's/^Verdict: PASS$/Verdict: PENDING/' "$dec" | awk '/^## Gate-change review$/ { g = 1 } !g && /^Verdict:/ { sub(/PENDING/, "PASS") } { print }' > "$T/dec" && cp "$T/dec" "$dec"
+aa fail "gate-change verdict not PASS"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum" "$(git rev-parse HEAD~1)"
+aa fail "gate-change review predates the gate-file commit"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
+printf '\n## Gate-change review\n- Reviewer A: FAIL\nVerdict: FAIL\n' >> "$dec"
+aa fail "duplicate Gate-change review section"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
+echo "owner-review: required — this drops the doc-map check" >> "$dec"
+aa fail "gate-change review PASS, but owner-review flag raised"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
+review "$no" "$no" ""
+aa fail "gate-change review PASS, but pre-merge gate FAIL"
+git checkout -q docs
 git reset -q --hard HEAD~1
 
 # The coverage baseline may be raised without the owner; any other edit is a gate change.
@@ -447,6 +502,18 @@ fresh="$T/fresh"
 ship_run
 expect pass "ship: agent path → merge, then comment" test "$(writes)" = "merge;comment;"
 expect pass "ship: merge pinned with --match-head-commit HEAD" grep -q -- "--match-head-commit $(git rev-parse HEAD)" "$T/gh.log"
+expect pass "ship: no gate change → comment says so, no owner mention" \
+  bash -c "grep -q 'No gate file changed' '$T/gh.log' && ! grep -q '@owner' '$T/gh.log'"
+# A gate-file change with a passing gate-change review merges and @-mentions the owner.
+echo "agents: keep it short" > CLAUDE.md; git add CLAUDE.md; git commit -qm "gate file"
+gcr "$ok" "$ok" "" "Agents now keep CLAUDE.md short." "$(git rev-parse HEAD)"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "gate-change review"
+ship_run
+expect pass "ship: gate change reviewed → merge, then comment" test "$(writes)" = "merge;comment;"
+expect pass "ship: gate change → owner @-mentioned with the Summary" \
+  bash -c "grep -q '@owner The rules agents work under changed' '$T/gh.log' && grep -q 'Agents now keep CLAUDE.md short.' '$T/gh.log'"
+expect pass "ship: gate change → comment names the changed file" grep -q 'Gate files changed (` CLAUDE.md`)' "$T/gh.log"
+git reset -q --hard HEAD~2
 ship_run GH_FAIL="pr merge"
 expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"
 echo "owner-review: required — taste" >> "$dec"; git commit -qam "flag"
