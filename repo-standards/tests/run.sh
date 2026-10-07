@@ -93,6 +93,281 @@ git checkout -q -b chore-no-issue
 expect fail "decision-log: branch without issue number" .standards/checks/decision-log.sh "Spec gate"
 git checkout -q feat/7-mul; git branch -q -D chore-no-issue
 
+echo "guard scope"
+# The guard installed in this repo, fed hook JSON with a cwd. It judges commands aimed at
+# this repo only, and blocks executing the approve script, not mentioning it.
+git remote add origin https://github.com/acme/app.git
+mkdir -p "$T/elsewhere"
+g() { # g <pass|fail> <name> <cwd> <command>
+  jq -cn --arg d "$3" --arg c "$4" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}' > "$T/g.json"
+  expect "$1" "guard: $2" bash .standards/guard.sh < "$T/g.json"
+}
+g fail "merge in this repo"                    "$R" "gh pr merge 12 --squash"
+g fail "cd into this repo's subdir, then merge" "$T/elsewhere" "cd $R/src && gh pr merge 12"
+g pass "cd to another repo, then merge"        "$R" "cd $T/elsewhere && gh pr merge 25"
+g pass "session cwd is another repo"           "$T/elsewhere" "gh pr merge 25"
+g pass "merge with -R other/repo"              "$R" "gh pr merge 25 -R other/repo"
+g pass "merge with --repo=other/repo"          "$R" "gh pr merge 25 --repo=other/repo"
+g fail "merge with -R naming this repo"        "$R" "gh pr merge 12 -R acme/app"
+g pass "git -C another repo push --no-verify"  "$R" "git -C $T/elsewhere push --no-verify"
+g fail "approve script run"                    "$R" "bin/approve 12"
+g fail "approve script run via ./ and bash"    "$R" "./bin/approve 12; bash bin/approve 12"
+g fail "approve script run after &&"           "$R" "git status && bin/approve 12"
+g pass "approve script read with cat"          "$R" "cat bin/approve"
+g pass "approve script grepped"                "$R" "grep -n label bin/approve"
+g pass "approve script named in a heredoc body" "$R" "$(printf 'cat > notes.md <<%sEOF%s\nbin/approve 12\nEOF' "'" "'")"
+g pass "approve script named in a commit message" "$R" "git commit -m 'owner runs bin/approve 12'"
+g pass "hooksPath read with --get"             "$R" "git config --get core.hooksPath"
+g pass "hooksPath read bare"                   "$R" "git config core.hooksPath"
+g fail "hooksPath set"                         "$R" "git config core.hooksPath /dev/null"
+g fail "hooksPath set with -c"                 "$R" "git -c core.hooksPath=/dev/null push"
+g fail "hooksPath unset"                       "$R" "git config --unset core.hooksPath"
+git remote remove origin
+
+echo "agent-approval"
+dec=docs/work/7-mul/decisions.md
+# review <reviewer A> <reviewer B> <arbiter> [reviewed sha, default HEAD]: rewrite the
+# pre-merge gate lines in the working tree.
+review() {
+  awk -v a="$1" -v b="$2" -v c="$3" -v r="${4-$(git rev-parse HEAD)}" '
+    /^## / { s = $0 }
+    s == "## Pre-merge gate" && /^- Reviewer A:/ { $0 = "- Reviewer A: " a }
+    s == "## Pre-merge gate" && /^- Reviewer B:/ { $0 = "- Reviewer B: " b }
+    s == "## Pre-merge gate" && /^- Arbiter:/    { $0 = "- Arbiter: " c }
+    s == "## Pre-merge gate" && /^Reviewed:/     { $0 = "Reviewed: " r }
+    { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
+}
+aa() { expect "$1" "agent-approval: $2" .standards/checks/agent-approval.sh; }
+ok="PASS — fine"; no="FAIL — misses empty input"
+review "$ok" "$ok" ""
+aa pass "gate PASS, both reviewers PASS"
+review "PASS" "PASS" ""
+aa pass "bare PASS"
+review "$ok" "$no" ""
+aa fail "reviewer FAIL, no arbiter"
+review "$ok" "$no" "PASS — empty input is covered by the guard"
+aa pass "reviewers disagree, arbiter PASS"
+review "$ok" "$no" "FAIL — B is right"
+aa fail "arbiter FAIL"
+review "$no" "$no" "PASS — overruled both"
+aa fail "both reviewers FAIL, arbiter PASS"
+review "" "" "PASS — no reviewers ran"
+aa fail "no reviewers, arbiter PASS"
+review "PASSABLE" "$ok" ""
+aa fail "PASSABLE is not PASS"
+review "$ok" "$ok" ""
+sed 's/^Verdict: PASS$/Verdict: PENDING/' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
+aa fail "pre-merge verdict not PASS"
+git checkout -q docs
+review "$ok" "$ok" ""
+printf '\n## Pre-merge gate\n- Reviewer A: FAIL\nVerdict: FAIL\n' >> "$dec"
+aa fail "duplicate Pre-merge gate section"
+git checkout -q docs
+
+review "$ok" "$ok" "" "$(git rev-parse HEAD~1)"
+aa fail "review predates a code commit"
+review "$ok" "$ok" "" ""
+aa fail "no Reviewed sha"
+review "$ok" "$ok" ""
+git commit -qam "record pre-merge gate"
+aa pass "only decisions.md changed since the reviewed commit"
+git reset -q --hard HEAD~1
+echo "v1" > "src/café.txt"; git add src; git commit -qm "café v1"
+reviewed="$(git rev-parse HEAD)"
+echo "v2" > "src/café.txt"; git commit -qam "café v2"
+review "$ok" "$ok" "" "$reviewed"
+aa fail "non-ASCII file changed after review"
+git checkout -q docs; git reset -q --hard HEAD~2
+review "$ok" "$ok" "" "HEAD"
+aa fail "Reviewed: HEAD (symbolic name)"
+review "$ok" "$ok" "" "feat/7-mul"
+aa fail "Reviewed: <branch name>"
+git branch abcdef0
+review "$ok" "$ok" "" "abcdef0"
+aa fail "Reviewed: hex-looking branch name"
+git checkout -q docs; git branch -q -D abcdef0
+review "$ok" "$ok" "" "0123456789abcdef0123456789abcdef01234567"
+aa fail "Reviewed: sha not present locally"
+git checkout -q docs
+
+# Rebasing onto a base that changed other files keeps the review; the same file does not.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; echo "unrelated" > notes.txt; git add notes.txt; git commit -qm "main: notes"
+git checkout -q feat/7-mul; git rebase -q main
+review "$ok" "$ok" "" "$feat"
+aa pass "rebased onto unrelated base change, review kept"
+git checkout -q docs
+git checkout -q main; { echo "# math helpers"; cat src/math.sh; } > "$T/m" && cp "$T/m" src/math.sh; git commit -qam "main: math header"
+git checkout -q feat/7-mul; git rebase -q main
+review "$ok" "$ok" "" "$feat"
+aa fail "rebased onto base that changed a reviewed file"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+
+# Fail closed: no base to compare against.
+git branch -q -D main
+review "$ok" "$ok" ""
+aa fail "no base commit (base ref deleted)"
+git checkout -q docs; git branch -q main "$main0"
+
+review "$ok" "$ok" ""
+echo "owner-review: required — button copy is a taste call" >> "$dec"
+aa fail "owner-review: required"
+git checkout -q docs
+review "$ok" "$ok" ""
+echo "- owner-review: required — bulleted" >> "$dec"
+aa fail "owner-review: required, bulleted"
+git checkout -q docs
+for flag in "Owner-review: required — caps" "owner-review:required — no space" "**owner-review: required** — bold" "- _owner-review: required_ — bulleted italic" \
+            "**owner-review**: required — bold name" "**owner-review:** required — bold name and colon" "* owner-review: required — star bullet" \
+            "  owner-review: required — indented 2"; do
+  review "$ok" "$ok" ""
+  echo "$flag" >> "$dec"
+  aa fail "flag variant: $flag"
+  git checkout -q docs
+done
+review "PASS — fine; owner-review: required — tone of the error copy" "$ok" ""
+aa fail "flag inside a reviewer line"
+review "$ok" "$ok" ""
+echo "    owner-review: required — indented 4, an example" >> "$dec"
+aa pass "flag indented 4+ spaces is an example, not a flag"
+git checkout -q docs
+review "$ok" "$ok" ""
+echo "- Reviewer B: FAIL — a second B line" >> "$dec"
+aa fail "duplicate reviewer line in the Pre-merge gate"
+git checkout -q docs
+echo "**Owner-Review:required** — loose" >> "$dec"; git commit -qam "loose flag"
+git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag loose"
+review "$ok" "$ok" ""
+aa fail "loose owner-review flag removed on the branch"
+git reset -q --hard HEAD~2
+# A flag dropped only while resolving a merge.
+feat="$(git rev-parse HEAD)"
+echo "owner-review: required — merge test" >> "$dec"; git commit -qam "flag"
+git checkout -q -b side; echo "side" > side.txt; git add side.txt; git commit -qm side
+git checkout -q feat/7-mul; git merge -q --no-ff --no-commit side
+git checkout -q "$feat" -- "$dec"; git commit -qm "merge side, dropping the flag"
+review "$ok" "$ok" ""
+aa fail "owner-review flag removed in a merge commit"
+git checkout -q docs; git reset -q --hard "$feat"; git branch -q -D side
+echo "owner-review: required — copy tone" >> "$dec"; git commit -qam "flag"
+git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag"
+review "$ok" "$ok" ""
+aa fail "owner-review flag removed on the branch"
+git reset -q --hard HEAD~2
+echo "owner-approval: required" > docs/work/7-mul/spec.md; git add docs; git commit -qm spec
+echo "owner-approval: not-required" > docs/work/7-mul/spec.md; git commit -qam "downgrade"
+review "$ok" "$ok" ""
+aa fail "owner-approval: required removed from the spec"
+git reset -q --hard HEAD~2
+echo "**Owner-Approval**: required" > docs/work/7-mul/spec.md; git add docs; git commit -qm spec
+cp "$SKILL/templates/spec.md" docs/work/7-mul/spec.md; git commit -qam "downgrade to template default"
+review "$ok" "$ok" ""
+aa fail "bold owner-approval removed from the spec"
+git reset -q --hard HEAD~2
+cp "$SKILL/templates/spec.md" docs/work/7-mul/spec.md; git add docs; git commit -qm spec
+echo "# spec without the approval line" > docs/work/7-mul/spec.md; git commit -qam "drop not-required"
+review "$ok" "$ok" ""
+aa pass "removing owner-approval: not-required is no flag removal"
+git reset -q --hard HEAD~2
+
+echo "agents: keep it short" > CLAUDE.md
+git add CLAUDE.md && git commit -qm "gate file"
+review "$ok" "$ok" ""
+aa fail "gate file (CLAUDE.md) in the diff"
+git reset -q --hard HEAD~1
+mkdir -p .github && echo "x" > .github/pr.md
+git add .github && git commit -qm "gate dir"
+review "$ok" "$ok" ""
+aa fail "gate file (.github/) in the diff"
+git reset -q --hard HEAD~1
+mkdir -p .github && echo "x" > ".github/wörk.yml"
+git add .github && git commit -qm "non-ASCII gate file"
+review "$ok" "$ok" ""
+aa fail "non-ASCII gate file under .github/"
+git reset -q --hard HEAD~1
+echo "x" > lefthook.yml; git add lefthook.yml && git commit -qm "hook manager config"
+review "$ok" "$ok" ""
+aa fail "gate file lefthook.yml in the diff"
+git reset -q --hard HEAD~1
+git mv .standards/hooks/pre-push pre-push-moved && git commit -qm "move a gate file out"
+review "$ok" "$ok" ""
+aa fail "gate file renamed out of .standards/"
+git reset -q --hard HEAD~1
+echo "src/* -> docs/guidelines/billing.md" >> docs/doc-map.txt && git commit -qam "loosen doc map"
+review "$ok" "$ok" ""
+aa fail "gate input docs/doc-map.txt in the diff"
+git reset -q --hard HEAD~1
+mkdir -p .Claude && echo "{}" > .Claude/settings.json
+git add .Claude && git commit -qm "gate dir, other case"
+review "$ok" "$ok" ""
+aa fail "gate file in a differently-cased dir (.Claude/)"
+git reset -q --hard HEAD~1
+
+# The coverage baseline may be raised without the owner; any other edit is a gate change.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; echo 80 > .standards/coverage-baseline; git add .standards; git commit -qm "baseline 80"
+git checkout -q feat/7-mul; git rebase -q main
+echo 85 > .standards/coverage-baseline; git commit -qam "raise baseline"
+review "$ok" "$ok" ""
+aa pass "coverage baseline raised 80 → 85"
+git checkout -q docs; git reset -q --hard HEAD~1
+echo 70 > .standards/coverage-baseline; git commit -qam "lower baseline"
+review "$ok" "$ok" ""
+aa fail "coverage baseline lowered 80 → 70"
+git checkout -q docs; git reset -q --hard HEAD~1
+printf '90\n# note\n' > .standards/coverage-baseline; git commit -qam "baseline plus text"
+review "$ok" "$ok" ""
+aa fail "coverage baseline with extra lines"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+
+echo "approve"
+# A fake gh logs every call and answers the queries bin/approve and bin/ship make; a call
+# whose arguments contain $GH_FAIL fails. `script` gives approve the terminal it insists on.
+mkdir -p "$T/fakebin"
+cat > "$T/fakebin/gh" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$GH_LOG"
+if [ -n "${GH_FAIL:-}" ]; then case "$*" in *"$GH_FAIL"*) exit 1 ;; esac; fi
+case "$*" in
+  "pr view --json number"*) echo 12 ;;
+  "pr view 12 --json headRefName"*) printf '{"headRefName":"%s","headRefOid":"%s"}\n' "$GH_BRANCH" "$GH_HEAD" ;;
+  "repo view"*) echo o/r ;;
+  "api "*) # GH_PAGES holds a JSON array of pages. Like real gh: --slurp prints them all as
+           # one array; -q applies its filter to each page separately.
+    case "$*" in
+      *--slurp*) cat "$GH_PAGES" ;;
+      *) f="$(printf '%s\n' "$@" | sed -n '/^-q$/{n;p;}')"
+         jq -c '.[]' "$GH_PAGES" | while IFS= read -r p; do printf '%s\n' "$p" | jq -r "$f"; done ;;
+    esac ;;
+  *"--json labels"*) cat "$GH_LABELS" ;;
+esac
+exit 0
+EOF
+chmod +x "$T/fakebin/gh"
+approve_run() { # approve_run <labels already on the PR> [VAR=value ...]: output in $T/approve.out
+  printf '%s\n' "$1" > "$T/labels"; : > "$T/gh.log"; shift
+  # Typed after a pause: input piped at once reaches the pty before approve's prompt reads it.
+  { sleep 0.5; printf '%s\n' "${TYPED:-12}"; sleep 0.5; } | env "$@" GH_LOG="$T/gh.log" GH_LABELS="$T/labels" PATH="$T/fakebin:$PATH" \
+    script -q /dev/null bash .standards/bin/approve 12 > "$T/approve.out" 2>&1
+}
+edits() { grep -E -- '--(add|remove)-label' "$T/gh.log" | tr '\n' ';'; }
+approve_run approved
+expect pass "approve: already approved → remove, then add (fresh event)" \
+  test "$(edits)" = "pr edit 12 --remove-label approved;pr edit 12 --add-label approved;"
+approve_run other
+expect pass "approve: not yet approved → add only" test "$(edits)" = "pr edit 12 --add-label approved;"
+approve_run approved GH_FAIL="--json labels"
+expect pass "approve: label lookup fails → stops, no edits" \
+  bash -c "[ -z \"\$(grep -E -- '--(add|remove)-label' '$T/gh.log')\" ] && grep -q 'could not read' '$T/approve.out'"
+approve_run approved GH_FAIL="--add-label"
+expect pass "approve: add fails after remove → says re-run" grep -q "label removed; re-run" "$T/approve.out"
+expect pass "approve: prompt asks for the number" grep -q "Type the number 12 to approve pr #12" "$T/approve.out"
+TYPED=approved approve_run other
+expect pass "approve: wrong text typed → says what was expected, no edits" \
+  bash -c "[ -z \"\$(grep -E -- '--(add|remove)-label' '$T/gh.log')\" ] && grep -q 'expected the number 12' '$T/approve.out'"
+
 echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
 expect fail "coverage: total 80 below baseline 85" env COVERAGE_TOTAL_CMD="echo 80" bash -c '. .standards/config.sh; COVERAGE_TOTAL_CMD="echo 80"; sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 80\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
@@ -104,6 +379,10 @@ expect pass "file-size: small files" .standards/checks/file-size.sh
 for i in $(seq 1 30); do echo "x$i() { :; }"; done > src/big.sh
 git add src && git commit -qm big
 expect fail "file-size: 30-line file over max 20" .standards/checks/file-size.sh
+git reset -q --hard HEAD~1
+for i in $(seq 1 30); do echo "x$i() { :; }"; done > "src/grö.sh"
+git add src && git commit -qm "big, non-ASCII name"
+expect fail "file-size: non-ASCII file name over max 20" .standards/checks/file-size.sh
 git reset -q --hard HEAD~1
 
 echo "roadmap"
@@ -131,6 +410,79 @@ expect fail "pre-push: uncommitted changes" .standards/hooks/pre-push < "$T/refs
 git commit -qam "break a test"
 printf 'refs/heads/feat/7-mul %s refs/heads/feat/7-mul %s\n' "$(git rev-parse HEAD)" "$z" > "$T/refs-branch2"
 expect fail "pre-push: failing unit test" .standards/hooks/pre-push < "$T/refs-branch2"
+
+echo "ship"
+# Its own repo with a real origin, since bin/ship fetches and compares against it.
+git init -q --bare -b main "$T/origin.git"
+git clone -q "$T/origin.git" "$T/ship" 2>/dev/null; cd "$T/ship" || exit 1
+git config user.email t@example.invalid; git config user.name test
+mkdir -p .standards bin src docs/work/1-x
+cp -R "$SKILL/scripts/." .standards/; cp "$SKILL/scripts/bin/ship" bin/ship
+sed 's/^OWNER=""/OWNER="owner"/' "$SKILL/scripts/config.sh" > .standards/config.sh
+chmod +x bin/ship .standards/checks/* .standards/bin/*
+echo base > src/a.txt
+git add -A && git commit -qm base && git push -q origin main
+git checkout -q -b feat/1-x
+echo change > src/a.txt; git commit -qam change
+dec=docs/work/1-x/decisions.md
+sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > "$dec"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"
+git add docs && git commit -qm "decision log"
+ship_run() { # ship_run [VAR=value ...]: bin/ship 12 against the fake gh; output in $T/ship.out
+  : > "$T/gh.log"
+  env GH_LABELS="$T/nolabels" GH_PAGES="$T/nopages" "$@" GH_LOG="$T/gh.log" GH_BRANCH=feat/1-x GH_HEAD="$(git rev-parse HEAD)" \
+    PATH="$T/fakebin:$PATH" bash bin/ship 12 > "$T/ship.out" 2>&1
+}
+writes() { grep -E '^pr (merge|comment)' "$T/gh.log" | awk '{ print $2 }' | tr '\n' ';'; }
+: > "$T/nolabels"; echo approved > "$T/approved"
+# Issue-event pages as the API returns them (real pages hold 30 events; 2 pages suffice).
+lab() { printf '{"event":"labeled","label":{"name":"approved"},"actor":{"login":"%s"},"created_at":"%s"}' "$1" "$2"; }
+echo '[[]]' > "$T/nopages"
+echo "[[$(lab owner 2999-01-01T00:00:00Z)]]" > "$T/fresh"
+echo "[[$(lab owner 2000-01-01T00:00:00Z)]]" > "$T/stale"
+echo "[[$(lab owner 2999-01-01T00:00:00Z)],[{\"event\":\"commented\"}]]" > "$T/label-then-page"
+echo "[[$(lab someone 2998-01-01T00:00:00Z)],[$(lab owner 2999-01-01T00:00:00Z)]]" > "$T/two-actors"
+fresh="$T/fresh"
+
+ship_run
+expect pass "ship: agent path → merge, then comment" test "$(writes)" = "merge;comment;"
+expect pass "ship: merge pinned with --match-head-commit HEAD" grep -q -- "--match-head-commit $(git rev-parse HEAD)" "$T/gh.log"
+ship_run GH_FAIL="pr merge"
+expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"
+echo "owner-review: required — taste" >> "$dec"; git commit -qam "flag"
+ship_run
+expect pass "ship: agent refused, no owner label → nothing written" test "$(writes)" = ""
+ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh"
+expect pass "ship: owner label checked first → merge, no comment" test "$(writes)" = "merge;"
+ship_run GH_LABELS="$T/approved" GH_PAGES="$T/stale"
+expect pass "ship: owner label older than head → nothing written" test "$(writes)" = ""
+ship_run GH_LABELS="$T/approved" GH_PAGES="$T/label-then-page"
+expect pass "ship: label event on page 1 of 2 still found" test "$(writes)" = "merge;"
+ship_run GH_LABELS="$T/approved" GH_PAGES="$T/two-actors"
+expect pass "ship: latest label event across pages credited (OWNER)" test "$(writes)" = "merge;"
+git reset -q --hard HEAD~1
+sed 's/^Verdict: PASS$/Verdict: PENDING/' "$dec" > "$T/dec" && cp "$T/dec" "$dec"; git commit -qam "gates pending"
+ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh"
+expect pass "ship: another gate failed → nothing written, even with owner label" test "$(writes)" = ""
+git reset -q --hard HEAD~1
+
+# Re-exec of the base copy, temp cleanup, and a spoofed env var never deleting bin/ship.
+mkdir -p "$T/fakemktemp" "$T/tmpfiles"
+cat > "$T/fakemktemp/mktemp" <<'EOF'
+#!/bin/sh
+exec /usr/bin/mktemp "$PROBE_TMP/$(basename "${1:-tmp.XXXXXX}")"
+EOF
+chmod +x "$T/fakemktemp/mktemp"
+# The branch's copy says something else once past the re-exec point; the base copy must win.
+sed 's/PASS branch current and pushed/BRANCH-COPY-CONTINUED/' bin/ship > "$T/s" && cp "$T/s" bin/ship; git commit -qam "edit bin/ship"
+PATH="$T/fakemktemp:$PATH" ship_run PROBE_TMP="$T/tmpfiles"
+expect pass "ship: branch edits bin/ship → base copy runs" \
+  bash -c "grep -q 'PASS branch current and pushed' '$T/ship.out' && ! grep -q BRANCH-COPY-CONTINUED '$T/ship.out'"
+expect pass "ship: no temp files left" test -z "$(ls -A "$T/tmpfiles")"
+git reset -q --hard HEAD~1
+ship_run STANDARDS_SHIP_FROM_BASE=bin/ship
+ship_run STANDARDS_SHIP_FROM_BASE="$PWD/bin/ship"
+expect pass "ship: spoofed STANDARDS_SHIP_FROM_BASE never deletes bin/ship" test -f bin/ship
 
 echo
 echo "$pass passed, $fail wrong"

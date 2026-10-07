@@ -7,6 +7,8 @@ description: "Install the agentic repo standards (spec + Expectations, adversari
 
 Installs a rulebook plus local enforcement into ONE repo. Opt-in per repo: never install without the user asking. Once installed, the repo's hooks enforce it; this skill is no longer needed to run it.
 
+The installed rules exist so that AI agents decide for themselves whether to approve and ship: when every gate passes, `bin/ship` approves and merges with no owner in the loop; the owner is needed only for gate-file changes, `owner-review: required` flags, an owner flag removed on the branch, and `spec-approved` on blast-radius specs.
+
 What gets installed (sources in this skill folder):
 
 | Source | Installed at | Purpose |
@@ -20,7 +22,7 @@ What gets installed (sources in this skill folder):
 | `templates/seed-profile.md` | `docs/seed-profile.md` | Aggregate-only prod shape for seed generation |
 | `templates/github/` | `.github/` | Issue form + PR template (evidence table on top) |
 | `scripts/` | `.standards/` | Hooks, gate checks, `config.sh` |
-| `scripts/bin/ship`, `scripts/bin/approve` | `bin/ship`, `bin/approve` | Only merge path; owner-only approval |
+| `scripts/bin/ship`, `scripts/bin/approve` | `bin/ship`, `bin/approve` | Only merge path — agent-approved when every gate and `agent-approval.sh` pass; owner-only `approved` override |
 | `templates/claude-settings.json` | merged into `.claude/settings.json` | Guard hook blocking gate bypass |
 
 ## Steps
@@ -35,7 +37,7 @@ What gets installed (sources in this skill folder):
 6. **Product context.** Interview the owner, one question at a time, for goals (metric, target, date), non-goals, known assumptions, and the tool stack; fill `docs/product/`. On an existing repo, draft from what the code and docs already show and ask only for the gaps. Anything the owner shares that is future work goes to the roadmap Inbox, then through the idea flow in the rulebook.
 7. **Fill the doc map and seed profile** from what the survey found. Doc map: one line per code area that has a describing doc. Seed profile: fields marked `TODO(owner)` where only prod knowledge can answer — list them for the user.
 8. **Prove every gate can fail.** On a scratch branch, break each gate once (uncovered line, source change with no test, mapped code without its doc, missing decision-log section, failing lint, roadmap item with no goal) and show the hook output for each failing, then passing after the fix. A gate you could not make fail is not installed — say so.
-9. **Report** to the user: what was installed, config values, gates proven (with output), anything left `TODO(owner)` or N/A. Open the PR; the owner merges it.
+9. **Report** to the user: what was installed, config values, gates proven (with output), anything left `TODO(owner)` or N/A, and the owner's own steps from "Your steps (owner)" in the rulebook: `bin/approve --spec <issue>` for `owner-approval: required` specs; `bin/approve <pr>` for PRs `bin/ship` refuses (gate-file change, `owner-review` flag, out-of-date review); answering `owner-review` flags; merging in repos without `bin/ship`. Open the PR; the owner merges it (it changes gate files, so it is theirs to approve).
 
 ## Rules for this skill
 

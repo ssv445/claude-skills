@@ -17,9 +17,10 @@ base_commit() {
   git merge-base "origin/$BASE_BRANCH" HEAD 2>/dev/null || git merge-base "$BASE_BRANCH" HEAD
 }
 
-# Files added/copied/modified/renamed on this branch, one per line.
+# Files added/copied/modified/renamed on this branch, one per line, unquoted: -z keeps
+# git from C-quoting non-ASCII names ("caf\303\251"), which would never match a glob.
 changed_files() {
-  git diff --name-only --diff-filter=ACMR "$(base_commit)" HEAD
+  git -c core.quotePath=false diff -z --name-only --diff-filter=ACMR "$(base_commit)" HEAD | tr '\0' '\n'
 }
 
 # matches_any <file> <space-separated globs>. Globs are matched with [[ == ]], where
@@ -62,6 +63,39 @@ section_verdict() {
     $0 == h { inside = 1; next }
     inside && /^## / { inside = 0 }
     inside && /^Verdict:/ { sub(/^Verdict:[ \t]*/, ""); print; exit }
+  ' "$1"
+}
+
+# section_field <file> <section heading text> <line prefix> → prints what follows the
+# first line in that section starting with the prefix, e.g. "- Reviewer A:".
+section_field() {
+  awk -v h="## $2" -v p="$3" '
+    $0 == h { inside = 1; next }
+    inside && /^## / { inside = 0 }
+    inside && index($0, p) == 1 { s = substr($0, length(p) + 1); sub(/^[ \t]*/, "", s); print s; exit }
+  ' "$1"
+}
+
+# owner_flag_re <review|approval>: anchored ERE (use with grep -i) for an owner flag line.
+# Fails closed: any line naming the flag with "required" later on it counts, whatever the
+# markdown around it — except lines indented 4+ spaces or a tab (the templates' examples).
+# For approval, "required" must come before any "#" comment and not as "not-required", so
+# the spec template's default "owner-approval: not-required   # required if: …" is no flag.
+owner_flag_re() {
+  case "$1" in
+    review)   printf '^ {0,3}([^ \t].*)?owner-review.*required' ;;
+    approval) printf '^ {0,3}([^ \t].*)?owner-approval([^#]*[^#-])?required' ;;
+  esac
+}
+
+# section_count <file> <section heading text> <line prefix> → how many lines in that
+# section start with the prefix.
+section_count() {
+  awk -v h="## $2" -v p="$3" '
+    $0 == h { inside = 1; next }
+    inside && /^## / { inside = 0 }
+    inside && index($0, p) == 1 { n++ }
+    END { print n + 0 }
   ' "$1"
 }
 

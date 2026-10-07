@@ -1,6 +1,43 @@
 #!/usr/bin/env bash
 # bin/ship [pr]: the only merge path. Runs the pre-merge gates, then squash-merges.
+# Approval: the owner's `approved` label, or — when every gate passes and
+# .standards/checks/agent-approval.sh agrees — the agent's own.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+git fetch -q origin "$BASE_BRANCH"
+
+# base_copy <path>: the base branch's copy of <path> in a temp file when it exists there
+# and differs from the working copy; prints nothing otherwise. A branch must not rewrite
+# the rules that judge it, so those rules run from the base.
+base_copy() {
+  local tmp
+  git cat-file -e "origin/$BASE_BRANCH:$1" 2>/dev/null || return 0
+  tmp="$(mktemp "${TMPDIR:-/tmp}/standards-base.XXXXXX")"
+  git show "origin/$BASE_BRANCH:$1" > "$tmp"
+  if cmp -s "$tmp" "$1"; then rm -f "$tmp"; return 0; fi
+  chmod +x "$tmp"
+  printf '%s\n' "$tmp"
+}
+# This stops honest drift, not a hostile branch: the branch's own bin/ship, common.sh and
+# config.sh run first and could drop this step. Like guard.sh, a speed bump, not a
+# security boundary; real enforcement needs a server-side required check / branch protection.
+if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
+  base_ship="$(base_copy bin/ship)"
+  if [ -n "$base_ship" ]; then
+    info "running origin/$BASE_BRANCH's bin/ship (this branch changes it)"
+    STANDARDS_SHIP_FROM_BASE="$base_ship" exec bash "$base_ship" "$@"
+  fi
+fi
+check=""; owner_log="$(mktemp)"
+# The re-exec'd run is itself a temp copy ($0); remove it with the others — but only when
+# $0 is exactly the temp file base_copy made, never a script inside the repo.
+cleanup() {
+  rm -f "$check" "$owner_log"
+  case "$0" in "$ROOT"/*|bin/*|./*) return ;; esac
+  case "$(basename "$0")" in standards-base.*) ;; *) return ;; esac
+  [ "$0" = "$STANDARDS_SHIP_FROM_BASE" ] && rm -f "$0"
+}
+trap cleanup EXIT
 
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
 [ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
@@ -12,21 +49,21 @@ echo "repo-standards ship: PR #$pr ($head_ref)"
 [ "$(git rev-parse --abbrev-ref HEAD)" = "$head_ref" ] || { red "FAIL ship: check out $head_ref first"; exit 1; }
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { red "FAIL ship: uncommitted changes"; exit 1; }
 [ "$(git rev-parse HEAD)" = "$head_oid" ] || { red "FAIL ship: local HEAD differs from the PR head — push (through the pre-push gate) first"; exit 1; }
-git fetch -q origin "$BASE_BRANCH"
 git merge-base --is-ancestor "origin/$BASE_BRANCH" HEAD || { red "FAIL ship: branch is behind origin/$BASE_BRANCH — rebase and push"; exit 1; }
 green "PASS branch current and pushed"
 
 fail=0
 "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate" "Pre-merge gate" || fail=1
 
-# Owner approval must postdate the head commit: new commits after approval need re-approval.
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 # label_check <issue-or-pr number> <label>: stdout = time the label was last added;
 # messages go to stderr so callers can capture the time.
 label_check() {
   local ev
-  ev="$(gh api "repos/$repo/issues/$1/events" --paginate \
-        -q "[.[] | select(.event==\"labeled\" and .label.name==\"$2\")] | last | \"\(.actor.login) \(.created_at)\"")"
+  # --slurp wraps all pages in one array, so "last" is the last event overall — gh's -q
+  # would run the filter per page (30 events each) and miss or misattribute the label.
+  ev="$(gh api "repos/$repo/issues/$1/events" --paginate --slurp \
+        | jq -r "[.[][] | select(.event==\"labeled\" and .label.name==\"$2\")] | last | \"\(.actor.login) \(.created_at)\"")"
   gh "$3" view "$1" --json labels -q '.labels[].name' | grep -qx "$2" || ev=""
   set -- "$1" "$2" "$3" $ev
   if [ -z "$4" ] || [ "$4" = "null" ]; then red "  miss #$1 has no '$2' label" >&2; return 1; fi
@@ -34,13 +71,9 @@ label_check() {
   info "ok   '$2' on #$1 by $4 at $5" >&2
   printf '%s\n' "$5"
 }
-if approved_at="$(label_check "$pr" approved pr)"; then
-  commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
-  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve"; fail=1; fi
-else fail=1; fi
 
 spec="$(issue_dir)/spec.md"
-if [ -f "$spec" ] && grep -q '^owner-approval: required' "$spec"; then
+if [ -f "$spec" ] && grep -qiE "$(owner_flag_re approval)" "$spec"; then
   label_check "$(issue_number)" spec-approved issue >/dev/null || fail=1
 fi
 
@@ -48,4 +81,46 @@ run_cmd e2e "$E2E_CMD" || fail=1
 run_cmd perf "$PERF_CMD" || fail=1
 
 [ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
-gh pr merge "$pr" --squash --delete-branch && green "shipped #$pr"
+
+# Approval. The owner's label must postdate the head commit: new commits need re-approval.
+# Without it, the agent approves when agent-approval.sh (the base's copy, if this branch
+# changes it) finds nothing that needs the owner.
+# The owner-label misses are printed only if the agent cannot approve either.
+approval=""
+if approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
+  cat "$owner_log"
+  commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
+  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve" > "$owner_log"
+  else approval=owner; fi
+fi
+if [ -z "$approval" ]; then
+  check="$(base_copy .standards/checks/agent-approval.sh)"
+  checker="${check:-$ROOT/.standards/checks/agent-approval.sh}"
+  if out="$("$checker" 2>&1)"; then
+    printf '%s\n' "$out"
+    approval=agent
+  else
+    cat "$owner_log"
+    printf '%s\n' "$out"
+    red "ship BLOCKED: owner approval needed — ask the owner to run bin/approve $pr"
+    exit 1
+  fi
+fi
+
+# --match-head-commit: refuse if the PR moved after these gates ran.
+gh pr merge "$pr" --squash --delete-branch --match-head-commit "$head_oid" || { red "FAIL ship: merge refused"; exit 1; }
+green "shipped #$pr ($approval-approved)"
+# The record is posted only once the merge happened, so it never claims an unmerged PR.
+if [ "$approval" = agent ]; then
+  # The gate list comes from the check that ran, so the record cannot drift from it.
+  gates="$(sed -n 's/^GATE_FILES="\(.*\)"$/\1/p' "$checker")"
+  gh pr comment "$pr" --body "Approved by the agent through \`bin/ship\`: every pre-merge gate passed and \`.standards/checks/agent-approval.sh\` found nothing that needs the owner.
+
+- Pre-merge gate \`Verdict: PASS\`: both reviewers PASS, or one PASS and the arbiter PASS
+- \`Reviewed:\` commit covers the head — every file the branch changes matches it, decisions.md aside
+- No \`owner-review: required\` line in decisions.md, and no owner flag removed on the branch
+- No gate file changed (\`$gates\`)
+- Spec gate, plan gate, e2e, perf and \`spec-approved\` (when the spec requires it) passed
+
+Head: $head_oid" || red "  warn merged, but the approval comment failed — post it by hand"
+fi
