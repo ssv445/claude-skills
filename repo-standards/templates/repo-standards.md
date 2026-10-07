@@ -19,6 +19,8 @@ Only these need you; everything else, the agents do and `bin/ship` merges.
 - **`owner-review: required` flags**: answer the question in the PR or issue.
 - **Repos without `bin/ship`**: say "merge" and the agent merges; nothing to type.
 
+When an agent asks you for one of these, it names the rule that requires you and gives the one command to run. It keeps working on everything that does not depend on your answer, and stops only when the next step needs you.
+
 Roles:
 - **Owner** — the human (`OWNER` in `.standards/config.sh`). Approves high-blast-radius specs, rules on inferred Expectations, taste disputes and `owner-review: required` flags, approves changes to the gate files. Does not proofread diffs or approve routine merges.
 - **Orchestrator** — the agent running the issue. Delegates work and reviews to subagents.
