@@ -107,7 +107,12 @@ if [ $diff_ok -eq 1 ]; then
     matches_any "$f" "$GATE_FILES" && touched="$touched $f"
   done < "$changed"
   shopt -u nocasematch
-  [ -z "$touched" ] && info "ok   no gate files changed" || miss "gate files changed:$touched"
+  # APPROVER=agent (base config): the agent may approve gate changes; bin/ship lists them
+  # in its PR comment from this line.
+  if [ -z "$touched" ]; then info "ok   no gate files changed"
+  elif [ "$(approver_mode)" = agent ]; then info "ok   gate files changed, approved under APPROVER=agent:$touched"
+  else miss "gate files changed:$touched (APPROVER=owner: the owner approves gate changes)"
+  fi
 fi
 
 [ $fail -eq 0 ] || { red "FAIL agent-approval: owner approval needed"; exit 1; }

@@ -4,23 +4,35 @@ The rulebook for every change in this repo. Agents execute, approve and ship; th
 
 ## Approval and shipping
 
-These gates exist so that AI agents decide for themselves whether a change is approved and ships. When every gate passes, the agent runs `bin/ship <pr>` and it merges — no waiting for the owner. The agent's own approval (`.standards/checks/agent-approval.sh`) needs: one `## Pre-merge gate` with `Verdict: PASS`; both reviewers `PASS`, or exactly one `PASS` and the arbiter `PASS`; a `Reviewed: <sha>` (hex, present locally) where every file the branch changes has the content it has at HEAD, `decisions.md` aside. If git cannot find the base or list the changes, the owner decides. The owner is needed only where the gates say so:
+These gates exist so that AI agents decide for themselves whether a change is approved and ships. When every gate passes, the agent runs `bin/ship <pr>` and it merges — no waiting for the owner. The agent's own approval (`.standards/checks/agent-approval.sh`) needs: one `## Pre-merge gate` with `Verdict: PASS`; both reviewers `PASS`, or exactly one `PASS` and the arbiter `PASS`; a `Reviewed: <sha>` (hex, present locally) where every file the branch changes has the content it has at HEAD, `decisions.md` aside. If git cannot find the base or list the changes, the owner decides.
+
+Who approves the cases below is set by `APPROVER` in `.standards/config.sh`, read from the base branch (a branch cannot switch its own mode):
+- **`APPROVER="owner"`** (default) — the owner approves all three cases below.
+- **`APPROVER="agent"`** — the agent's own approval also covers gate-file changes and blast-radius specs (the spec gate PASS stands in for `spec-approved`); `bin/ship`'s PR comment states the mode and lists the changed gate files. Every other condition still holds. Only `owner-review: required` flags still need the owner: they are questions, not approvals.
+
+The cases:
 - **Gate files changed** (renames included) — `bin/`, `.standards/`, `.claude/`, `.github/`, `.husky/`, `lefthook.yml`/`.yaml`, `.pre-commit-config.yaml`, `CLAUDE.md`, `AGENTS.md`, `docs/doc-map.txt`, this rulebook — matched ignoring case. An agent never approves a change to the rules that judge it. One exception: raising the single number in `.standards/coverage-baseline`. Not covered: scripts and lint/test config that the `*_CMD` commands in `config.sh` read — a change that weakens them needs `owner-review: required`.
 - **`owner-review: required — <reason>`** in `decisions.md` — any agent or reviewer adds it to hand a taste or product call to the owner. Fails closed: any line naming `owner-review` with `required` later on it counts, in any case or markdown, unless indented 4+ spaces (an example). Removing it, or `owner-approval: required` from a spec, on the branch also needs the owner.
-- **Blast-radius spec** (`owner-approval: required`) — the owner's `spec-approved` label at the spec stage. That is enough: no final approval when every later gate passes.
+- **Blast-radius spec** (`owner-approval: required`) — in owner mode, the owner's `spec-approved` label at the spec stage. That is enough: no final approval when every later gate passes.
 
 The owner's `approved` label (`bin/approve <pr>`, owner only) replaces the agent's approval only: every other gate still applies. `bin/ship` runs the base branch's copy of itself and of `agent-approval.sh`, so a branch cannot loosen them by accident. That stops honest drift, not a hostile branch: the branch's own `bin/ship`, `common.sh` and `config.sh` run first. Like the `.claude` guard, it is a speed bump, not a security boundary; real enforcement needs a server-side required check or branch protection.
 
 ## Your steps (owner)
 
 Only these need you; everything else, the agents do and `bin/ship` merges.
+
+With `APPROVER="agent"`, your only step is answering `owner-review: required` flags in the PR or issue (and saying "merge" in repos without `bin/ship`). Agents check, verify and approve the rest.
+
+With `APPROVER="owner"` (default):
 - **Blast-radius spec** (`owner-approval: required`): read it, then `bin/approve --spec <issue>`.
-- **PR that `bin/ship` refuses** (gate file changed, `owner-review` flag, review out of date with the code): validate the evidence table, then `bin/approve <pr>`; the agent re-runs `bin/ship`.
+- **PR that `bin/ship` refuses** (gate file changed, `owner-review` flag): validate the evidence table, then `bin/approve <pr>`; the agent re-runs `bin/ship`. A review out of date with the code is the agent's to redo, not yours.
 - **`owner-review: required` flags**: answer the question in the PR or issue.
 - **Repos without `bin/ship`**: say "merge" and the agent merges; nothing to type.
 
+When an agent asks you for one of these, it names the rule that requires you and gives the one command to run. It keeps working on everything that does not depend on your answer, and stops only when the next step needs you.
+
 Roles:
-- **Owner** — the human (`OWNER` in `.standards/config.sh`). Approves high-blast-radius specs, rules on inferred Expectations, taste disputes and `owner-review: required` flags, approves changes to the gate files. Does not proofread diffs or approve routine merges.
+- **Owner** — the human (`OWNER` in `.standards/config.sh`). Rules on inferred Expectations, taste disputes and `owner-review: required` flags. With `APPROVER="owner"`, also approves high-blast-radius specs and changes to the gate files. Does not proofread diffs or approve routine merges.
 - **Orchestrator** — the agent running the issue. Delegates work and reviews to subagents.
 - **Reviewers** — two independent agents, no shared context with each other or the author. Their job is to find why it is wrong — the mistakes an honest agent makes, not loopholes a hostile one could exploit (the gates are a speed bump, see Approval and shipping). At most two review rounds per gate; what remains after that is recorded as a known limit or put to the owner as one decision.
 - **Arbiter** — a third independent agent, called only when the two reviewers disagree.

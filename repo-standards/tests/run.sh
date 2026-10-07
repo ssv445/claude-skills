@@ -322,6 +322,27 @@ aa fail "coverage baseline with extra lines"
 git checkout -q docs
 git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
 
+# APPROVER, read from the base's config.sh: "agent" lets the agent approve gate-file changes;
+# owner-review flags still block. A branch cannot switch the mode that judges it.
+echo "agents: keep it short" > CLAUDE.md; git add CLAUDE.md; git commit -qm "gate file"
+sed 's/^APPROVER=.*/APPROVER="agent"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh; git commit -qam "branch sets APPROVER=agent"
+review "$ok" "$ok" ""
+aa fail "APPROVER=agent set only on the branch → still owner mode"
+git checkout -q docs; git reset -q --hard "$feat"
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; sed 's/^APPROVER=.*/APPROVER="agent"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "APPROVER=agent"; git checkout -q feat/7-mul; git rebase -q main
+echo "agents: keep it short" > CLAUDE.md; git add CLAUDE.md; git commit -qm "gate file"
+review "$ok" "$ok" ""
+aa pass "APPROVER=agent (base) → gate-file change approved"
+echo "owner-review: required — tone" >> "$dec"
+aa fail "APPROVER=agent → owner-review flag still blocks"
+git checkout -q docs
+review "$ok" "$no" ""
+aa fail "APPROVER=agent → reviewer FAIL still blocks"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+
 echo "approve"
 # A fake gh logs every call and answers the queries bin/approve and bin/ship make; a call
 # whose arguments contain $GH_FAIL fails. `script` gives approve the terminal it insists on.
@@ -483,6 +504,22 @@ git reset -q --hard HEAD~1
 ship_run STANDARDS_SHIP_FROM_BASE=bin/ship
 ship_run STANDARDS_SHIP_FROM_BASE="$PWD/bin/ship"
 expect pass "ship: spoofed STANDARDS_SHIP_FROM_BASE never deletes bin/ship" test -f bin/ship
+
+# APPROVER modes: a blast-radius spec (no spec-approved label) plus a gate-file change.
+echo "owner-approval: required" > docs/work/1-x/spec.md; echo "agents: keep it short" > CLAUDE.md
+git add docs CLAUDE.md && git commit -qm "blast-radius spec, gate file"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "re-review"
+ship_run
+expect pass "ship: APPROVER=owner → blast-radius spec + gate file refused" test "$(writes)" = ""
+git checkout -q main; sed 's/^APPROVER=.*/APPROVER="agent"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "APPROVER=agent" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+ship_run
+expect pass "ship: APPROVER=agent → agent approves, merges, comments" test "$(writes)" = "merge;comment;"
+expect pass "ship: comment states the mode and lists the changed gate file" \
+  bash -c "grep -q 'Mode: APPROVER=agent' '$T/gh.log' && grep -q 'Gate files changed.*CLAUDE.md' '$T/gh.log'"
+echo "owner-review: required — tone" >> "$dec"; git commit -qam "flag"
+ship_run
+expect pass "ship: APPROVER=agent → owner-review flag still blocks" test "$(writes)" = ""
 
 echo
 echo "$pass passed, $fail wrong"

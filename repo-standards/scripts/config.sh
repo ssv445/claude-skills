@@ -4,6 +4,12 @@
 
 OWNER=""                 # GitHub login of the human owner; only they add approved / spec-approved
 BASE_BRANCH="main"
+# Who approves what the gates would send to a person. "owner" (default): gate-file changes
+# and blast-radius specs need the owner's approved / spec-approved label. "agent": the
+# agent's own approval (agent-approval.sh) covers those too; the spec gate PASS stands in
+# for spec-approved. owner-review: required flags block in both modes — they are questions.
+# bin/ship reads this from the base branch, so a branch cannot switch its own mode.
+APPROVER="owner"
 
 # --- pre-push (budget: 2 min total) ---
 LINT_CMD=""
