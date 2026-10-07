@@ -18,6 +18,9 @@ base_copy() {
   chmod +x "$tmp"
   printf '%s\n' "$tmp"
 }
+# This stops honest drift, not a hostile branch: the branch's own bin/ship, common.sh and
+# config.sh run first and could drop this step. Like guard.sh, a speed bump, not a
+# security boundary; real enforcement needs a server-side required check / branch protection.
 if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
   base_ship="$(base_copy bin/ship)"
   if [ -n "$base_ship" ]; then
@@ -25,6 +28,9 @@ if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
     STANDARDS_SHIP_FROM_BASE=1 exec bash "$base_ship" "$@"
   fi
 fi
+check=""; owner_log="$(mktemp)"
+# The re-exec'd run is itself a temp copy ($0); remove it with the others.
+trap 'rm -f "$check" "$owner_log"; [ -z "$STANDARDS_SHIP_FROM_BASE" ] || rm -f "$0"' EXIT
 
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
 [ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
@@ -70,10 +76,12 @@ run_cmd perf "$PERF_CMD" || fail=1
 # Approval. The owner's label must postdate the head commit: new commits need re-approval.
 # Without it, the agent approves when agent-approval.sh (the base's copy, if this branch
 # changes it) finds nothing that needs the owner.
+# The owner-label misses are printed only if the agent cannot approve either.
 approval=""
-if approved_at="$(label_check "$pr" approved pr)"; then
+if approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
+  cat "$owner_log"
   commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
-  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve"
+  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve" > "$owner_log"
   else approval=owner; fi
 fi
 if [ -z "$approval" ]; then
@@ -82,6 +90,7 @@ if [ -z "$approval" ]; then
     printf '%s\n' "$out"
     approval=agent
   else
+    cat "$owner_log"
     printf '%s\n' "$out"
     red "ship BLOCKED: owner approval needed — ask the owner to run bin/approve $pr"
     exit 1

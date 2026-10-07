@@ -9,7 +9,7 @@ These gates exist so that AI agents decide for themselves whether a change is ap
 - **`owner-review: required — <reason>`** in `decisions.md` — any agent or reviewer adds it to hand a taste or product call to the owner.
 - **Blast-radius spec** (`owner-approval: required`) — the owner's `spec-approved` label at the spec stage. That is enough: no final approval when every later gate passes.
 
-The owner's `approved` label (`bin/approve <pr>`, owner only) overrides what `bin/ship` refuses. `bin/ship` runs the base branch's copy of itself and of `agent-approval.sh`, so a branch cannot loosen them.
+The owner's `approved` label (`bin/approve <pr>`, owner only) overrides what `bin/ship` refuses. `bin/ship` runs the base branch's copy of itself and of `agent-approval.sh`, so a branch cannot loosen them by accident. That stops honest drift, not a hostile branch: the branch's own `bin/ship`, `common.sh` and `config.sh` run first. Like the `.claude` guard, it is a speed bump, not a security boundary; real enforcement needs a server-side required check or branch protection.
 
 Roles:
 - **Owner** — the human (`OWNER` in `.standards/config.sh`). Approves high-blast-radius specs, rules on inferred Expectations, taste disputes and `owner-review: required` flags, approves changes to the gate files. Does not proofread diffs or approve routine merges.
