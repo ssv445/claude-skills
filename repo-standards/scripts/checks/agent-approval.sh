@@ -31,6 +31,11 @@ else
   # a. Pre-merge gate passed: both reviewers PASS, or they split and the arbiter ruled PASS.
   n="$(grep -c '^## Pre-merge gate$' "$dec")"
   [ "$n" -le 1 ] || miss "'## Pre-merge gate' appears $n times in $dec"
+  # Only the first of each line is read, so a second one would be silently ignored.
+  for p in "- Reviewer A:" "- Reviewer B:" "- Arbiter:" "Reviewed:" "Verdict:"; do
+    c="$(section_count "$dec" "Pre-merge gate" "$p")"
+    [ "$c" -le 1 ] || miss "'$p' appears $c times in the Pre-merge gate — edit it in place"
+  done
   v="$(section_verdict "$dec" "Pre-merge gate")"
   [ "$v" = "PASS" ] && info "ok   Pre-merge gate: PASS" || miss "Pre-merge gate: ${v:-no verdict}"
   a="$(section_field "$dec" "Pre-merge gate" "- Reviewer A:")"
@@ -62,7 +67,7 @@ else
   fi
 
   # b. Nobody flagged a taste or product call for the owner.
-  flags="$(grep -inE "^$(owner_flag_re review)" "$dec")"
+  flags="$(grep -inE "$(owner_flag_re review)" "$dec")"
   [ -z "$flags" ] && info "ok   no owner-review flag" || miss "owner review requested in $dec: $flags"
 fi
 
@@ -70,18 +75,38 @@ fi
 # -m: a merge commit's diff against each parent, so a flag dropped while merging shows.
 if [ -n "$base" ]; then
   if log="$(git log -m -p --format= "$base..HEAD" -- "docs/work/$(issue_number)-*")"; then
-    removed="$(printf '%s\n' "$log" | grep -iE "^-($(owner_flag_re review)|$(owner_flag_re approval))")"
+    # Removed lines, minus the diff's "-" marker, judged by the same flag patterns.
+    removed="$(printf '%s\n' "$log" | grep -E '^-' | grep -vE '^--- (a/|/dev/null)' | sed 's/^-//' \
+      | grep -iE "$(owner_flag_re review)|$(owner_flag_re approval)")"
     [ -z "$removed" ] && info "ok   no owner flag removed" || miss "owner flag removed on this branch: $removed"
   else miss "git log $base..HEAD failed"
   fi
 fi
 
+# raises_baseline: the branch only raises .standards/coverage-baseline — one number on
+# base and HEAD, HEAD's >= base's. coverage-baseline.sh asks for exactly that edit; any
+# other change to it (lower, extra text, new, deleted) stays a gate change.
+raises_baseline() {
+  local old new num='^[0-9]+(\.[0-9]+)?$'
+  old="$(git show "$base:.standards/coverage-baseline" 2>/dev/null)" || return 1
+  new="$(git show "HEAD:.standards/coverage-baseline" 2>/dev/null)" || return 1
+  printf '%s\n' "$old" | grep -qE "$num" && [ "$(printf '%s\n' "$old" | wc -l)" -eq 1 ] || return 1
+  printf '%s\n' "$new" | grep -qE "$num" && [ "$(printf '%s\n' "$new" | wc -l)" -eq 1 ] || return 1
+  awk -v o="$old" -v n="$new" 'BEGIN { exit !(n + 0 >= o + 0) }'
+}
+
 # c. The diff leaves the gate files alone. --no-renames: a moved file shows both paths.
+# nocasematch: ".Claude/" is ".claude/" on a case-insensitive filesystem.
 if [ $diff_ok -eq 1 ]; then
   touched=""
+  shopt -s nocasematch
   while IFS= read -r -d '' f; do
+    if [ "$f" = ".standards/coverage-baseline" ] && raises_baseline; then
+      info "ok   coverage baseline only raised"; continue
+    fi
     matches_any "$f" "$GATE_FILES" && touched="$touched $f"
   done < "$changed"
+  shopt -u nocasematch
   [ -z "$touched" ] && info "ok   no gate files changed" || miss "gate files changed:$touched"
 fi
 

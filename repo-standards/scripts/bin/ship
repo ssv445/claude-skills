@@ -71,7 +71,7 @@ label_check() {
 }
 
 spec="$(issue_dir)/spec.md"
-if [ -f "$spec" ] && grep -qiE "^$(owner_flag_re approval)" "$spec"; then
+if [ -f "$spec" ] && grep -qiE "$(owner_flag_re approval)" "$spec"; then
   label_check "$(issue_number)" spec-approved issue >/dev/null || fail=1
 fi
 

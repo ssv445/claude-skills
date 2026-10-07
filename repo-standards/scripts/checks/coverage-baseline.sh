@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Total coverage may only ratchet up: compare COVERAGE_TOTAL_CMD's number to
-# .standards/coverage-baseline. Raise the baseline in the PR when coverage rises.
+# .standards/coverage-baseline. Raise the baseline in the PR when coverage rises — one
+# number, nothing else: agent-approval.sh lets only that edit through without the owner.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
 
 [ -n "$COVERAGE_TOTAL_CMD" ] || { info "SKIP coverage-baseline (N/A in config)"; exit 0; }

@@ -187,12 +187,24 @@ review "$ok" "$ok" ""
 echo "- owner-review: required — bulleted" >> "$dec"
 aa fail "owner-review: required, bulleted"
 git checkout -q docs
-for flag in "Owner-review: required — caps" "owner-review:required — no space" "**owner-review: required** — bold" "- _owner-review: required_ — bulleted italic"; do
+for flag in "Owner-review: required — caps" "owner-review:required — no space" "**owner-review: required** — bold" "- _owner-review: required_ — bulleted italic" \
+            "**owner-review**: required — bold name" "**owner-review:** required — bold name and colon" "* owner-review: required — star bullet" \
+            "  owner-review: required — indented 2"; do
   review "$ok" "$ok" ""
   echo "$flag" >> "$dec"
   aa fail "flag variant: $flag"
   git checkout -q docs
 done
+review "PASS — fine; owner-review: required — tone of the error copy" "$ok" ""
+aa fail "flag inside a reviewer line"
+review "$ok" "$ok" ""
+echo "    owner-review: required — indented 4, an example" >> "$dec"
+aa pass "flag indented 4+ spaces is an example, not a flag"
+git checkout -q docs
+review "$ok" "$ok" ""
+echo "- Reviewer B: FAIL — a second B line" >> "$dec"
+aa fail "duplicate reviewer line in the Pre-merge gate"
+git checkout -q docs
 echo "**Owner-Review:required** — loose" >> "$dec"; git commit -qam "loose flag"
 git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag loose"
 review "$ok" "$ok" ""
@@ -216,6 +228,16 @@ echo "owner-approval: required" > docs/work/7-mul/spec.md; git add docs; git com
 echo "owner-approval: not-required" > docs/work/7-mul/spec.md; git commit -qam "downgrade"
 review "$ok" "$ok" ""
 aa fail "owner-approval: required removed from the spec"
+git reset -q --hard HEAD~2
+echo "**Owner-Approval**: required" > docs/work/7-mul/spec.md; git add docs; git commit -qm spec
+cp "$SKILL/templates/spec.md" docs/work/7-mul/spec.md; git commit -qam "downgrade to template default"
+review "$ok" "$ok" ""
+aa fail "bold owner-approval removed from the spec"
+git reset -q --hard HEAD~2
+cp "$SKILL/templates/spec.md" docs/work/7-mul/spec.md; git add docs; git commit -qm spec
+echo "# spec without the approval line" > docs/work/7-mul/spec.md; git commit -qam "drop not-required"
+review "$ok" "$ok" ""
+aa pass "removing owner-approval: not-required is no flag removal"
 git reset -q --hard HEAD~2
 
 echo "agents: keep it short" > CLAUDE.md
@@ -245,28 +267,65 @@ echo "src/* -> docs/guidelines/billing.md" >> docs/doc-map.txt && git commit -qa
 review "$ok" "$ok" ""
 aa fail "gate input docs/doc-map.txt in the diff"
 git reset -q --hard HEAD~1
+mkdir -p .Claude && echo "{}" > .Claude/settings.json
+git add .Claude && git commit -qm "gate dir, other case"
+review "$ok" "$ok" ""
+aa fail "gate file in a differently-cased dir (.Claude/)"
+git reset -q --hard HEAD~1
+
+# The coverage baseline may be raised without the owner; any other edit is a gate change.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; echo 80 > .standards/coverage-baseline; git add .standards; git commit -qm "baseline 80"
+git checkout -q feat/7-mul; git rebase -q main
+echo 85 > .standards/coverage-baseline; git commit -qam "raise baseline"
+review "$ok" "$ok" ""
+aa pass "coverage baseline raised 80 → 85"
+git checkout -q docs; git reset -q --hard HEAD~1
+echo 70 > .standards/coverage-baseline; git commit -qam "lower baseline"
+review "$ok" "$ok" ""
+aa fail "coverage baseline lowered 80 → 70"
+git checkout -q docs; git reset -q --hard HEAD~1
+printf '90\n# note\n' > .standards/coverage-baseline; git commit -qam "baseline plus text"
+review "$ok" "$ok" ""
+aa fail "coverage baseline with extra lines"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
 
 echo "approve"
-# A fake gh logs every call; `script` gives approve the terminal it insists on.
+# A fake gh logs every call and answers the queries bin/approve and bin/ship make; a call
+# whose arguments contain $GH_FAIL fails. `script` gives approve the terminal it insists on.
 mkdir -p "$T/fakebin"
 cat > "$T/fakebin/gh" <<'EOF'
 #!/bin/sh
 echo "$*" >> "$GH_LOG"
-case "$*" in *"--json labels"*) cat "$GH_LABELS" ;; esac
+if [ -n "${GH_FAIL:-}" ]; then case "$*" in *"$GH_FAIL"*) exit 1 ;; esac; fi
+case "$*" in
+  "pr view --json number"*) echo 12 ;;
+  "pr view 12 --json headRefName"*) printf '{"headRefName":"%s","headRefOid":"%s"}\n' "$GH_BRANCH" "$GH_HEAD" ;;
+  "repo view"*) echo o/r ;;
+  "api "*) echo "${GH_LABELED:-null null}" ;;
+  *"--json labels"*) cat "$GH_LABELS" ;;
+esac
 exit 0
 EOF
 chmod +x "$T/fakebin/gh"
-approve_calls() { # approve_calls <labels already on the PR>: prints the label edits made
-  printf '%s\n' "$1" > "$T/labels"; : > "$T/gh.log"
+approve_run() { # approve_run <labels already on the PR> [VAR=value ...]: output in $T/approve.out
+  printf '%s\n' "$1" > "$T/labels"; : > "$T/gh.log"; shift
   # Typed after a pause: input piped at once reaches the pty before approve's prompt reads it.
-  { sleep 0.5; printf '12\n'; sleep 0.5; } | GH_LOG="$T/gh.log" GH_LABELS="$T/labels" PATH="$T/fakebin:$PATH" \
-    script -q /dev/null bash .standards/bin/approve 12 >/dev/null 2>&1
-  grep -E -- '--(add|remove)-label' "$T/gh.log" | tr '\n' ';'
+  { sleep 0.5; printf '12\n'; sleep 0.5; } | env "$@" GH_LOG="$T/gh.log" GH_LABELS="$T/labels" PATH="$T/fakebin:$PATH" \
+    script -q /dev/null bash .standards/bin/approve 12 > "$T/approve.out" 2>&1
 }
+edits() { grep -E -- '--(add|remove)-label' "$T/gh.log" | tr '\n' ';'; }
+approve_run approved
 expect pass "approve: already approved → remove, then add (fresh event)" \
-  test "$(approve_calls approved)" = "pr edit 12 --remove-label approved;pr edit 12 --add-label approved;"
-expect pass "approve: not yet approved → add only" \
-  test "$(approve_calls other)" = "pr edit 12 --add-label approved;"
+  test "$(edits)" = "pr edit 12 --remove-label approved;pr edit 12 --add-label approved;"
+approve_run other
+expect pass "approve: not yet approved → add only" test "$(edits)" = "pr edit 12 --add-label approved;"
+approve_run approved GH_FAIL="--json labels"
+expect pass "approve: label lookup fails → stops, no edits" \
+  bash -c "[ -z \"\$(grep -E -- '--(add|remove)-label' '$T/gh.log')\" ] && grep -q 'could not read' '$T/approve.out'"
+approve_run approved GH_FAIL="--add-label"
+expect pass "approve: add fails after remove → says re-run" grep -q "label removed; re-run" "$T/approve.out"
 
 echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
@@ -310,6 +369,67 @@ expect fail "pre-push: uncommitted changes" .standards/hooks/pre-push < "$T/refs
 git commit -qam "break a test"
 printf 'refs/heads/feat/7-mul %s refs/heads/feat/7-mul %s\n' "$(git rev-parse HEAD)" "$z" > "$T/refs-branch2"
 expect fail "pre-push: failing unit test" .standards/hooks/pre-push < "$T/refs-branch2"
+
+echo "ship"
+# Its own repo with a real origin, since bin/ship fetches and compares against it.
+git init -q --bare -b main "$T/origin.git"
+git clone -q "$T/origin.git" "$T/ship" 2>/dev/null; cd "$T/ship" || exit 1
+git config user.email t@example.invalid; git config user.name test
+mkdir -p .standards bin src docs/work/1-x
+cp -R "$SKILL/scripts/." .standards/; cp "$SKILL/scripts/bin/ship" bin/ship
+chmod +x bin/ship .standards/checks/* .standards/bin/*
+echo base > src/a.txt
+git add -A && git commit -qm base && git push -q origin main
+git checkout -q -b feat/1-x
+echo change > src/a.txt; git commit -qam change
+dec=docs/work/1-x/decisions.md
+sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > "$dec"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"
+git add docs && git commit -qm "decision log"
+ship_run() { # ship_run [VAR=value ...]: bin/ship 12 against the fake gh; output in $T/ship.out
+  : > "$T/gh.log"
+  env GH_LABELS="$T/nolabels" "$@" GH_LOG="$T/gh.log" GH_BRANCH=feat/1-x GH_HEAD="$(git rev-parse HEAD)" \
+    PATH="$T/fakebin:$PATH" bash bin/ship 12 > "$T/ship.out" 2>&1
+}
+writes() { grep -E '^pr (merge|comment)' "$T/gh.log" | awk '{ print $2 }' | tr '\n' ';'; }
+: > "$T/nolabels"; echo approved > "$T/approved"
+fresh="owner 2999-01-01T00:00:00Z"
+
+ship_run
+expect pass "ship: agent path → merge, then comment" test "$(writes)" = "merge;comment;"
+expect pass "ship: merge pinned with --match-head-commit HEAD" grep -q -- "--match-head-commit $(git rev-parse HEAD)" "$T/gh.log"
+ship_run GH_FAIL="pr merge"
+expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"
+echo "owner-review: required — taste" >> "$dec"; git commit -qam "flag"
+ship_run
+expect pass "ship: agent refused, no owner label → nothing written" test "$(writes)" = ""
+ship_run GH_LABELS="$T/approved" GH_LABELED="$fresh"
+expect pass "ship: owner label checked first → merge, no comment" test "$(writes)" = "merge;"
+ship_run GH_LABELS="$T/approved" GH_LABELED="owner 2000-01-01T00:00:00Z"
+expect pass "ship: owner label older than head → nothing written" test "$(writes)" = ""
+git reset -q --hard HEAD~1
+sed 's/^Verdict: PASS$/Verdict: PENDING/' "$dec" > "$T/dec" && cp "$T/dec" "$dec"; git commit -qam "gates pending"
+ship_run GH_LABELS="$T/approved" GH_LABELED="$fresh"
+expect pass "ship: another gate failed → nothing written, even with owner label" test "$(writes)" = ""
+git reset -q --hard HEAD~1
+
+# Re-exec of the base copy, temp cleanup, and a spoofed env var never deleting bin/ship.
+mkdir -p "$T/fakemktemp" "$T/tmpfiles"
+cat > "$T/fakemktemp/mktemp" <<'EOF'
+#!/bin/sh
+exec /usr/bin/mktemp "$PROBE_TMP/$(basename "${1:-tmp.XXXXXX}")"
+EOF
+chmod +x "$T/fakemktemp/mktemp"
+# The branch's copy says something else once past the re-exec point; the base copy must win.
+sed 's/PASS branch current and pushed/BRANCH-COPY-CONTINUED/' bin/ship > "$T/s" && cp "$T/s" bin/ship; git commit -qam "edit bin/ship"
+PATH="$T/fakemktemp:$PATH" ship_run PROBE_TMP="$T/tmpfiles"
+expect pass "ship: branch edits bin/ship → base copy runs" \
+  bash -c "grep -q 'PASS branch current and pushed' '$T/ship.out' && ! grep -q BRANCH-COPY-CONTINUED '$T/ship.out'"
+expect pass "ship: no temp files left" test -z "$(ls -A "$T/tmpfiles")"
+git reset -q --hard HEAD~1
+ship_run STANDARDS_SHIP_FROM_BASE=bin/ship
+ship_run STANDARDS_SHIP_FROM_BASE="$PWD/bin/ship"
+expect pass "ship: spoofed STANDARDS_SHIP_FROM_BASE never deletes bin/ship" test -f bin/ship
 
 echo
 echo "$pass passed, $fail wrong"

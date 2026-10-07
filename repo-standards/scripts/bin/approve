@@ -22,7 +22,15 @@ gh label create "$label" --color 0E8A16 --description "Owner approval (repo stan
 # Re-adding a label that is already present records no new "labeled" event, and bin/ship
 # dates the approval by that event — so it would say "re-approve" forever. Remove the
 # label first so the add below stamps a fresh event.
-if gh "$kind" view "$n" --json labels -q '.labels[].name' | grep -qx "$label"; then
+labels="$(gh "$kind" view "$n" --json labels -q '.labels[].name')" \
+  || { red "could not read labels on $kind #$n — nothing changed; re-run"; exit 1; }
+removed=""
+if printf '%s\n' "$labels" | grep -qx "$label"; then
   gh "$kind" edit "$n" --remove-label "$label" >/dev/null || exit 1
+  removed=1
 fi
-gh "$kind" edit "$n" --add-label "$label" && green "$label added to $kind #$n"
+if gh "$kind" edit "$n" --add-label "$label"; then green "$label added to $kind #$n"
+else
+  [ -z "$removed" ] || red "label removed; re-run bin/approve $([ "$kind" = issue ] && printf -- '--spec ')$n"
+  exit 1
+fi

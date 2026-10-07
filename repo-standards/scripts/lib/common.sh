@@ -76,9 +76,28 @@ section_field() {
   ' "$1"
 }
 
-# owner_flag_re <review|approval>: ERE (use with grep -i, after "^") for an owner flag
-# line, tolerant of case, spacing after the colon, a "- " bullet and * / _ emphasis.
-owner_flag_re() { printf '(- )?[*_]*owner-%s:[[:space:]]*required' "$1"; }
+# owner_flag_re <review|approval>: anchored ERE (use with grep -i) for an owner flag line.
+# Fails closed: any line naming the flag with "required" later on it counts, whatever the
+# markdown around it — except lines indented 4+ spaces or a tab (the templates' examples).
+# For approval, "required" must come before any "#" comment and not as "not-required", so
+# the spec template's default "owner-approval: not-required   # required if: …" is no flag.
+owner_flag_re() {
+  case "$1" in
+    review)   printf '^ {0,3}([^ \t].*)?owner-review.*required' ;;
+    approval) printf '^ {0,3}([^ \t].*)?owner-approval([^#]*[^#-])?required' ;;
+  esac
+}
+
+# section_count <file> <section heading text> <line prefix> → how many lines in that
+# section start with the prefix.
+section_count() {
+  awk -v h="## $2" -v p="$3" '
+    $0 == h { inside = 1; next }
+    inside && /^## / { inside = 0 }
+    inside && index($0, p) == 1 { n++ }
+    END { print n + 0 }
+  ' "$1"
+}
 
 # run_cmd <label> <command string>. Empty command = N/A in config, reported as SKIP.
 run_cmd() {
