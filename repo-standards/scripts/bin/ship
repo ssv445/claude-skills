@@ -12,7 +12,7 @@ git fetch -q origin "$BASE_BRANCH"
 base_copy() {
   local tmp
   git cat-file -e "origin/$BASE_BRANCH:$1" 2>/dev/null || return 0
-  tmp="$(mktemp)"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/standards-base.XXXXXX")"
   git show "origin/$BASE_BRANCH:$1" > "$tmp"
   if cmp -s "$tmp" "$1"; then rm -f "$tmp"; return 0; fi
   chmod +x "$tmp"
@@ -25,12 +25,19 @@ if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
   base_ship="$(base_copy bin/ship)"
   if [ -n "$base_ship" ]; then
     info "running origin/$BASE_BRANCH's bin/ship (this branch changes it)"
-    STANDARDS_SHIP_FROM_BASE=1 exec bash "$base_ship" "$@"
+    STANDARDS_SHIP_FROM_BASE="$base_ship" exec bash "$base_ship" "$@"
   fi
 fi
 check=""; owner_log="$(mktemp)"
-# The re-exec'd run is itself a temp copy ($0); remove it with the others.
-trap 'rm -f "$check" "$owner_log"; [ -z "$STANDARDS_SHIP_FROM_BASE" ] || rm -f "$0"' EXIT
+# The re-exec'd run is itself a temp copy ($0); remove it with the others — but only when
+# $0 is exactly the temp file base_copy made, never a script inside the repo.
+cleanup() {
+  rm -f "$check" "$owner_log"
+  case "$0" in "$ROOT"/*|bin/*|./*) return ;; esac
+  case "$(basename "$0")" in standards-base.*) ;; *) return ;; esac
+  [ "$0" = "$STANDARDS_SHIP_FROM_BASE" ] && rm -f "$0"
+}
+trap cleanup EXIT
 
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
 [ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
@@ -97,14 +104,18 @@ if [ -z "$approval" ]; then
   fi
 fi
 
+# --match-head-commit: refuse if the PR moved after these gates ran.
+gh pr merge "$pr" --squash --delete-branch --match-head-commit "$head_oid" || { red "FAIL ship: merge refused"; exit 1; }
+green "shipped #$pr ($approval-approved)"
+# The record is posted only once the merge happened, so it never claims an unmerged PR.
 if [ "$approval" = agent ]; then
   gh pr comment "$pr" --body "Approved by the agent through \`bin/ship\`: every pre-merge gate passed and \`.standards/checks/agent-approval.sh\` found nothing that needs the owner.
 
-- Pre-merge gate \`Verdict: PASS\`, with both reviewers PASS or the arbiter's PASS
-- No \`owner-review: required\` line in decisions.md
-- No gate file (\`bin/\`, \`.standards/\`, \`.claude/\`, \`.github/\`, \`CLAUDE.md\`, \`AGENTS.md\`, \`docs/guidelines/repo-standards.md\`) changed
+- Pre-merge gate \`Verdict: PASS\`: both reviewers PASS, or one PASS and the arbiter PASS
+- \`Reviewed:\` commit covers the head — only decisions.md changed after it
+- No \`owner-review: required\` line in decisions.md, and no owner flag removed on the branch
+- No gate file (\`bin/\`, \`.standards/\`, \`.claude/\`, \`.github/\`, \`CLAUDE.md\`, \`AGENTS.md\`, \`docs/guidelines/repo-standards.md\`, \`docs/doc-map.txt\`) changed
 - Spec gate, plan gate, e2e, perf and \`spec-approved\` (when the spec requires it) passed
 
-Head: $head_oid" || exit 1
+Head: $head_oid" || red "  warn merged, but the approval comment failed — post it by hand"
 fi
-gh pr merge "$pr" --squash --delete-branch && green "shipped #$pr ($approval-approved)"

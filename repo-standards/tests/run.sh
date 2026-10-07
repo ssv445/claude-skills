@@ -95,39 +95,89 @@ git checkout -q feat/7-mul; git branch -q -D chore-no-issue
 
 echo "agent-approval"
 dec=docs/work/7-mul/decisions.md
-review() { # review <reviewer A> <reviewer B> <arbiter>: rewrite the pre-merge gate lines
-  awk -v a="$1" -v b="$2" -v c="$3" '
+# review <reviewer A> <reviewer B> <arbiter> [reviewed sha, default HEAD]: rewrite the
+# pre-merge gate lines in the working tree.
+review() {
+  awk -v a="$1" -v b="$2" -v c="$3" -v r="${4-$(git rev-parse HEAD)}" '
     /^## / { s = $0 }
     s == "## Pre-merge gate" && /^- Reviewer A:/ { $0 = "- Reviewer A: " a }
     s == "## Pre-merge gate" && /^- Reviewer B:/ { $0 = "- Reviewer B: " b }
     s == "## Pre-merge gate" && /^- Arbiter:/    { $0 = "- Arbiter: " c }
+    s == "## Pre-merge gate" && /^Reviewed:/     { $0 = "Reviewed: " r }
     { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
 }
-review "PASS — fine" "PASS — fine" ""
-expect pass "agent-approval: gate PASS, both reviewers PASS" .standards/checks/agent-approval.sh
-review "PASS — fine" "FAIL — misses empty input" ""
-expect fail "agent-approval: reviewer FAIL, no arbiter" .standards/checks/agent-approval.sh
-review "PASS — fine" "FAIL — misses empty input" "PASS — empty input is covered by the guard"
-expect pass "agent-approval: reviewers disagree, arbiter PASS" .standards/checks/agent-approval.sh
-review "PASS — fine" "FAIL — misses empty input" "FAIL — B is right"
-expect fail "agent-approval: arbiter FAIL" .standards/checks/agent-approval.sh
-review "PASS — fine" "PASS — fine" ""
+aa() { expect "$1" "agent-approval: $2" .standards/checks/agent-approval.sh; }
+ok="PASS — fine"; no="FAIL — misses empty input"
+review "$ok" "$ok" ""
+aa pass "gate PASS, both reviewers PASS"
+review "PASS" "PASS" ""
+aa pass "bare PASS"
+review "$ok" "$no" ""
+aa fail "reviewer FAIL, no arbiter"
+review "$ok" "$no" "PASS — empty input is covered by the guard"
+aa pass "reviewers disagree, arbiter PASS"
+review "$ok" "$no" "FAIL — B is right"
+aa fail "arbiter FAIL"
+review "$no" "$no" "PASS — overruled both"
+aa fail "both reviewers FAIL, arbiter PASS"
+review "" "" "PASS — no reviewers ran"
+aa fail "no reviewers, arbiter PASS"
+review "PASSABLE" "$ok" ""
+aa fail "PASSABLE is not PASS"
+review "$ok" "$ok" ""
 sed 's/^Verdict: PASS$/Verdict: PENDING/' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
-expect fail "agent-approval: pre-merge verdict not PASS" .standards/checks/agent-approval.sh
+aa fail "pre-merge verdict not PASS"
 git checkout -q docs
-review "PASS — fine" "PASS — fine" ""
+review "$ok" "$ok" ""
+printf '\n## Pre-merge gate\n- Reviewer A: FAIL\nVerdict: FAIL\n' >> "$dec"
+aa fail "duplicate Pre-merge gate section"
+git checkout -q docs
+
+review "$ok" "$ok" "" "$(git rev-parse HEAD~1)"
+aa fail "review predates a code commit"
+review "$ok" "$ok" "" ""
+aa fail "no Reviewed sha"
+review "$ok" "$ok" ""
+git commit -qam "record pre-merge gate"
+aa pass "only decisions.md changed since the reviewed commit"
+git reset -q --hard HEAD~1
+
+review "$ok" "$ok" ""
 echo "owner-review: required — button copy is a taste call" >> "$dec"
-expect fail "agent-approval: owner-review: required" .standards/checks/agent-approval.sh
+aa fail "owner-review: required"
 git checkout -q docs
-review "PASS — fine" "PASS — fine" ""
+review "$ok" "$ok" ""
+echo "- owner-review: required — bulleted" >> "$dec"
+aa fail "owner-review: required, bulleted"
+git checkout -q docs
+echo "owner-review: required — copy tone" >> "$dec"; git commit -qam "flag"
+git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag"
+review "$ok" "$ok" ""
+aa fail "owner-review flag removed on the branch"
+git reset -q --hard HEAD~2
+echo "owner-approval: required" > docs/work/7-mul/spec.md; git add docs; git commit -qm spec
+echo "owner-approval: not-required" > docs/work/7-mul/spec.md; git commit -qam "downgrade"
+review "$ok" "$ok" ""
+aa fail "owner-approval: required removed from the spec"
+git reset -q --hard HEAD~2
+
 echo "agents: keep it short" > CLAUDE.md
 git add CLAUDE.md && git commit -qm "gate file"
-expect fail "agent-approval: gate file (CLAUDE.md) in the diff" .standards/checks/agent-approval.sh
+review "$ok" "$ok" ""
+aa fail "gate file (CLAUDE.md) in the diff"
 git reset -q --hard HEAD~1
-review "PASS — fine" "PASS — fine" ""
 mkdir -p .github && echo "x" > .github/pr.md
 git add .github && git commit -qm "gate dir"
-expect fail "agent-approval: gate file (.github/) in the diff" .standards/checks/agent-approval.sh
+review "$ok" "$ok" ""
+aa fail "gate file (.github/) in the diff"
+git reset -q --hard HEAD~1
+git mv .standards/hooks/pre-push pre-push-moved && git commit -qm "move a gate file out"
+review "$ok" "$ok" ""
+aa fail "gate file renamed out of .standards/"
+git reset -q --hard HEAD~1
+echo "src/* -> docs/guidelines/billing.md" >> docs/doc-map.txt && git commit -qam "loosen doc map"
+review "$ok" "$ok" ""
+aa fail "gate input docs/doc-map.txt in the diff"
 git reset -q --hard HEAD~1
 
 echo "coverage-baseline"
