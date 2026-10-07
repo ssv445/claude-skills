@@ -11,6 +11,14 @@ These gates exist so that AI agents decide for themselves whether a change is ap
 
 The owner's `approved` label (`bin/approve <pr>`, owner only) replaces the agent's approval only: every other gate still applies. `bin/ship` runs the base branch's copy of itself and of `agent-approval.sh`, so a branch cannot loosen them by accident. That stops honest drift, not a hostile branch: the branch's own `bin/ship`, `common.sh` and `config.sh` run first. Like the `.claude` guard, it is a speed bump, not a security boundary; real enforcement needs a server-side required check or branch protection.
 
+## Your steps (owner)
+
+Only these need you; everything else, the agents do and `bin/ship` merges.
+- **Blast-radius spec** (`owner-approval: required`): read it, then `bin/approve --spec <issue>`.
+- **PR that `bin/ship` refuses** (gate file changed, `owner-review` flag, review out of date with the code): validate the evidence table, then `bin/approve <pr>`; the agent re-runs `bin/ship`.
+- **`owner-review: required` flags**: answer the question in the PR or issue.
+- **Repos without `bin/ship`**: merge PRs yourself.
+
 Roles:
 - **Owner** — the human (`OWNER` in `.standards/config.sh`). Approves high-blast-radius specs, rules on inferred Expectations, taste disputes and `owner-review: required` flags, approves changes to the gate files. Does not proofread diffs or approve routine merges.
 - **Orchestrator** — the agent running the issue. Delegates work and reviews to subagents.
