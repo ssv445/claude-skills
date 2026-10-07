@@ -106,6 +106,20 @@ git add src && git commit -qm big
 expect fail "file-size: 30-line file over max 20" .standards/checks/file-size.sh
 git reset -q --hard HEAD~1
 
+echo "roadmap"
+expect pass "roadmap: absent (product layer not used)" .standards/checks/roadmap.sh
+mkdir -p docs/product
+cp "$SKILL"/tests/roadmap-fixtures/goals.md "$SKILL"/tests/roadmap-fixtures/assumptions.md docs/product/
+for f in "$SKILL"/tests/roadmap-fixtures/roadmap-*.md; do
+  n="$(basename "$f" .md)"
+  cp "$f" docs/product/roadmap.md
+  case "$n" in roadmap-valid) want=pass ;; *) want=fail ;; esac
+  expect "$want" "roadmap: ${n#roadmap-}" .standards/checks/roadmap.sh
+done
+cp "$SKILL"/templates/product/goals.md "$SKILL"/templates/product/assumptions.md "$SKILL"/templates/product/roadmap.md docs/product/
+expect pass "roadmap: installed templates are valid" .standards/checks/roadmap.sh
+rm -rf docs/product
+
 echo "pre-push"
 head="$(git rev-parse HEAD)"; z=0000000000000000000000000000000000000000
 printf 'refs/heads/feat/7-mul %s refs/heads/feat/7-mul %s\n' "$head" "$z" > "$T/refs-branch"

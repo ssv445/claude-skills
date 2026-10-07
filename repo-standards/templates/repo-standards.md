@@ -64,6 +64,32 @@ Then ask the owner to validate the evidence table and run `bin/approve <pr>`. Me
 
 Done when: `## Pre-merge gate` has `Verdict: PASS`, the PR has `approved`, and `bin/ship` succeeds.
 
+## Product: goals, roadmap, ideas
+
+The roadmap is planned as a graph and executed in a line. All of it lives in `docs/product/`:
+
+| File | Holds |
+|---|---|
+| `goals.md` | Goals (metric, target, date) and non-goals |
+| `assumptions.md` | Beliefs not yet proven: what would disprove each, status |
+| `stack.md` | Every third-party tool: why, which account, where config lives — never secrets |
+| `roadmap.md` | Inbox + items with `goal`, `status`, `requires`, `provides`, `assumptions`, `issue` |
+| `ideas-rejected.md` | Ideas turned down against the goals, with the reason |
+| `reviews/YYYY-MM.md` | Monthly review (template `docs/templates/review.md`) |
+
+**Ideas.** Anything the owner says that is not today's work goes into the Inbox immediately, verbatim, dated. Then, one idea at a time: split a compound idea into items; check it against `goals.md` (which goal it serves, any non-goal it contradicts) and `ideas-rejected.md`; name its prerequisites as `requires:` (an item `R-n` or a capability `cap:<name>` — "when we have a native app" is `requires: cap:native-app`), the assumptions it rests on, and a rough size. Propose **add** (with its place in the graph), **merge** into an existing item, or **reject** (with the reason); the owner confirms. An idea serving no goal is a question for the owner: reject, or is a goal missing?
+
+**Ready.** An item is ready when every prerequisite is shipped. The next work is the highest-priority ready item; only then does it get a GitHub issue (status `in-progress`, `issue: #n`).
+
+**Events** — act immediately:
+- Item shipped → mark `shipped`; every item it unblocks becomes `ready`; tell the owner what just became possible.
+- Assumption invalidated → re-check every item naming it; propose re-scope or drop.
+- Goal changed → re-rank the roadmap; propose drops for items that no longer serve a goal.
+
+**Monthly review** → `docs/product/reviews/YYYY-MM.md`: each goal's metric pulled from the tool in `stack.md` vs target; each open assumption against its "disproved if"; newly ready, stale (ready 60+ days), and orphaned items. Decisions go to the owner one at a time, then the roadmap is updated.
+
+**New tool or service** → blast-radius change: ADR + a row in `stack.md`.
+
 ## Decision log
 
 `decisions.md` is the only process record: every non-trivial choice, the alternatives rejected, each reviewer disagreement and the arbiter's ruling, the owner's answers. It is what the next agent reads to understand why. Raw transcripts are not attached anywhere.
@@ -90,7 +116,7 @@ Seeds are code, reviewed like code. `docs/seed-profile.md` holds production's *s
 
 | Hook | Checks |
 |---|---|
-| pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, seeds match schema, file size |
+| pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
 | `bin/ship` (pre-merge) | branch current with base, pushed, e2e, perf budgets, decision log pre-merge gate PASS, `approved` label (and `spec-approved` when required), then squash merge |
 | `.claude` guard | blocks raw merges, hook bypass, and agents touching owner labels |
 

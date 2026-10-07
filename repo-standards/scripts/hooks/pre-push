@@ -34,6 +34,7 @@ step "$ROOT/.standards/checks/doc-map.sh"
 step "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate"
 step run_cmd seeds "$SEED_CHECK_CMD"
 step "$ROOT/.standards/checks/file-size.sh"
+step "$ROOT/.standards/checks/roadmap.sh"
 
 elapsed=$(( $(date +%s) - start ))
 [ $elapsed -le 120 ] || red "WARN pre-push took ${elapsed}s (budget 120s) — move the slowest check to bin/ship"
