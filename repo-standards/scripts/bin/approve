@@ -15,9 +15,9 @@ fi
 
 gh "$kind" view "$n" || exit 1
 [ "$kind" = issue ] && ls docs/work/"$n"-*/spec.md 2>/dev/null
-printf '\nType %s to add "%s" to %s #%s: ' "$n" "$label" "$kind" "$n"
+printf '\nType the number %s to approve %s #%s: ' "$n" "$kind" "$n"
 read -r typed
-[ "$typed" = "$n" ] || { echo "not approved"; exit 1; }
+[ "$typed" = "$n" ] || { red "not approved: expected the number $n, got '$typed'"; exit 1; }
 gh label create "$label" --color 0E8A16 --description "Owner approval (repo standards)" >/dev/null 2>&1
 # Re-adding a label that is already present records no new "labeled" event, and bin/ship
 # dates the approval by that event — so it would say "re-approve" forever. Remove the

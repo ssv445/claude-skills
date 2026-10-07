@@ -93,6 +93,37 @@ git checkout -q -b chore-no-issue
 expect fail "decision-log: branch without issue number" .standards/checks/decision-log.sh "Spec gate"
 git checkout -q feat/7-mul; git branch -q -D chore-no-issue
 
+echo "guard scope"
+# The guard installed in this repo, fed hook JSON with a cwd. It judges commands aimed at
+# this repo only, and blocks executing the approve script, not mentioning it.
+git remote add origin https://github.com/acme/app.git
+mkdir -p "$T/elsewhere"
+g() { # g <pass|fail> <name> <cwd> <command>
+  jq -cn --arg d "$3" --arg c "$4" '{tool_name:"Bash",cwd:$d,tool_input:{command:$c}}' > "$T/g.json"
+  expect "$1" "guard: $2" bash .standards/guard.sh < "$T/g.json"
+}
+g fail "merge in this repo"                    "$R" "gh pr merge 12 --squash"
+g fail "cd into this repo's subdir, then merge" "$T/elsewhere" "cd $R/src && gh pr merge 12"
+g pass "cd to another repo, then merge"        "$R" "cd $T/elsewhere && gh pr merge 25"
+g pass "session cwd is another repo"           "$T/elsewhere" "gh pr merge 25"
+g pass "merge with -R other/repo"              "$R" "gh pr merge 25 -R other/repo"
+g pass "merge with --repo=other/repo"          "$R" "gh pr merge 25 --repo=other/repo"
+g fail "merge with -R naming this repo"        "$R" "gh pr merge 12 -R acme/app"
+g pass "git -C another repo push --no-verify"  "$R" "git -C $T/elsewhere push --no-verify"
+g fail "approve script run"                    "$R" "bin/approve 12"
+g fail "approve script run via ./ and bash"    "$R" "./bin/approve 12; bash bin/approve 12"
+g fail "approve script run after &&"           "$R" "git status && bin/approve 12"
+g pass "approve script read with cat"          "$R" "cat bin/approve"
+g pass "approve script grepped"                "$R" "grep -n label bin/approve"
+g pass "approve script named in a heredoc body" "$R" "$(printf 'cat > notes.md <<%sEOF%s\nbin/approve 12\nEOF' "'" "'")"
+g pass "approve script named in a commit message" "$R" "git commit -m 'owner runs bin/approve 12'"
+g pass "hooksPath read with --get"             "$R" "git config --get core.hooksPath"
+g pass "hooksPath read bare"                   "$R" "git config core.hooksPath"
+g fail "hooksPath set"                         "$R" "git config core.hooksPath /dev/null"
+g fail "hooksPath set with -c"                 "$R" "git -c core.hooksPath=/dev/null push"
+g fail "hooksPath unset"                       "$R" "git config --unset core.hooksPath"
+git remote remove origin
+
 echo "agent-approval"
 dec=docs/work/7-mul/decisions.md
 # review <reviewer A> <reviewer B> <arbiter> [reviewed sha, default HEAD]: rewrite the
@@ -303,7 +334,13 @@ case "$*" in
   "pr view --json number"*) echo 12 ;;
   "pr view 12 --json headRefName"*) printf '{"headRefName":"%s","headRefOid":"%s"}\n' "$GH_BRANCH" "$GH_HEAD" ;;
   "repo view"*) echo o/r ;;
-  "api "*) echo "${GH_LABELED:-null null}" ;;
+  "api "*) # GH_PAGES holds a JSON array of pages. Like real gh: --slurp prints them all as
+           # one array; -q applies its filter to each page separately.
+    case "$*" in
+      *--slurp*) cat "$GH_PAGES" ;;
+      *) f="$(printf '%s\n' "$@" | sed -n '/^-q$/{n;p;}')"
+         jq -c '.[]' "$GH_PAGES" | while IFS= read -r p; do printf '%s\n' "$p" | jq -r "$f"; done ;;
+    esac ;;
   *"--json labels"*) cat "$GH_LABELS" ;;
 esac
 exit 0
@@ -312,7 +349,7 @@ chmod +x "$T/fakebin/gh"
 approve_run() { # approve_run <labels already on the PR> [VAR=value ...]: output in $T/approve.out
   printf '%s\n' "$1" > "$T/labels"; : > "$T/gh.log"; shift
   # Typed after a pause: input piped at once reaches the pty before approve's prompt reads it.
-  { sleep 0.5; printf '12\n'; sleep 0.5; } | env "$@" GH_LOG="$T/gh.log" GH_LABELS="$T/labels" PATH="$T/fakebin:$PATH" \
+  { sleep 0.5; printf '%s\n' "${TYPED:-12}"; sleep 0.5; } | env "$@" GH_LOG="$T/gh.log" GH_LABELS="$T/labels" PATH="$T/fakebin:$PATH" \
     script -q /dev/null bash .standards/bin/approve 12 > "$T/approve.out" 2>&1
 }
 edits() { grep -E -- '--(add|remove)-label' "$T/gh.log" | tr '\n' ';'; }
@@ -326,6 +363,10 @@ expect pass "approve: label lookup fails → stops, no edits" \
   bash -c "[ -z \"\$(grep -E -- '--(add|remove)-label' '$T/gh.log')\" ] && grep -q 'could not read' '$T/approve.out'"
 approve_run approved GH_FAIL="--add-label"
 expect pass "approve: add fails after remove → says re-run" grep -q "label removed; re-run" "$T/approve.out"
+expect pass "approve: prompt asks for the number" grep -q "Type the number 12 to approve pr #12" "$T/approve.out"
+TYPED=approved approve_run other
+expect pass "approve: wrong text typed → says what was expected, no edits" \
+  bash -c "[ -z \"\$(grep -E -- '--(add|remove)-label' '$T/gh.log')\" ] && grep -q 'expected the number 12' '$T/approve.out'"
 
 echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
@@ -377,6 +418,7 @@ git clone -q "$T/origin.git" "$T/ship" 2>/dev/null; cd "$T/ship" || exit 1
 git config user.email t@example.invalid; git config user.name test
 mkdir -p .standards bin src docs/work/1-x
 cp -R "$SKILL/scripts/." .standards/; cp "$SKILL/scripts/bin/ship" bin/ship
+sed 's/^OWNER=""/OWNER="owner"/' "$SKILL/scripts/config.sh" > .standards/config.sh
 chmod +x bin/ship .standards/checks/* .standards/bin/*
 echo base > src/a.txt
 git add -A && git commit -qm base && git push -q origin main
@@ -388,12 +430,19 @@ review "$ok" "$ok" "" "$(git rev-parse HEAD)"
 git add docs && git commit -qm "decision log"
 ship_run() { # ship_run [VAR=value ...]: bin/ship 12 against the fake gh; output in $T/ship.out
   : > "$T/gh.log"
-  env GH_LABELS="$T/nolabels" "$@" GH_LOG="$T/gh.log" GH_BRANCH=feat/1-x GH_HEAD="$(git rev-parse HEAD)" \
+  env GH_LABELS="$T/nolabels" GH_PAGES="$T/nopages" "$@" GH_LOG="$T/gh.log" GH_BRANCH=feat/1-x GH_HEAD="$(git rev-parse HEAD)" \
     PATH="$T/fakebin:$PATH" bash bin/ship 12 > "$T/ship.out" 2>&1
 }
 writes() { grep -E '^pr (merge|comment)' "$T/gh.log" | awk '{ print $2 }' | tr '\n' ';'; }
 : > "$T/nolabels"; echo approved > "$T/approved"
-fresh="owner 2999-01-01T00:00:00Z"
+# Issue-event pages as the API returns them (real pages hold 30 events; 2 pages suffice).
+lab() { printf '{"event":"labeled","label":{"name":"approved"},"actor":{"login":"%s"},"created_at":"%s"}' "$1" "$2"; }
+echo '[[]]' > "$T/nopages"
+echo "[[$(lab owner 2999-01-01T00:00:00Z)]]" > "$T/fresh"
+echo "[[$(lab owner 2000-01-01T00:00:00Z)]]" > "$T/stale"
+echo "[[$(lab owner 2999-01-01T00:00:00Z)],[{\"event\":\"commented\"}]]" > "$T/label-then-page"
+echo "[[$(lab someone 2998-01-01T00:00:00Z)],[$(lab owner 2999-01-01T00:00:00Z)]]" > "$T/two-actors"
+fresh="$T/fresh"
 
 ship_run
 expect pass "ship: agent path → merge, then comment" test "$(writes)" = "merge;comment;"
@@ -403,13 +452,17 @@ expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"
 echo "owner-review: required — taste" >> "$dec"; git commit -qam "flag"
 ship_run
 expect pass "ship: agent refused, no owner label → nothing written" test "$(writes)" = ""
-ship_run GH_LABELS="$T/approved" GH_LABELED="$fresh"
+ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh"
 expect pass "ship: owner label checked first → merge, no comment" test "$(writes)" = "merge;"
-ship_run GH_LABELS="$T/approved" GH_LABELED="owner 2000-01-01T00:00:00Z"
+ship_run GH_LABELS="$T/approved" GH_PAGES="$T/stale"
 expect pass "ship: owner label older than head → nothing written" test "$(writes)" = ""
+ship_run GH_LABELS="$T/approved" GH_PAGES="$T/label-then-page"
+expect pass "ship: label event on page 1 of 2 still found" test "$(writes)" = "merge;"
+ship_run GH_LABELS="$T/approved" GH_PAGES="$T/two-actors"
+expect pass "ship: latest label event across pages credited (OWNER)" test "$(writes)" = "merge;"
 git reset -q --hard HEAD~1
 sed 's/^Verdict: PASS$/Verdict: PENDING/' "$dec" > "$T/dec" && cp "$T/dec" "$dec"; git commit -qam "gates pending"
-ship_run GH_LABELS="$T/approved" GH_LABELED="$fresh"
+ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh"
 expect pass "ship: another gate failed → nothing written, even with owner label" test "$(writes)" = ""
 git reset -q --hard HEAD~1
 

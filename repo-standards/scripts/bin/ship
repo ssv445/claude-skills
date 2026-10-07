@@ -60,8 +60,10 @@ repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 # messages go to stderr so callers can capture the time.
 label_check() {
   local ev
-  ev="$(gh api "repos/$repo/issues/$1/events" --paginate \
-        -q "[.[] | select(.event==\"labeled\" and .label.name==\"$2\")] | last | \"\(.actor.login) \(.created_at)\"")"
+  # --slurp wraps all pages in one array, so "last" is the last event overall — gh's -q
+  # would run the filter per page (30 events each) and miss or misattribute the label.
+  ev="$(gh api "repos/$repo/issues/$1/events" --paginate --slurp \
+        | jq -r "[.[][] | select(.event==\"labeled\" and .label.name==\"$2\")] | last | \"\(.actor.login) \(.created_at)\"")"
   gh "$3" view "$1" --json labels -q '.labels[].name' | grep -qx "$2" || ev=""
   set -- "$1" "$2" "$3" $ev
   if [ -z "$4" ] || [ "$4" = "null" ]; then red "  miss #$1 has no '$2' label" >&2; return 1; fi
