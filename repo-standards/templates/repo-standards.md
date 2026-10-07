@@ -17,12 +17,12 @@ Only these need you; everything else, the agents do and `bin/ship` merges.
 - **Blast-radius spec** (`owner-approval: required`): read it, then `bin/approve --spec <issue>`.
 - **PR that `bin/ship` refuses** (gate file changed, `owner-review` flag, review out of date with the code): validate the evidence table, then `bin/approve <pr>`; the agent re-runs `bin/ship`.
 - **`owner-review: required` flags**: answer the question in the PR or issue.
-- **Repos without `bin/ship`**: merge PRs yourself.
+- **Repos without `bin/ship`**: say "merge" and the agent merges; nothing to type.
 
 Roles:
 - **Owner** — the human (`OWNER` in `.standards/config.sh`). Approves high-blast-radius specs, rules on inferred Expectations, taste disputes and `owner-review: required` flags, approves changes to the gate files. Does not proofread diffs or approve routine merges.
 - **Orchestrator** — the agent running the issue. Delegates work and reviews to subagents.
-- **Reviewers** — two independent agents, no shared context with each other or the author. Adversarial: their job is to find why it is wrong.
+- **Reviewers** — two independent agents, no shared context with each other or the author. Their job is to find why it is wrong — the mistakes an honest agent makes, not loopholes a hostile one could exploit (the gates are a speed bump, see Approval and shipping). At most two review rounds per gate; what remains after that is recorded as a known limit or put to the owner as one decision.
 - **Arbiter** — a third independent agent, called only when the two reviewers disagree.
 
 ## Pipeline
