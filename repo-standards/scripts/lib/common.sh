@@ -17,6 +17,16 @@ base_commit() {
   git merge-base "origin/$BASE_BRANCH" HEAD 2>/dev/null || git merge-base "$BASE_BRANCH" HEAD
 }
 
+# approver_mode: APPROVER from the base's config.sh — "agent" only if it says so, else
+# "owner". Read from the base, not the working copy, so a branch cannot switch the mode
+# that judges it.
+approver_mode() {
+  local b m
+  b="$(base_commit)"; [ -n "$b" ] || { echo owner; return; }
+  m="$(git show "$b:.standards/config.sh" 2>/dev/null | sed -n 's/^APPROVER="\([a-z]*\)".*/\1/p' | tail -1)"
+  [ "$m" = agent ] && echo agent || echo owner
+}
+
 # Files added/copied/modified/renamed on this branch, one per line, unquoted: -z keeps
 # git from C-quoting non-ASCII names ("caf\303\251"), which would never match a glob.
 changed_files() {
