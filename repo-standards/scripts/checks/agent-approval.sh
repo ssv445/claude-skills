@@ -10,7 +10,9 @@
 GATE_FILES="bin/* .standards/* .claude/* .github/* .husky/* lefthook.yml lefthook.yaml .pre-commit-config.yaml CLAUDE.md */CLAUDE.md AGENTS.md */AGENTS.md docs/guidelines/repo-standards.md docs/doc-map.txt"
 
 fail=0
-miss() { red "  miss $*"; fail=1; }
+# misses counts every miss, so a section can tell whether it added one.
+misses=0
+miss() { red "  miss $*"; fail=1; misses=$((misses + 1)); }
 # A verdict is PASS only as a whole word: "PASS", "PASS — why", "PASS—why". Not "PASSABLE".
 is_pass() { case "$1" in PASS|PASS\ *|PASS—*) return 0 ;; *) return 1 ;; esac; }
 
@@ -122,15 +124,19 @@ if [ $diff_ok -eq 1 ]; then
   if [ -z "$touched" ]; then info "ok   no gate files changed"
   elif [ -z "$dec" ] || [ ! -f "$dec" ]; then miss "gate files changed:$touched"
   else
-    before=$fail
+    before=$misses
     gate_review "Gate-change review"
+    # The notice goes to OWNER; with nobody to tell, the owner decides.
+    [ -n "$OWNER" ] || miss "OWNER is empty in .standards/config.sh — nobody to notify of a gate change"
+    c="$(section_count "$dec" "Gate-change review" "Summary:")"
+    [ "$c" -le 1 ] || miss "'Summary:' appears $c times in the Gate-change review — edit it in place"
     sum="$(section_field "$dec" "Gate-change review" "Summary:")"
-    case "$sum" in ""|"<"*) miss "Gate-change review: 'Summary:' must say, for the owner, what changed in the rules and why" ;; esac
+    case "$sum" in ""|"<"*|[Tt][Oo][Dd][Oo]*|[Tt][Bb][Dd]*) miss "Gate-change review: 'Summary:' must say, for the owner, what changed in the rules and why" ;; esac
     # bin/ship reads this exact line to notify the owner; keep its wording.
-    [ $fail -eq $before ] && info "ok   gate files changed (gate-change review PASS):$touched" \
+    [ $misses -eq $before ] && info "ok   gate files changed (gate-change review PASS):$touched" \
       || miss "gate files changed:$touched — need a passing '## Gate-change review' in $dec"
   fi
 fi
 
-[ $fail -eq 0 ] || { red "FAIL agent-approval: owner approval needed"; exit 1; }
+[ $fail -eq 0 ] || { red "FAIL agent-approval: fix the misses above; only an owner-review flag or a removed owner flag needs the owner"; exit 1; }
 green "PASS agent-approval"

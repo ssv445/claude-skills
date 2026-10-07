@@ -40,6 +40,6 @@ Only when the branch changes a gate file (list: "Approval and shipping" in the r
 - Reviewer A: <PASS | FAIL> — <key points>
 - Reviewer B: <PASS | FAIL> — <key points>
 - Arbiter: <PASS | FAIL> — <ruling and why; only on disagreement>
-Reviewed: <hex sha of the commit the reviewers read>
+Reviewed: <hex sha of the commit the reviewers read; never HEAD or a branch name>
 Summary: <one or two sentences for the owner: what the rules now do differently, and why>
 Verdict: PENDING

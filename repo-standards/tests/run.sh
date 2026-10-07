@@ -10,6 +10,7 @@ pass=0; fail=0
 
 expect() { # expect <pass|fail> <name> <command...>
   local want="$1" name="$2"; shift 2
+  [ -f "$T/last.log" ] && cp "$T/last.log" "$T/last.log.prev"
   if "$@" >"$T/last.log" 2>&1; then got=pass; else got=fail; fi
   if [ "$got" = "$want" ]; then pass=$((pass + 1)); printf '  ok    %-55s (%s)\n' "$name" "$got"
   else fail=$((fail + 1)); printf '  WRONG %-55s wanted %s, got %s\n' "$name" "$want" "$got"; sed 's/^/        | /' "$T/last.log"; fi
@@ -318,6 +319,9 @@ gcr() {
     { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
 }
 sum="Agents now keep CLAUDE.md short."
+# The notice needs someone to go to: OWNER set in the working copy only (config.sh is a
+# gate file, and the checks read the committed diff).
+cp .standards/config.sh "$T/config.keep"; sed 's/^OWNER=""/OWNER="owner"/' "$T/config.keep" > .standards/config.sh
 echo "agents: keep it short" > CLAUDE.md
 git add CLAUDE.md && git commit -qm "gate file"
 review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
@@ -356,6 +360,26 @@ git checkout -q docs
 review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
 review "$no" "$no" ""
 aa fail "gate-change review PASS, but pre-merge gate FAIL"
+git checkout -q docs
+review "$no" "$no" ""; gcr "$no" "$no" "" "$sum"
+aa fail "gate-change and pre-merge both FAIL"
+expect pass "agent-approval: no false 'gate-change review PASS' line after an earlier miss" \
+  bash -c "! grep -q 'ok   gate files changed' '$T/last.log.prev'"
+git checkout -q docs
+review "$ok" "$ok" ""
+awk '/^## Gate-change review$/ { g = 1; next } g && /^## / { g = 0 } !g' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
+aa fail "gate file changed, no Gate-change review section"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "TODO"
+aa fail "gate-change Summary is TODO"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
+awk '{ print } /^Summary:/ { print "Summary: a second one" }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
+aa fail "duplicate Summary line"
+git checkout -q docs
+review "$ok" "$ok" ""; gcr "$ok" "$ok" "" "$sum"
+cp "$T/config.keep" .standards/config.sh
+aa fail "gate-change review PASS, but OWNER empty (nobody to notify)"
 git checkout -q docs
 git reset -q --hard HEAD~1
 
@@ -397,6 +421,7 @@ case "$*" in
          jq -c '.[]' "$GH_PAGES" | while IFS= read -r p; do printf '%s\n' "$p" | jq -r "$f"; done ;;
     esac ;;
   *"--json labels"*) cat "$GH_LABELS" ;;
+  "pr merge"*) [ -z "${GH_MERGE_SWITCH:-}" ] || git checkout -q main ;;  # --delete-branch leaves it
 esac
 exit 0
 EOF
@@ -512,7 +537,10 @@ ship_run
 expect pass "ship: gate change reviewed → merge, then comment" test "$(writes)" = "merge;comment;"
 expect pass "ship: gate change → owner @-mentioned with the Summary" \
   bash -c "grep -q '@owner The rules agents work under changed' '$T/gh.log' && grep -q 'Agents now keep CLAUDE.md short.' '$T/gh.log'"
-expect pass "ship: gate change → comment names the changed file" grep -q 'Gate files changed (` CLAUDE.md`)' "$T/gh.log"
+expect pass "ship: gate change → comment names the changed file" grep -q 'Gate files changed (`CLAUDE.md`)' "$T/gh.log"
+ship_run GH_MERGE_SWITCH=1
+expect pass "ship: merge leaves the branch → Summary still in the notice" grep -q 'Agents now keep CLAUDE.md short.' "$T/gh.log"
+git checkout -q feat/1-x
 git reset -q --hard HEAD~2
 ship_run GH_FAIL="pr merge"
 expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"

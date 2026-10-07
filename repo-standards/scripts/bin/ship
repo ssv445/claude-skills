@@ -28,7 +28,7 @@ if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
     STANDARDS_SHIP_FROM_BASE="$base_ship" exec bash "$base_ship" "$@"
   fi
 fi
-check=""; owner_log="$(mktemp)"
+check=""; owner_log="$(mktemp)"; changed_gates=""; summary=""
 # The re-exec'd run is itself a temp copy ($0); remove it with the others — but only when
 # $0 is exactly the temp file base_copy made, never a script inside the repo.
 cleanup() {
@@ -99,10 +99,14 @@ if [ -z "$approval" ]; then
   if out="$("$checker" 2>&1)"; then
     printf '%s\n' "$out"
     approval=agent
+    # Gate files changed: agent-approval.sh passed them on a gate-change review. Read the
+    # notice inputs now — the merge deletes the branch, and decisions.md is found by it.
+    changed_gates="$(printf '%s\n' "$out" | sed -n 's/^ *ok   gate files changed (gate-change review PASS): *//p')"
+    [ -z "$changed_gates" ] || summary="$(section_field "$(decisions_file)" "Gate-change review" "Summary:" < /dev/null)"
   else
     cat "$owner_log"
     printf '%s\n' "$out"
-    red "ship BLOCKED: owner approval needed — ask the owner to run bin/approve $pr"
+    red "ship BLOCKED: fix the misses above, then re-run; an owner-review flag or a removed owner flag needs the owner — ask them to run bin/approve $pr"
     exit 1
   fi
 fi
@@ -114,11 +118,9 @@ green "shipped #$pr ($approval-approved)"
 if [ "$approval" = agent ]; then
   # The gate list comes from the check that ran, so the record cannot drift from it.
   gates="$(sed -n 's/^GATE_FILES="\(.*\)"$/\1/p' "$checker")"
-  # Gate files changed: agent-approval.sh passed them on a gate-change review. The owner is
-  # told after the merge, in plain words, and @-mentioned so GitHub notifies them.
-  changed_gates="$(printf '%s\n' "$out" | sed -n 's/^ *ok   gate files changed (gate-change review PASS)://p')"
+  # A gate change: the owner is told after the merge, in plain words, and @-mentioned so
+  # GitHub notifies them.
   if [ -n "$changed_gates" ]; then
-    summary="$(section_field "$(decisions_file)" "Gate-change review" "Summary:")"
     who="${OWNER:+@$OWNER }"
     gate_line="- Gate files changed (\`$changed_gates\`): the gate-change review passed — two more reviewers found no check weakened, skipped or bypassed"
     notice="
