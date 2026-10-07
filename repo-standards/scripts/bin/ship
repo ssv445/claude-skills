@@ -28,7 +28,7 @@ if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
     STANDARDS_SHIP_FROM_BASE="$base_ship" exec bash "$base_ship" "$@"
   fi
 fi
-check=""; owner_log="$(mktemp)"
+check=""; owner_log="$(mktemp)"; changed_gates=""; entries=""; record_fail=""
 # The re-exec'd run is itself a temp copy ($0); remove it with the others — but only when
 # $0 is exactly the temp file base_copy made, never a script inside the repo.
 cleanup() {
@@ -106,10 +106,14 @@ if [ -z "$approval" ]; then
   if out="$("$checker" 2>&1)"; then
     printf '%s\n' "$out"
     approval=agent
+    # Gate files changed: agent-approval.sh passed them on a gate-change review. Read the
+    # record's inputs now — the merge deletes the branch.
+    changed_gates="$(printf '%s\n' "$out" | sed -n 's/^ *ok   gate files changed, approved under APPROVER=agent (gate-change review PASS): *//p')"
+    [ -z "$changed_gates" ] || entries="$(git diff -U0 --no-renames "$(base_commit)" HEAD -- docs/rule-changes.md | sed -n 's/^+\(- [0-9]\{4\}-.*\)/\1/p')"
   else
     cat "$owner_log"
     printf '%s\n' "$out"
-    red "ship BLOCKED: owner approval needed — ask the owner to run bin/approve $pr"
+    red "ship BLOCKED: fix the misses above, then re-run; for an owner-review flag, a removed owner flag, no base, or (APPROVER=owner) gate files, ask the owner to run bin/approve $pr"
     exit 1
   fi
 fi
@@ -122,12 +126,24 @@ if [ "$approval" = agent ]; then
   # The gate list and any changed gate files come from the check that ran, so the record
   # cannot drift from it.
   gates="$(sed -n 's/^GATE_FILES="\(.*\)"$/\1/p' "$checker")"
-  changed_gates="$(printf '%s\n' "$out" | sed -n 's/.*approved under APPROVER=agent:[[:space:]]*//p')"
-  if [ -n "$changed_gates" ]; then gate_line="Gate files changed, approved under APPROVER=agent: \`$changed_gates\`"
-  else gate_line="No gate file changed (\`$gates\`)"; fi
   if [ -z "$blast" ]; then spec_line="Spec not marked \`owner-approval: required\`"
   elif [ "$mode" = agent ]; then spec_line="Blast-radius spec: spec gate PASS stands in for \`spec-approved\` (APPROVER=agent)"
   else spec_line="Blast-radius spec: owner's \`spec-approved\` label present"; fi
+  # A gate change (agent mode only): the owner reads it in docs/rule-changes.md (merged
+  # with it) and finds the PRs under the rules-changed label. Agents post as the owner, so
+  # a mention would notify nobody. A missing record fails the run, never lost silently.
+  if [ -n "$changed_gates" ]; then
+    gate_line="Gate files changed, approved under APPROVER=agent (\`$changed_gates\`): the gate-change review passed — no check weakened, skipped or bypassed (both reviewers, or the arbiter on a split)"
+    notice="
+
+**The rules agents work under changed in this PR.** Logged in \`docs/rule-changes.md\`:
+$entries"
+    gh label create rules-changed --color D93F0B --description "Changed the rules agents work under (repo standards)" >/dev/null 2>&1
+    gh pr edit "$pr" --add-label rules-changed >/dev/null \
+      || { red "FAIL ship: merged, but the rules-changed label failed — run: gh pr edit $pr --add-label rules-changed"; record_fail=1; }
+  else
+    gate_line="No gate file changed (\`$gates\`)"; notice=""
+  fi
   gh pr comment "$pr" --body "Approved by the agent through \`bin/ship\`: every pre-merge gate passed and \`.standards/checks/agent-approval.sh\` found nothing that needs the owner.
 
 Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
@@ -139,5 +155,6 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 - $spec_line
 - Spec gate, plan gate, e2e and perf passed
 
-Head: $head_oid" || red "  warn merged, but the approval comment failed — post it by hand"
+Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
+  [ -z "${record_fail:-}" ] || exit 1
 fi
