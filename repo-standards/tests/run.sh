@@ -246,6 +246,28 @@ review "$ok" "$ok" ""
 aa fail "gate input docs/doc-map.txt in the diff"
 git reset -q --hard HEAD~1
 
+echo "approve"
+# A fake gh logs every call; `script` gives approve the terminal it insists on.
+mkdir -p "$T/fakebin"
+cat > "$T/fakebin/gh" <<'EOF'
+#!/bin/sh
+echo "$*" >> "$GH_LOG"
+case "$*" in *"--json labels"*) cat "$GH_LABELS" ;; esac
+exit 0
+EOF
+chmod +x "$T/fakebin/gh"
+approve_calls() { # approve_calls <labels already on the PR>: prints the label edits made
+  printf '%s\n' "$1" > "$T/labels"; : > "$T/gh.log"
+  # Typed after a pause: input piped at once reaches the pty before approve's prompt reads it.
+  { sleep 0.5; printf '12\n'; sleep 0.5; } | GH_LOG="$T/gh.log" GH_LABELS="$T/labels" PATH="$T/fakebin:$PATH" \
+    script -q /dev/null bash .standards/bin/approve 12 >/dev/null 2>&1
+  grep -E -- '--(add|remove)-label' "$T/gh.log" | tr '\n' ';'
+}
+expect pass "approve: already approved → remove, then add (fresh event)" \
+  test "$(approve_calls approved)" = "pr edit 12 --remove-label approved;pr edit 12 --add-label approved;"
+expect pass "approve: not yet approved → add only" \
+  test "$(approve_calls other)" = "pr edit 12 --add-label approved;"
+
 echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
 expect fail "coverage: total 80 below baseline 85" env COVERAGE_TOTAL_CMD="echo 80" bash -c '. .standards/config.sh; COVERAGE_TOTAL_CMD="echo 80"; sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 80\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
