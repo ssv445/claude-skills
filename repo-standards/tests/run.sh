@@ -319,6 +319,16 @@ gcr() {
     { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
 }
 entry="- 2026-10-07 #7 — Agents now keep CLAUDE.md short."
+# Owner mode (the default): a full gate-change review does not stand in for the owner.
+echo "agents: keep it short" > CLAUDE.md; echo "$entry" > docs/rule-changes.md
+git add CLAUDE.md docs && git commit -qm "gate file + log line"
+review "$ok" "$ok" ""; gcr "$ok" "$ok" ""
+aa fail "APPROVER=owner → gate change with a passing gate-change review still needs the owner"
+git checkout -q docs; git reset -q --hard HEAD~1
+# Agent mode, set on the base.
+feat1="$(git rev-parse HEAD)"; main1="$(git rev-parse main)"
+git checkout -q main; sed 's/^APPROVER=.*/APPROVER="agent"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "APPROVER=agent"; git checkout -q feat/7-mul; git rebase -q main
 echo "agents: keep it short" > CLAUDE.md
 git add CLAUDE.md && git commit -qm "gate file, no log entry"
 review "$ok" "$ok" ""; gcr "$ok" "$ok" ""
@@ -333,7 +343,7 @@ review "$ok" "$ok" ""; gcr "$ok" "$ok" ""
 aa pass "gate file changed, gate-change review PASS + log entry"
 cp "$T/last.log" "$T/aa.log"
 expect pass "agent-approval: names the changed gate files for bin/ship" \
-  grep -q "ok   gate files changed (gate-change review PASS): CLAUDE.md" "$T/aa.log"
+  grep -q "ok   gate files changed, approved under APPROVER=agent (gate-change review PASS): CLAUDE.md" "$T/aa.log"
 git checkout -q docs
 review "$ok" "$ok" ""; gcr "$ok" "$no" "PASS — B misread the diff"
 aa pass "gate-change reviewers split, arbiter PASS"
@@ -374,7 +384,7 @@ review "$ok" "$ok" ""
 awk '/^## Gate-change review$/ { g = 1; next } g && /^## / { g = 0 } !g' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
 aa fail "gate file changed, no Gate-change review section"
 git checkout -q docs
-git reset -q --hard HEAD~3
+git checkout -q main; git reset -q --hard "$main1"; git checkout -q feat/7-mul; git reset -q --hard "$feat1"
 
 # The rule-change log only grows, on any branch.
 feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
@@ -405,6 +415,31 @@ git checkout -q docs; git reset -q --hard HEAD~1
 printf '90\n# note\n' > .standards/coverage-baseline; git commit -qam "baseline plus text"
 review "$ok" "$ok" ""
 aa fail "coverage baseline with extra lines"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+
+# APPROVER, read from the base's config.sh: "agent" lets the agent approve gate-file changes;
+# owner-review flags still block. A branch cannot switch the mode that judges it.
+echo "agents: keep it short" > CLAUDE.md; git add CLAUDE.md; git commit -qm "gate file"
+sed 's/^APPROVER=.*/APPROVER="agent"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh; git commit -qam "branch sets APPROVER=agent"
+review "$ok" "$ok" ""
+aa fail "APPROVER=agent set only on the branch → still owner mode"
+git checkout -q docs; git reset -q --hard "$feat"
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; sed 's/^APPROVER=.*/APPROVER="agent"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "APPROVER=agent"; git checkout -q feat/7-mul; git rebase -q main
+echo "agents: keep it short" > CLAUDE.md; git add CLAUDE.md; git commit -qm "gate file"
+review "$ok" "$ok" ""
+aa fail "APPROVER=agent (base), gate file without gate-change review → refused"
+git checkout -q docs
+echo "$entry" > docs/rule-changes.md; git add docs; git commit -qm "log line"
+review "$ok" "$ok" ""; gcr "$ok" "$ok" ""
+aa pass "APPROVER=agent (base) → gate-file change approved after gate-change review"
+echo "owner-review: required — tone" >> "$dec"
+aa fail "APPROVER=agent → owner-review flag still blocks"
+git checkout -q docs
+review "$ok" "$no" ""
+aa fail "APPROVER=agent → reviewer FAIL still blocks"
 git checkout -q docs
 git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
 
@@ -536,23 +571,6 @@ expect pass "ship: agent path → merge, then comment" test "$(writes)" = "merge
 expect pass "ship: merge pinned with --match-head-commit HEAD" grep -q -- "--match-head-commit $(git rev-parse HEAD)" "$T/gh.log"
 expect pass "ship: no gate change → comment says so, no rules-changed label" \
   bash -c "grep -q 'No gate file changed' '$T/gh.log' && ! grep -q 'rules-changed' '$T/gh.log'"
-# A gate-file change with a passing gate-change review and a log line: merge, label, record.
-echo "agents: keep it short" > CLAUDE.md; echo "- 2026-10-07 #1 — Agents now keep CLAUDE.md short." > docs/rule-changes.md
-git add CLAUDE.md docs; git commit -qm "gate file + log line"
-gcr "$ok" "$ok" "" "$(git rev-parse HEAD)"
-review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "gate-change review"
-ship_run
-expect pass "ship: gate change reviewed → merge, then comment" test "$(writes)" = "merge;comment;"
-expect pass "ship: gate change → PR labelled rules-changed" grep -q -- "pr edit 12 --add-label rules-changed" "$T/gh.log"
-expect pass "ship: gate change → comment carries the log line, no @-mention" \
-  bash -c "grep -q 'Agents now keep CLAUDE.md short.' '$T/gh.log' && ! grep -q '@owner' '$T/gh.log'"
-expect pass "ship: gate change → comment names the changed file" grep -q 'Gate files changed (`CLAUDE.md`)' "$T/gh.log"
-ship_run GH_MERGE_SWITCH=1
-expect pass "ship: merge leaves the branch → log line still in the comment" grep -q 'Agents now keep CLAUDE.md short.' "$T/gh.log"
-git checkout -q feat/1-x
-expect fail "ship: gate change, comment fails after merge → run fails" ship_run GH_FAIL="pr comment"
-expect fail "ship: gate change, label fails after merge → run fails" ship_run GH_FAIL="rules-changed"
-git reset -q --hard HEAD~2
 ship_run GH_FAIL="pr merge"
 expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"
 expect pass "ship: no gate change, comment fails after merge → warns, run succeeds" ship_run GH_FAIL="pr comment"
@@ -590,6 +608,35 @@ git reset -q --hard HEAD~1
 ship_run STANDARDS_SHIP_FROM_BASE=bin/ship
 ship_run STANDARDS_SHIP_FROM_BASE="$PWD/bin/ship"
 expect pass "ship: spoofed STANDARDS_SHIP_FROM_BASE never deletes bin/ship" test -f bin/ship
+
+# APPROVER modes: a blast-radius spec (no spec-approved label) plus a gate-file change.
+echo "owner-approval: required" > docs/work/1-x/spec.md; echo "agents: keep it short" > CLAUDE.md
+git add docs CLAUDE.md && git commit -qm "blast-radius spec, gate file"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "re-review"
+ship_run
+expect pass "ship: APPROVER=owner → blast-radius spec + gate file refused" test "$(writes)" = ""
+git checkout -q main; sed 's/^APPROVER=.*/APPROVER="agent"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "APPROVER=agent" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+ship_run
+expect pass "ship: APPROVER=agent, gate file without gate-change review → refused" test "$(writes)" = ""
+# The gate-change review and a log line: merge, label, record.
+echo "- 2026-10-07 #1 — Agents now keep CLAUDE.md short." > docs/rule-changes.md; git add docs; git commit -qm "log line"
+gcr "$ok" "$ok" "" "$(git rev-parse HEAD)"; review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "gate-change review"
+ship_run
+expect pass "ship: APPROVER=agent → agent approves, merges, comments" test "$(writes)" = "merge;comment;"
+expect pass "ship: comment states the mode and lists the changed gate file" \
+  bash -c "grep -q 'Mode: APPROVER=agent' '$T/gh.log' && grep -q 'Gate files changed.*CLAUDE.md' '$T/gh.log'"
+expect pass "ship: gate change → PR labelled rules-changed" grep -q -- "pr edit 12 --add-label rules-changed" "$T/gh.log"
+expect pass "ship: gate change → comment carries the log line, no @-mention" \
+  bash -c "grep -q 'Agents now keep CLAUDE.md short.' '$T/gh.log' && ! grep -q '@owner' '$T/gh.log'"
+ship_run GH_MERGE_SWITCH=1
+expect pass "ship: merge leaves the branch → log line still in the comment" grep -q 'Agents now keep CLAUDE.md short.' "$T/gh.log"
+git checkout -q feat/1-x
+expect fail "ship: gate change, comment fails after merge → run fails" ship_run GH_FAIL="pr comment"
+expect fail "ship: gate change, label fails after merge → run fails" ship_run GH_FAIL="rules-changed"
+echo "owner-review: required — tone" >> "$dec"; git commit -qam "flag"
+ship_run
+expect pass "ship: APPROVER=agent → owner-review flag still blocks" test "$(writes)" = ""
 
 echo
 echo "$pass passed, $fail wrong"

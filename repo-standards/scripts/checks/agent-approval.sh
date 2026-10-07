@@ -124,16 +124,19 @@ if [ $diff_ok -eq 1 ]; then
     matches_any "$f" "$GATE_FILES" && touched="$touched $f"
   done < "$changed"
   shopt -u nocasematch
+  # APPROVER (base config) decides who approves a gate change. Owner mode: the owner.
+  # Agent mode: the agent, after the gate-change review and a RULE_LOG line. bin/ship
+  # reads the "ok" line below to record and label the change; keep its wording.
   if [ -z "$touched" ]; then info "ok   no gate files changed"
+  elif [ "$(approver_mode)" != agent ]; then miss "gate files changed:$touched (APPROVER=owner: the owner approves gate changes)"
   elif [ -z "$dec" ] || [ ! -f "$dec" ]; then miss "gate files changed:$touched"
   else
     before=$misses
     gate_review "Gate-change review"
     git diff -U0 --no-renames "$base" HEAD -- "$RULE_LOG" | grep -qE '^\+- [0-9]{4}-[0-9]{2}-[0-9]{2} +[^ ]' \
       || miss "no new entry in $RULE_LOG — add '- YYYY-MM-DD #<issue> — <what the rules now do differently, and why>'"
-    # bin/ship reads this exact line to notify the owner; keep its wording.
-    [ $misses -eq $before ] && info "ok   gate files changed (gate-change review PASS):$touched" \
-      || miss "gate files changed:$touched — need a passing '## Gate-change review' in $dec"
+    [ $misses -eq $before ] && info "ok   gate files changed, approved under APPROVER=agent (gate-change review PASS):$touched" \
+      || miss "gate files changed:$touched — APPROVER=agent needs a passing '## Gate-change review' in $dec and a $RULE_LOG line"
   fi
 fi
 
@@ -142,5 +145,5 @@ if [ $diff_ok -eq 1 ] && git diff -U0 --no-renames "$base" HEAD -- "$RULE_LOG" |
   miss "$RULE_LOG lost or changed a line — it only grows; append instead"
 fi
 
-[ $fail -eq 0 ] || { red "FAIL agent-approval: fix the misses above; the owner is needed only for an owner-review flag, a removed owner flag, or no base"; exit 1; }
+[ $fail -eq 0 ] || { red "FAIL agent-approval: fix the misses above; the owner is needed only for an owner-review flag, a removed owner flag, no base, or (APPROVER=owner) gate files"; exit 1; }
 green "PASS agent-approval"
