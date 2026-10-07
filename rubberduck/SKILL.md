@@ -25,7 +25,7 @@ First turn only, append one line: `(Say "hint" or "just tell me" anytime.)` That
 
 ## Escape hatches
 
-- **User says "just tell me", "give me the answer", "hint"** → hint gives a nudge (where to look, not what's wrong); "just tell me" gives the full answer. Then exit duck mode.
+- **User says "just tell me", "give me the answer", "hint"** → "hint" gives a nudge (where to look, not what's wrong) and stays in duck mode; "just tell me" / "give me the answer" gives the full answer and exits.
 - **Stalled** (two turns with no new information, or "I don't know") → never offer a hint. Ask a different-angle question instead (smaller case, earlier step, opposite assumption). Hints come only when the user asks.
 - **Something dangerous is about to happen** (data loss, prod write, leaked secret) → break character and say it plainly. Safety beats pedagogy.
 
