@@ -7,6 +7,9 @@
 # thread binding and the parking that keeps restored tabs from launching claude.
 set -u
 WRAPPER="${1:-$(dirname "$0")/claude-thread}"
+# project_list deliberately skips temp paths, and mktemp -d hands out
+# /var/folders on macOS — so that one sandbox has to live under the real HOME
+ORIG_HOME="$HOME"
 A=aaaaaaaa-0000-0000-0000-000000000001
 B=bbbbbbbb-0000-0000-0000-000000000002
 
@@ -168,8 +171,56 @@ EOF
   rm -rf "$SB"
 }
 
+# ── project picker (project_list / project_menu) ───────────────────────────
+project_tests() {
+  local SB; SB=$(mktemp -d "$ORIG_HOME/.ct-test.XXXXXX"); export HOME="$SB/home"
+  mkdir -p "$HOME/.claude/projects" "$HOME/.claude-thread" "$SB/realproj"
+  mk() { # <dirname> <cwd-recorded-in-transcript> <age_sec>
+    local d="$HOME/.claude/projects/$1"
+    mkdir -p "$d"
+    printf '{"type":"user","cwd":"%s","message":{"content":"hello there"}}\n' "$2" \
+      > "$d/dead0000-0000-0000-0000-00000000000$3.jsonl"
+    python3 - "$d/dead0000-0000-0000-0000-00000000000$3.jsonl" "$3" <<'EOF'
+import os, sys, time
+t = time.time() - float(sys.argv[2]) * 3600
+os.utime(sys.argv[1], (t, t))
+EOF
+  }
+  mk real "$SB/realproj" 1                       # exists -> keep
+  mk scratch /private/tmp/claude-501/sub 2       # subagent scratch -> drop
+  mk gone "$SB/deleted-long-ago" 3               # folder removed -> drop
+
+  awk '/^# ── sc-managed launches/{exit} {print}' "$WRAPPER" > "$SB/lib.sh"
+  # shellcheck disable=SC1090
+  . "$SB/lib.sh"
+
+  local out; out=$(project_list)
+  local n; n=$(printf '%s\n' "$out" | grep -c . )
+  check "O: lists only usable projects (1 of 3)" "1" "$n"
+  if grep -q "realproj" <<<"$out"; then
+    echo "  PASS  P: keeps a project whose folder still exists"; pass=$((pass+1))
+  else echo "  FAIL  P: dropped the live project"; fail=$((fail+1)); fi
+  if grep -q "/private/tmp" <<<"$out"; then
+    echo "  FAIL  Q: subagent scratch dir leaked into the list"; fail=$((fail+1))
+  else echo "  PASS  Q: skips subagent scratch dirs"; pass=$((pass+1)); fi
+  if grep -q "deleted-long-ago" <<<"$out"; then
+    echo "  FAIL  R: offered a project whose folder is gone"; fail=$((fail+1))
+  else echo "  PASS  R: skips projects whose folder is gone"; pass=$((pass+1)); fi
+
+  # picking a project must switch the tab to it and show ITS sessions
+  local menu; menu=$( (printf '1\nq\n' | project_menu) 2>&1 )
+  if grep -q "claude sessions: $SB/realproj" <<<"$menu"; then
+    echo "  PASS  S: picking a project opens that project's session menu"; pass=$((pass+1))
+  else
+    echo "  FAIL  S: did not hand off to the project's menu"; fail=$((fail+1))
+    printf '%s\n' "$menu" | sed 's/^/          /' | head -6
+  fi
+  rm -rf "$SB"
+}
+
 echo "── $WRAPPER ──"
 state_tests
 lazy_tests
+project_tests
 echo "  → $pass passed, $fail failed"
 exit $((fail > 0))
