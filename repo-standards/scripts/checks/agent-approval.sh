@@ -8,6 +8,8 @@
 # them needs, on top of the pre-merge gate, a passing "## Gate-change review" (c below).
 # Not covered: scripts and lint/test config that the *_CMD commands in config.sh read.
 GATE_FILES="bin/* .standards/* .claude/* .github/* .husky/* lefthook.yml lefthook.yaml .pre-commit-config.yaml CLAUDE.md */CLAUDE.md AGENTS.md */AGENTS.md docs/guidelines/repo-standards.md docs/doc-map.txt"
+# The owner's view of rule changes: one dated line per gate change, appended, never edited.
+RULE_LOG="docs/rule-changes.md"
 
 fail=0
 # misses counts every miss, so a section can tell whether it added one.
@@ -22,7 +24,7 @@ is_pass() { case "$1" in PASS|PASS\ *|PASS—*) return 0 ;; *) return 1 ;; esac;
 # non-ASCII names, which would match no glob and resolve to no blob.
 base="$(base_commit)"
 changed="$(mktemp)"; trap 'rm -f "$changed"' EXIT; diff_ok=0
-if [ -z "$base" ]; then miss "no base commit (origin/$BASE_BRANCH or $BASE_BRANCH)"
+if [ -z "$base" ]; then miss "no base commit (origin/$BASE_BRANCH or $BASE_BRANCH) — the owner decides"
 elif git -c core.quotePath=false diff -z --name-only --no-renames "$base" HEAD > "$changed"; then diff_ok=1
 else miss "git diff $base HEAD failed"
 fi
@@ -107,8 +109,9 @@ raises_baseline() {
 
 # c. A gate-file change passed its own review: two more independent reviewers asked only
 # whether it weakens, skips or bypasses a check, or widens what agents do without the
-# owner, plus a plain-English Summary that bin/ship sends the owner after the merge. A
-# change that does loosen a check carries owner-review: required, caught in b.
+# owner, and whether its new RULE_LOG entry says so plainly. The entry is a changed file,
+# so the review must cover it like any other. A change that does loosen a check carries
+# owner-review: required, caught in b.
 # --no-renames: a moved file shows both paths.
 # nocasematch: ".Claude/" is ".claude/" on a case-insensitive filesystem.
 if [ $diff_ok -eq 1 ]; then
@@ -126,17 +129,18 @@ if [ $diff_ok -eq 1 ]; then
   else
     before=$misses
     gate_review "Gate-change review"
-    # The notice goes to OWNER; with nobody to tell, the owner decides.
-    [ -n "$OWNER" ] || miss "OWNER is empty in .standards/config.sh — nobody to notify of a gate change"
-    c="$(section_count "$dec" "Gate-change review" "Summary:")"
-    [ "$c" -le 1 ] || miss "'Summary:' appears $c times in the Gate-change review — edit it in place"
-    sum="$(section_field "$dec" "Gate-change review" "Summary:")"
-    case "$sum" in ""|"<"*|[Tt][Oo][Dd][Oo]*|[Tt][Bb][Dd]*) miss "Gate-change review: 'Summary:' must say, for the owner, what changed in the rules and why" ;; esac
+    git diff -U0 --no-renames "$base" HEAD -- "$RULE_LOG" | grep -qE '^\+- [0-9]{4}-[0-9]{2}-[0-9]{2} +[^ ]' \
+      || miss "no new entry in $RULE_LOG — add '- YYYY-MM-DD #<issue> — <what the rules now do differently, and why>'"
     # bin/ship reads this exact line to notify the owner; keep its wording.
     [ $misses -eq $before ] && info "ok   gate files changed (gate-change review PASS):$touched" \
       || miss "gate files changed:$touched — need a passing '## Gate-change review' in $dec"
   fi
 fi
 
-[ $fail -eq 0 ] || { red "FAIL agent-approval: fix the misses above; only an owner-review flag or a removed owner flag needs the owner"; exit 1; }
+# d. The rule-change log only grows, on every branch: the owner's record is never rewritten.
+if [ $diff_ok -eq 1 ] && git diff -U0 --no-renames "$base" HEAD -- "$RULE_LOG" | grep -E '^-' | grep -vqE '^--- '; then
+  miss "$RULE_LOG lost or changed a line — it only grows; append instead"
+fi
+
+[ $fail -eq 0 ] || { red "FAIL agent-approval: fix the misses above; the owner is needed only for an owner-review flag, a removed owner flag, or no base"; exit 1; }
 green "PASS agent-approval"

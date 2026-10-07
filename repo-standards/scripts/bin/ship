@@ -28,7 +28,7 @@ if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
     STANDARDS_SHIP_FROM_BASE="$base_ship" exec bash "$base_ship" "$@"
   fi
 fi
-check=""; owner_log="$(mktemp)"; changed_gates=""; summary=""
+check=""; owner_log="$(mktemp)"; changed_gates=""; entries=""; record_fail=""
 # The re-exec'd run is itself a temp copy ($0); remove it with the others — but only when
 # $0 is exactly the temp file base_copy made, never a script inside the repo.
 cleanup() {
@@ -100,13 +100,13 @@ if [ -z "$approval" ]; then
     printf '%s\n' "$out"
     approval=agent
     # Gate files changed: agent-approval.sh passed them on a gate-change review. Read the
-    # notice inputs now — the merge deletes the branch, and decisions.md is found by it.
+    # record's inputs now — the merge deletes the branch.
     changed_gates="$(printf '%s\n' "$out" | sed -n 's/^ *ok   gate files changed (gate-change review PASS): *//p')"
-    [ -z "$changed_gates" ] || summary="$(section_field "$(decisions_file)" "Gate-change review" "Summary:" < /dev/null)"
+    [ -z "$changed_gates" ] || entries="$(git diff -U0 --no-renames "$(base_commit)" HEAD -- docs/rule-changes.md | sed -n 's/^+\(- [0-9]\{4\}-.*\)/\1/p')"
   else
     cat "$owner_log"
     printf '%s\n' "$out"
-    red "ship BLOCKED: fix the misses above, then re-run; an owner-review flag or a removed owner flag needs the owner — ask them to run bin/approve $pr"
+    red "ship BLOCKED: fix the misses above, then re-run; for an owner-review flag, a removed owner flag, or no base, ask the owner to run bin/approve $pr"
     exit 1
   fi
 fi
@@ -118,15 +118,18 @@ green "shipped #$pr ($approval-approved)"
 if [ "$approval" = agent ]; then
   # The gate list comes from the check that ran, so the record cannot drift from it.
   gates="$(sed -n 's/^GATE_FILES="\(.*\)"$/\1/p' "$checker")"
-  # A gate change: the owner is told after the merge, in plain words, and @-mentioned so
-  # GitHub notifies them.
+  # A gate change: the owner reads it in docs/rule-changes.md (merged with it) and finds
+  # the PRs under the rules-changed label. Agents post as the owner, so a mention would
+  # notify nobody. A missing record fails the run, so it is never silently lost.
   if [ -n "$changed_gates" ]; then
-    who="${OWNER:+@$OWNER }"
-    gate_line="- Gate files changed (\`$changed_gates\`): the gate-change review passed — two more reviewers found no check weakened, skipped or bypassed"
+    gate_line="- Gate files changed (\`$changed_gates\`): the gate-change review passed — no check weakened, skipped or bypassed (both reviewers, or the arbiter on a split)"
     notice="
 
-**${who}The rules agents work under changed in this PR.** $summary
-Nothing for you to do if that is fine. If not, revert this PR's squash commit."
+**The rules agents work under changed in this PR.** Logged in \`docs/rule-changes.md\`:
+$entries"
+    gh label create rules-changed --color D93F0B --description "Changed the rules agents work under (repo standards)" >/dev/null 2>&1
+    gh pr edit "$pr" --add-label rules-changed >/dev/null \
+      || { red "FAIL ship: merged, but the rules-changed label failed — run: gh pr edit $pr --add-label rules-changed"; record_fail=1; }
   else
     gate_line="- No gate file changed (\`$gates\`)"; notice=""
   fi
@@ -138,5 +141,6 @@ Nothing for you to do if that is fine. If not, revert this PR's squash commit."
 $gate_line
 - Spec gate, plan gate, e2e, perf and \`spec-approved\` (when the spec requires it) passed
 
-Head: $head_oid$notice" || red "  warn merged, but the approval comment failed — post it by hand${changed_gates:+, with the gate-change notice for the owner}"
+Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
+  [ -z "${record_fail:-}" ] || exit 1
 fi

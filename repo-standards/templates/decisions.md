@@ -36,10 +36,9 @@ Reviewed: <hex sha of the commit the reviewers read; never HEAD or a branch name
 Verdict: PENDING
 
 ## Gate-change review
-Only when the branch changes a gate file (list: "Approval and shipping" in the rulebook). Two more independent reviewers, given the diff of the gate files and nothing else, answer one question: does this weaken, skip or bypass any check, or widen what agents may do without the owner? Yes → FAIL; when loosening is the point, raise the owner-review flag shown at the top of this file. The Summary goes to the owner after the merge: plain words, no file-level detail.
+Only when the branch changes a gate file (list: "Approval and shipping" in the rulebook). First append the owner's line to `docs/rule-changes.md`: `- YYYY-MM-DD #<issue> — <what the rules now do differently, and why>`, plain words, no file-level detail. Then two more independent reviewers, given the diff of the gate files and that line and nothing else, answer: does this weaken, skip or bypass any check, or widen what agents may do without the owner? Does the line say so plainly and accurately? Either wrong → FAIL; when loosening is the point, raise the owner-review flag shown at the top of this file.
 - Reviewer A: <PASS | FAIL> — <key points>
 - Reviewer B: <PASS | FAIL> — <key points>
 - Arbiter: <PASS | FAIL> — <ruling and why; only on disagreement>
 Reviewed: <hex sha of the commit the reviewers read; never HEAD or a branch name>
-Summary: <one or two sentences for the owner: what the rules now do differently, and why>
 Verdict: PENDING
