@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Repo standards pre-push gate. Runs every check, reports all failures, blocks on any.
+# Budget: 2 minutes. Slow checks belong in bin/ship.
+. "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+# git feeds "<local ref> <local sha> <remote ref> <remote sha>" per pushed ref.
+head_sha="$(git rev-parse HEAD)"
+while read -r _lref lsha rref _rsha; do
+  [ -n "$rref" ] || continue
+  if [ "$rref" = "refs/heads/$BASE_BRANCH" ]; then
+    red "FAIL push: direct push to $BASE_BRANCH — open a branch + PR, merge via bin/ship"; exit 1
+  fi
+  case "$lsha" in 0000000000000000000000000000000000000000) continue ;; esac  # branch deletion
+  if [ "$lsha" != "$head_sha" ]; then
+    red "FAIL push: pushing a ref that is not HEAD — check out the branch you push so the gates test it"; exit 1
+  fi
+done
+
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  red "FAIL push: uncommitted changes — the gates must test exactly what is pushed"; exit 1
+fi
+
+start=$(date +%s); failed=""
+step() { "$@" || failed="$failed\n  - $1 ${2:-}"; }
+
+echo "repo-standards pre-push on $(git rev-parse --abbrev-ref HEAD) vs $BASE_BRANCH ($(changed_files | wc -l | tr -d ' ') changed file(s))"
+step run_cmd lint "$LINT_CMD"
+step run_cmd typecheck "$TYPECHECK_CMD"
+step run_cmd unit "$UNIT_CMD"
+step run_cmd diff-coverage "$DIFF_COVERAGE_CMD"
+step "$ROOT/.standards/checks/coverage-baseline.sh"
+step "$ROOT/.standards/checks/tdd.sh"
+step "$ROOT/.standards/checks/doc-map.sh"
+step "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate"
+step run_cmd seeds "$SEED_CHECK_CMD"
+step "$ROOT/.standards/checks/file-size.sh"
+step "$ROOT/.standards/checks/roadmap.sh"
+
+elapsed=$(( $(date +%s) - start ))
+[ $elapsed -le 120 ] || red "WARN pre-push took ${elapsed}s (budget 120s) — move the slowest check to bin/ship"
+if [ -n "$failed" ]; then
+  red "pre-push BLOCKED (${elapsed}s). Failed:"; printf "$failed\n"; exit 1
+fi
+green "pre-push PASSED (${elapsed}s)"

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# bin/approve <pr>          owner validated the evidence → adds "approved" to the PR
+# bin/approve --spec <issue> owner approved a blast-radius spec → adds "spec-approved"
+# Owner only, at a real terminal: agents share the owner's gh login, so the TTY and the
+# typed confirmation are what separate a human approval from an agent one. Agents are
+# also blocked from running this by the .claude guard hook.
+. "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+[ -t 0 ] && [ -t 1 ] || { red "bin/approve runs only at the owner's terminal"; exit 1; }
+
+if [ "$1" = "--spec" ]; then kind=issue; n="$2"; label=spec-approved
+else kind=pr; n="$1"; label=approved
+fi
+[ -n "$n" ] || { echo "usage: bin/approve <pr> | bin/approve --spec <issue>"; exit 1; }
+
+gh "$kind" view "$n" || exit 1
+[ "$kind" = issue ] && ls docs/work/"$n"-*/spec.md 2>/dev/null
+printf '\nType %s to add "%s" to %s #%s: ' "$n" "$label" "$kind" "$n"
+read -r typed
+[ "$typed" = "$n" ] || { echo "not approved"; exit 1; }
+gh label create "$label" --color 0E8A16 --description "Owner approval (repo standards)" >/dev/null 2>&1
+gh "$kind" edit "$n" --add-label "$label" && green "$label added to $kind #$n"

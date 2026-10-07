@@ -1,0 +1,29 @@
+name: Work item
+description: A user story, bug, or feature. Every change starts here.
+body:
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options: [story, bug, feature]
+    validations:
+      required: true
+  - type: textarea
+    id: story
+    attributes:
+      label: Story or reproduction
+      description: "Story: As a <user>, I want <capability>, so that <outcome>. Bug: steps, expected, actual."
+    validations:
+      required: true
+  - type: textarea
+    id: criteria
+    attributes:
+      label: Acceptance criteria
+      description: One observable behaviour per line.
+    validations:
+      required: true
+  - type: textarea
+    id: expectations
+    attributes:
+      label: Expectations you already know (optional)
+      description: Users, inputs, error cases, scale, where approximate or stale is fine. Anything left out, the agent will infer and ask you about.
