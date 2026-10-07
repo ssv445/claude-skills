@@ -7,7 +7,7 @@ description: "Install the agentic repo standards (spec + Expectations, adversari
 
 Installs a rulebook plus local enforcement into ONE repo. Opt-in per repo: never install without the user asking. Once installed, the repo's hooks enforce it; this skill is no longer needed to run it.
 
-The installed rules exist so that AI agents decide for themselves whether to approve and ship: when every gate passes, `bin/ship` approves and merges with no owner in the loop; the owner is needed only for gate-file changes, `owner-review: required` flags, and `spec-approved` on blast-radius specs.
+The installed rules exist so that AI agents decide for themselves whether to approve and ship: when every gate passes, `bin/ship` approves and merges with no owner in the loop; the owner is needed only for gate-file changes, `owner-review: required` flags, an owner flag removed on the branch, and `spec-approved` on blast-radius specs.
 
 What gets installed (sources in this skill folder):
 

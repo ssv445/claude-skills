@@ -13,7 +13,14 @@ miss() { red "  miss $*"; fail=1; }
 # A verdict is PASS only as a whole word: "PASS", "PASS — why", "PASS—why". Not "PASSABLE".
 is_pass() { case "$1" in PASS|PASS\ *|PASS—*) return 0 ;; *) return 1 ;; esac; }
 
+# Fail closed: without a base, or if git cannot list the branch's changes, nothing below
+# can be trusted, so the owner decides.
 base="$(base_commit)"
+changed=""; diff_ok=0
+if [ -z "$base" ]; then miss "no base commit (origin/$BASE_BRANCH or $BASE_BRANCH)"
+elif changed="$(git diff --name-only --no-renames "$base" HEAD)"; then diff_ok=1
+else miss "git diff $base HEAD failed"
+fi
 dec="$(decisions_file)"
 if [ -z "$dec" ] || [ ! -f "$dec" ]; then
   miss "no decisions.md for this branch (docs/work/<issue>-<slug>/)"
@@ -32,33 +39,47 @@ else
   else miss "need both reviewers PASS, or one PASS and the arbiter PASS (A: ${a:-empty}; B: ${b:-empty}; Arbiter: ${arb:-empty})"
   fi
 
-  # The review must cover HEAD: after the reviewed commit, only decisions.md may change.
+  # The review must cover HEAD: every file the branch changes (but decisions.md) has the
+  # same content at HEAD as at the reviewed commit. A rebase onto unrelated base changes
+  # keeps the review; a base change to a reviewed file needs a new one. Only a literal
+  # hex sha is accepted — never HEAD, a branch, or a ref that merely looks like hex.
   sha="$(section_field "$dec" "Pre-merge gate" "Reviewed:")"
-  if [ -z "$sha" ] || ! git rev-parse -q --verify "$sha^{commit}" >/dev/null; then
-    miss "no valid 'Reviewed: <sha>' in the Pre-merge gate (${sha:-empty})"
-  elif ! git merge-base --is-ancestor "$sha" HEAD; then
-    miss "reviewed commit $sha is not in this branch's history"
-  else
-    later="$(git diff --name-only --no-renames "$sha" HEAD | grep -vxF "$dec" | tr '\n' ' ')"
-    [ -z "$later" ] && info "ok   review covers HEAD (reviewed $sha)" || miss "changed after the reviewed commit $sha: $later"
+  full="$(git rev-parse -q --verify "$sha^{commit}" 2>/dev/null)"
+  if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{7,40}$'; then
+    miss "'Reviewed:' must be a commit sha, got '${sha:-empty}'"
+  elif [ -z "$full" ] || [ "${full#"$sha"}" = "$full" ]; then
+    miss "reviewed commit $sha is not present locally (fetch it, or review again)"
+  elif [ $diff_ok -eq 1 ]; then
+    later=""
+    while IFS= read -r f; do
+      [ -n "$f" ] && [ "$f" != "$dec" ] || continue
+      [ "$(git rev-parse -q --verify "$full:$f")" = "$(git rev-parse -q --verify "HEAD:$f")" ] || later="$later $f"
+    done <<< "$changed"
+    [ -z "$later" ] && info "ok   review covers HEAD (reviewed $sha)" || miss "differs from the reviewed commit $sha:$later"
   fi
 
   # b. Nobody flagged a taste or product call for the owner.
-  flags="$(grep -nE '^(- )?owner-review: required' "$dec")"
+  flags="$(grep -inE "^$(owner_flag_re review)" "$dec")"
   [ -z "$flags" ] && info "ok   no owner-review flag" || miss "owner review requested in $dec: $flags"
 fi
 
 # Owner-only flags removed by any commit on the branch (added then deleted counts too).
-removed="$(git log -p --format= "$base..HEAD" -- "docs/work/$(issue_number)-*" \
-  | grep -E '^-((- )?owner-review: required|owner-approval: required)')"
-[ -z "$removed" ] && info "ok   no owner flag removed" || miss "owner flag removed on this branch: $removed"
+if [ -n "$base" ]; then
+  if log="$(git log -p --format= "$base..HEAD" -- "docs/work/$(issue_number)-*")"; then
+    removed="$(printf '%s\n' "$log" | grep -iE "^-($(owner_flag_re review)|$(owner_flag_re approval))")"
+    [ -z "$removed" ] && info "ok   no owner flag removed" || miss "owner flag removed on this branch: $removed"
+  else miss "git log $base..HEAD failed"
+  fi
+fi
 
 # c. The diff leaves the gate files alone. --no-renames: a moved file shows both paths.
-touched=""
-while IFS= read -r f; do
-  matches_any "$f" "$GATE_FILES" && touched="$touched $f"
-done < <(git diff --name-only --no-renames "$base" HEAD)
-[ -z "$touched" ] && info "ok   no gate files changed" || miss "gate files changed:$touched"
+if [ $diff_ok -eq 1 ]; then
+  touched=""
+  while IFS= read -r f; do
+    [ -n "$f" ] && matches_any "$f" "$GATE_FILES" && touched="$touched $f"
+  done <<< "$changed"
+  [ -z "$touched" ] && info "ok   no gate files changed" || miss "gate files changed:$touched"
+fi
 
 [ $fail -eq 0 ] || { red "FAIL agent-approval: owner approval needed"; exit 1; }
 green "PASS agent-approval"

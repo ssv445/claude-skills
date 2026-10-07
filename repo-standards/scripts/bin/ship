@@ -71,7 +71,7 @@ label_check() {
 }
 
 spec="$(issue_dir)/spec.md"
-if [ -f "$spec" ] && grep -q '^owner-approval: required' "$spec"; then
+if [ -f "$spec" ] && grep -qiE "^$(owner_flag_re approval)" "$spec"; then
   label_check "$(issue_number)" spec-approved issue >/dev/null || fail=1
 fi
 
@@ -93,7 +93,8 @@ if approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
 fi
 if [ -z "$approval" ]; then
   check="$(base_copy .standards/checks/agent-approval.sh)"
-  if out="$("${check:-$ROOT/.standards/checks/agent-approval.sh}" 2>&1)"; then
+  checker="${check:-$ROOT/.standards/checks/agent-approval.sh}"
+  if out="$("$checker" 2>&1)"; then
     printf '%s\n' "$out"
     approval=agent
   else
@@ -109,12 +110,14 @@ gh pr merge "$pr" --squash --delete-branch --match-head-commit "$head_oid" || { 
 green "shipped #$pr ($approval-approved)"
 # The record is posted only once the merge happened, so it never claims an unmerged PR.
 if [ "$approval" = agent ]; then
+  # The gate list comes from the check that ran, so the record cannot drift from it.
+  gates="$(sed -n 's/^GATE_FILES="\(.*\)"$/\1/p' "$checker")"
   gh pr comment "$pr" --body "Approved by the agent through \`bin/ship\`: every pre-merge gate passed and \`.standards/checks/agent-approval.sh\` found nothing that needs the owner.
 
 - Pre-merge gate \`Verdict: PASS\`: both reviewers PASS, or one PASS and the arbiter PASS
-- \`Reviewed:\` commit covers the head — only decisions.md changed after it
+- \`Reviewed:\` commit covers the head — every file the branch changes matches it, decisions.md aside
 - No \`owner-review: required\` line in decisions.md, and no owner flag removed on the branch
-- No gate file (\`bin/\`, \`.standards/\`, \`.claude/\`, \`.github/\`, \`CLAUDE.md\`, \`AGENTS.md\`, \`docs/guidelines/repo-standards.md\`, \`docs/doc-map.txt\`) changed
+- No gate file changed (\`$gates\`)
 - Spec gate, plan gate, e2e, perf and \`spec-approved\` (when the spec requires it) passed
 
 Head: $head_oid" || red "  warn merged, but the approval comment failed — post it by hand"

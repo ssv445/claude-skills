@@ -75,6 +75,10 @@ section_field() {
   ' "$1"
 }
 
+# owner_flag_re <review|approval>: ERE (use with grep -i, after "^") for an owner flag
+# line, tolerant of case, spacing after the colon, a "- " bullet and * / _ emphasis.
+owner_flag_re() { printf '(- )?[*_]*owner-%s:[[:space:]]*required' "$1"; }
+
 # run_cmd <label> <command string>. Empty command = N/A in config, reported as SKIP.
 run_cmd() {
   local label="$1" cmd="$2" start rc

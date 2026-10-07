@@ -1,6 +1,6 @@
 # Decisions — #<issue> <title>
 
-The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`, and approves on its own when both pre-merge reviewers say `PASS` (or exactly one does and the arbiter does), `Reviewed:` names the commit they read with only this file changed since, and no owner review is flagged.
+The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`, and approves on its own when both pre-merge reviewers say `PASS` (or exactly one does and the arbiter does), `Reviewed:` names (as a hex sha) the commit they read and every file the branch changes is the same at HEAD as there (this file aside), and no owner review is flagged.
 
 To hand a taste or product call to the owner, add a line at column 0 anywhere in this file (indented here so it is not itself a flag); `bin/ship` then waits for the owner's `approved` label:
 
@@ -32,5 +32,5 @@ One line each, starting at column 0, accepted at the pre-merge gate. Format (ind
 - Reviewer A: <PASS | FAIL> — <key points>
 - Reviewer B: <PASS | FAIL> — <key points>
 - Arbiter: <PASS | FAIL> — <ruling and why; only on disagreement>
-Reviewed: <full sha of the commit the reviewers read; after it, only this file may change>
+Reviewed: <hex sha of the commit the reviewers read; never HEAD or a branch name>
 Verdict: PENDING

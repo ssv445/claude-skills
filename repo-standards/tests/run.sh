@@ -141,6 +141,37 @@ review "$ok" "$ok" ""
 git commit -qam "record pre-merge gate"
 aa pass "only decisions.md changed since the reviewed commit"
 git reset -q --hard HEAD~1
+review "$ok" "$ok" "" "HEAD"
+aa fail "Reviewed: HEAD (symbolic name)"
+review "$ok" "$ok" "" "feat/7-mul"
+aa fail "Reviewed: <branch name>"
+git branch abcdef0
+review "$ok" "$ok" "" "abcdef0"
+aa fail "Reviewed: hex-looking branch name"
+git checkout -q docs; git branch -q -D abcdef0
+review "$ok" "$ok" "" "0123456789abcdef0123456789abcdef01234567"
+aa fail "Reviewed: sha not present locally"
+git checkout -q docs
+
+# Rebasing onto a base that changed other files keeps the review; the same file does not.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; echo "unrelated" > notes.txt; git add notes.txt; git commit -qm "main: notes"
+git checkout -q feat/7-mul; git rebase -q main
+review "$ok" "$ok" "" "$feat"
+aa pass "rebased onto unrelated base change, review kept"
+git checkout -q docs
+git checkout -q main; { echo "# math helpers"; cat src/math.sh; } > "$T/m" && cp "$T/m" src/math.sh; git commit -qam "main: math header"
+git checkout -q feat/7-mul; git rebase -q main
+review "$ok" "$ok" "" "$feat"
+aa fail "rebased onto base that changed a reviewed file"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+
+# Fail closed: no base to compare against.
+git branch -q -D main
+review "$ok" "$ok" ""
+aa fail "no base commit (base ref deleted)"
+git checkout -q docs; git branch -q main "$main0"
 
 review "$ok" "$ok" ""
 echo "owner-review: required — button copy is a taste call" >> "$dec"
@@ -150,6 +181,17 @@ review "$ok" "$ok" ""
 echo "- owner-review: required — bulleted" >> "$dec"
 aa fail "owner-review: required, bulleted"
 git checkout -q docs
+for flag in "Owner-review: required — caps" "owner-review:required — no space" "**owner-review: required** — bold" "- _owner-review: required_ — bulleted italic"; do
+  review "$ok" "$ok" ""
+  echo "$flag" >> "$dec"
+  aa fail "flag variant: $flag"
+  git checkout -q docs
+done
+echo "**Owner-Review:required** — loose" >> "$dec"; git commit -qam "loose flag"
+git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag loose"
+review "$ok" "$ok" ""
+aa fail "loose owner-review flag removed on the branch"
+git reset -q --hard HEAD~2
 echo "owner-review: required — copy tone" >> "$dec"; git commit -qam "flag"
 git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag"
 review "$ok" "$ok" ""
