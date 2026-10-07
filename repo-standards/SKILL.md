@@ -7,6 +7,8 @@ description: "Install the agentic repo standards (spec + Expectations, adversari
 
 Installs a rulebook plus local enforcement into ONE repo. Opt-in per repo: never install without the user asking. Once installed, the repo's hooks enforce it; this skill is no longer needed to run it.
 
+The installed rules exist so that AI agents decide for themselves whether to approve and ship: when every gate passes, `bin/ship` approves and merges with no owner in the loop; the owner is needed only for gate-file changes, `owner-review: required` flags, and `spec-approved` on blast-radius specs.
+
 What gets installed (sources in this skill folder):
 
 | Source | Installed at | Purpose |
@@ -20,7 +22,7 @@ What gets installed (sources in this skill folder):
 | `templates/seed-profile.md` | `docs/seed-profile.md` | Aggregate-only prod shape for seed generation |
 | `templates/github/` | `.github/` | Issue form + PR template (evidence table on top) |
 | `scripts/` | `.standards/` | Hooks, gate checks, `config.sh` |
-| `scripts/bin/ship`, `scripts/bin/approve` | `bin/ship`, `bin/approve` | Only merge path; owner-only approval |
+| `scripts/bin/ship`, `scripts/bin/approve` | `bin/ship`, `bin/approve` | Only merge path — agent-approved when every gate and `agent-approval.sh` pass; owner-only `approved` override |
 | `templates/claude-settings.json` | merged into `.claude/settings.json` | Guard hook blocking gate bypass |
 
 ## Steps

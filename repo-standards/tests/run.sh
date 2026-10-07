@@ -93,6 +93,43 @@ git checkout -q -b chore-no-issue
 expect fail "decision-log: branch without issue number" .standards/checks/decision-log.sh "Spec gate"
 git checkout -q feat/7-mul; git branch -q -D chore-no-issue
 
+echo "agent-approval"
+dec=docs/work/7-mul/decisions.md
+review() { # review <reviewer A> <reviewer B> <arbiter>: rewrite the pre-merge gate lines
+  awk -v a="$1" -v b="$2" -v c="$3" '
+    /^## / { s = $0 }
+    s == "## Pre-merge gate" && /^- Reviewer A:/ { $0 = "- Reviewer A: " a }
+    s == "## Pre-merge gate" && /^- Reviewer B:/ { $0 = "- Reviewer B: " b }
+    s == "## Pre-merge gate" && /^- Arbiter:/    { $0 = "- Arbiter: " c }
+    { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
+}
+review "PASS — fine" "PASS — fine" ""
+expect pass "agent-approval: gate PASS, both reviewers PASS" .standards/checks/agent-approval.sh
+review "PASS — fine" "FAIL — misses empty input" ""
+expect fail "agent-approval: reviewer FAIL, no arbiter" .standards/checks/agent-approval.sh
+review "PASS — fine" "FAIL — misses empty input" "PASS — empty input is covered by the guard"
+expect pass "agent-approval: reviewers disagree, arbiter PASS" .standards/checks/agent-approval.sh
+review "PASS — fine" "FAIL — misses empty input" "FAIL — B is right"
+expect fail "agent-approval: arbiter FAIL" .standards/checks/agent-approval.sh
+review "PASS — fine" "PASS — fine" ""
+sed 's/^Verdict: PASS$/Verdict: PENDING/' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
+expect fail "agent-approval: pre-merge verdict not PASS" .standards/checks/agent-approval.sh
+git checkout -q docs
+review "PASS — fine" "PASS — fine" ""
+echo "owner-review: required — button copy is a taste call" >> "$dec"
+expect fail "agent-approval: owner-review: required" .standards/checks/agent-approval.sh
+git checkout -q docs
+review "PASS — fine" "PASS — fine" ""
+echo "agents: keep it short" > CLAUDE.md
+git add CLAUDE.md && git commit -qm "gate file"
+expect fail "agent-approval: gate file (CLAUDE.md) in the diff" .standards/checks/agent-approval.sh
+git reset -q --hard HEAD~1
+review "PASS — fine" "PASS — fine" ""
+mkdir -p .github && echo "x" > .github/pr.md
+git add .github && git commit -qm "gate dir"
+expect fail "agent-approval: gate file (.github/) in the diff" .standards/checks/agent-approval.sh
+git reset -q --hard HEAD~1
+
 echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
 expect fail "coverage: total 80 below baseline 85" env COVERAGE_TOTAL_CMD="echo 80" bash -c '. .standards/config.sh; COVERAGE_TOTAL_CMD="echo 80"; sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 80\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'

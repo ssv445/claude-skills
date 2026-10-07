@@ -65,6 +65,16 @@ section_verdict() {
   ' "$1"
 }
 
+# section_field <file> <section heading text> <line prefix> → prints what follows the
+# first line in that section starting with the prefix, e.g. "- Reviewer A:".
+section_field() {
+  awk -v h="## $2" -v p="$3" '
+    $0 == h { inside = 1; next }
+    inside && /^## / { inside = 0 }
+    inside && index($0, p) == 1 { s = substr($0, length(p) + 1); sub(/^[ \t]*/, "", s); print s; exit }
+  ' "$1"
+}
+
 # run_cmd <label> <command string>. Empty command = N/A in config, reported as SKIP.
 run_cmd() {
   local label="$1" cmd="$2" start rc

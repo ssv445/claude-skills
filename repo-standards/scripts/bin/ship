@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 # bin/ship [pr]: the only merge path. Runs the pre-merge gates, then squash-merges.
+# Approval: the owner's `approved` label, or — when every gate passes and
+# .standards/checks/agent-approval.sh agrees — the agent's own.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+git fetch -q origin "$BASE_BRANCH"
+
+# base_copy <path>: the base branch's copy of <path> in a temp file when it exists there
+# and differs from the working copy; prints nothing otherwise. A branch must not rewrite
+# the rules that judge it, so those rules run from the base.
+base_copy() {
+  local tmp
+  git cat-file -e "origin/$BASE_BRANCH:$1" 2>/dev/null || return 0
+  tmp="$(mktemp)"
+  git show "origin/$BASE_BRANCH:$1" > "$tmp"
+  if cmp -s "$tmp" "$1"; then rm -f "$tmp"; return 0; fi
+  chmod +x "$tmp"
+  printf '%s\n' "$tmp"
+}
+if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
+  base_ship="$(base_copy bin/ship)"
+  if [ -n "$base_ship" ]; then
+    info "running origin/$BASE_BRANCH's bin/ship (this branch changes it)"
+    STANDARDS_SHIP_FROM_BASE=1 exec bash "$base_ship" "$@"
+  fi
+fi
 
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
 [ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
@@ -12,14 +36,12 @@ echo "repo-standards ship: PR #$pr ($head_ref)"
 [ "$(git rev-parse --abbrev-ref HEAD)" = "$head_ref" ] || { red "FAIL ship: check out $head_ref first"; exit 1; }
 [ -z "$(git status --porcelain --untracked-files=no)" ] || { red "FAIL ship: uncommitted changes"; exit 1; }
 [ "$(git rev-parse HEAD)" = "$head_oid" ] || { red "FAIL ship: local HEAD differs from the PR head — push (through the pre-push gate) first"; exit 1; }
-git fetch -q origin "$BASE_BRANCH"
 git merge-base --is-ancestor "origin/$BASE_BRANCH" HEAD || { red "FAIL ship: branch is behind origin/$BASE_BRANCH — rebase and push"; exit 1; }
 green "PASS branch current and pushed"
 
 fail=0
 "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate" "Pre-merge gate" || fail=1
 
-# Owner approval must postdate the head commit: new commits after approval need re-approval.
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 # label_check <issue-or-pr number> <label>: stdout = time the label was last added;
 # messages go to stderr so callers can capture the time.
@@ -34,10 +56,6 @@ label_check() {
   info "ok   '$2' on #$1 by $4 at $5" >&2
   printf '%s\n' "$5"
 }
-if approved_at="$(label_check "$pr" approved pr)"; then
-  commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
-  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve"; fail=1; fi
-else fail=1; fi
 
 spec="$(issue_dir)/spec.md"
 if [ -f "$spec" ] && grep -q '^owner-approval: required' "$spec"; then
@@ -48,4 +66,36 @@ run_cmd e2e "$E2E_CMD" || fail=1
 run_cmd perf "$PERF_CMD" || fail=1
 
 [ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
-gh pr merge "$pr" --squash --delete-branch && green "shipped #$pr"
+
+# Approval. The owner's label must postdate the head commit: new commits need re-approval.
+# Without it, the agent approves when agent-approval.sh (the base's copy, if this branch
+# changes it) finds nothing that needs the owner.
+approval=""
+if approved_at="$(label_check "$pr" approved pr)"; then
+  commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
+  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve"
+  else approval=owner; fi
+fi
+if [ -z "$approval" ]; then
+  check="$(base_copy .standards/checks/agent-approval.sh)"
+  if out="$("${check:-$ROOT/.standards/checks/agent-approval.sh}" 2>&1)"; then
+    printf '%s\n' "$out"
+    approval=agent
+  else
+    printf '%s\n' "$out"
+    red "ship BLOCKED: owner approval needed — ask the owner to run bin/approve $pr"
+    exit 1
+  fi
+fi
+
+if [ "$approval" = agent ]; then
+  gh pr comment "$pr" --body "Approved by the agent through \`bin/ship\`: every pre-merge gate passed and \`.standards/checks/agent-approval.sh\` found nothing that needs the owner.
+
+- Pre-merge gate \`Verdict: PASS\`, with both reviewers PASS or the arbiter's PASS
+- No \`owner-review: required\` line in decisions.md
+- No gate file (\`bin/\`, \`.standards/\`, \`.claude/\`, \`.github/\`, \`CLAUDE.md\`, \`AGENTS.md\`, \`docs/guidelines/repo-standards.md\`) changed
+- Spec gate, plan gate, e2e, perf and \`spec-approved\` (when the spec requires it) passed
+
+Head: $head_oid" || exit 1
+fi
+gh pr merge "$pr" --squash --delete-branch && green "shipped #$pr ($approval-approved)"
