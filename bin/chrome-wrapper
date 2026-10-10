@@ -18,12 +18,13 @@
 #   chrome-wrapper list                               all identities: port + state
 #   chrome-wrapper port <name>                        CDP port, for scripts
 #   chrome-wrapper url <name>                         ws:// CDP endpoint, for playwright
-#   chrome-wrapper window <name>                      open an agent's own window; prints its tab id
+#   chrome-wrapper window <name> [session]            open an agent's own minimized window and bind
+#                                                     the agent-browser session to it; prints its tab id
 #   chrome-wrapper close-window <name> <tab-id>       close that window (only ones `window` opened)
 #   chrome-wrapper system-profiles                    your DAILY Chrome's profiles (read-only)
 #
 # Each identity also gets a command of its own, so agents have one memorable word:
-#   chrome-wrapper-ecomitram [url] | --port | --stop | --window | --close-window <tab-id>
+#   chrome-wrapper-ecomitram [url] | --port | --stop | --window [session] | --close-window <tab-id>
 #
 # Clicking the app in the Dock, Spotlight or Cmd+Tab is the same as `open`: the bundle
 # runs a shim that applies the identity's flags, so a click can never start a bare Chrome
@@ -484,6 +485,50 @@ browser_pid() {
   return 1
 }
 
+# Raw CDP for the agent-window commands: agent-browser has no window command. Ops:
+# create (prints the new window's tab id), minimize <tab>, close <tab>. Windows `create`
+# opened are listed one "<identity> <windowId>" per line in $ROOT/agent-windows, and close
+# refuses anything not listed, so a wrong tab id cannot close the user's window.
+window_cdp() {
+  CW_OP="$1" CW_PORT="$2" CW_NAME="$3" CW_TAB="${4:-}" CW_REG="$ROOT/agent-windows" \
+    node --input-type=module - <<'JS'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+const { CW_OP: op, CW_PORT: port, CW_NAME: name, CW_TAB: tab, CW_REG: reg } = process.env;
+const v = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+const ws = new WebSocket(v.webSocketDebuggerUrl);
+await new Promise((ok, bad) => { ws.onopen = ok; ws.onerror = bad; });
+let seq = 0; const waiting = new Map();
+ws.onmessage = (e) => { const m = JSON.parse(e.data); waiting.get(m.id)?.(m); };
+const cdp = (method, params = {}) => new Promise((ok, bad) => {
+  const id = ++seq; waiting.set(id, (m) => m.error ? bad(new Error(`${method}: ${m.error.message}`)) : ok(m.result));
+  ws.send(JSON.stringify({ id, method, params }));
+});
+const lines = existsSync(reg) ? readFileSync(reg, 'utf8').split('\n').filter(Boolean) : [];
+const winOf = async (targetId) => (await cdp('Browser.getWindowForTarget', { targetId })).windowId;
+try {
+  if (op === 'create') {
+    const { targetId } = await cdp('Target.createTarget', { url: 'about:blank', newWindow: true, windowState: 'minimized' });
+    writeFileSync(reg, [...lines, `${name} ${await winOf(targetId)}`].join('\n') + '\n');
+    console.log(targetId);
+  } else if (op === 'minimize') {
+    await cdp('Browser.setWindowBounds', { windowId: await winOf(tab), bounds: { windowState: 'minimized' } });
+  } else {
+    const win = await winOf(tab);
+    const entry = `${name} ${win}`;
+    if (!lines.includes(entry)) throw new Error(`tab ${tab} is not in a window \`chrome-wrapper window\` opened — refusing to close it`);
+    const { targetInfos } = await cdp('Target.getTargets');
+    let closed = 0;
+    for (const t of targetInfos.filter((t) => t.type === 'page')) {
+      if (await winOf(t.targetId).catch(() => null) === win) { await cdp('Target.closeTarget', { targetId: t.targetId }); closed++; }
+    }
+    writeFileSync(reg, lines.filter((l) => l !== entry).map((l) => l + '\n').join(''));
+    console.log(`closed window ${win} (${closed} tab${closed === 1 ? '' : 's'})`);
+  }
+} catch (e) { console.error(e.message); process.exitCode = 1; }
+ws.close();
+JS
+}
+
 usage() {
   # The header block, up to the first line that is not a comment. A fixed line range
   # drifts the moment the header does — it had already started printing `set -euo
@@ -503,7 +548,7 @@ if [[ "$self" == chrome-wrapper-* ]]; then
     # awk exits 0 even when it matches nothing, so test the value, not the exit status.
     --port) p="$(port_of "$name")"; [[ -n "$p" ]] || die "unknown identity '$name'"; echo "$p"; exit 0 ;;
     --stop) set -- stop "$name" ;;
-    --window)       set -- window "$name" ;;
+    --window)       set -- window "$name" "${2:-}" ;;
     --close-window) set -- close-window "$name" "${2:-}" ;;
     *)      set -- open "$name" ${1:+"$1"} ;;
   esac
@@ -677,55 +722,32 @@ EOF
     curl -sf "http://127.0.0.1:$p/json/version" | sed -n 's/.*"webSocketDebuggerUrl": *"\([^"]*\)".*/\1/p'
     ;;
 
-  window|close-window)
+  window)
     # One window per agent. `agent-browser tab new` opens in whichever window Chrome last
     # focused — measured: the user's own — so parallel agents' tabs sat side by side in
     # one window, and a session whose tab closed silently fell back to someone else's.
     # A window of its own keeps an agent's tabs together and lets it clean up in one call.
-    # agent-browser has no window command, so this speaks raw CDP (Target.createTarget
-    # with newWindow) through node's built-in WebSocket.
-    [[ -n "$name" ]] || die "usage: chrome-wrapper window <name> | close-window <name> <tab-id>"
-    if [[ "$cmd" == window ]]; then port="$(launch "$name")"; else
-      [[ -n "${3:-}" ]] || die "usage: chrome-wrapper close-window <name> <tab-id>"
-      port="$(port_of "$name")"; running "$port" || die "'$name' is not running"
+    #
+    # Minimized, so agent windows stay out of the user's way. Measured: open, click,
+    # eval, screenshot and click --new-tab all work in a minimized window and leave it
+    # minimized. Binding a session (`tab <id>`) activates the tab, which un-minimizes it —
+    # so when given a session, bind it here and minimize again. Off-screen is no
+    # alternative: macOS clamps the window onto whichever display sits there.
+    [[ -n "$name" ]] || die "usage: chrome-wrapper window <name> [session]"
+    port="$(launch "$name")"
+    tab="$(window_cdp create "$port" "$name")" || exit 1
+    if [[ -n "${3:-}" ]]; then
+      agent-browser --session "$3" --cdp "$port" --pin-tab tab "$tab" >/dev/null \
+        || die "opened window $tab but could not bind session '$3' to it"
+      window_cdp minimize "$port" "$name" "$tab" || exit 1
     fi
-    # Windows this command opened, one "<identity> <windowId>" per line. close-window
-    # refuses anything not listed here, so a wrong tab id cannot close the user's window.
-    CW_OP="$cmd" CW_PORT="$port" CW_NAME="$name" CW_TAB="${3:-}" CW_REG="$ROOT/agent-windows" \
-      node --input-type=module - <<'JS'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-const { CW_OP: op, CW_PORT: port, CW_NAME: name, CW_TAB: tab, CW_REG: reg } = process.env;
-const v = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-const ws = new WebSocket(v.webSocketDebuggerUrl);
-await new Promise((ok, bad) => { ws.onopen = ok; ws.onerror = bad; });
-let seq = 0; const waiting = new Map();
-ws.onmessage = (e) => { const m = JSON.parse(e.data); waiting.get(m.id)?.(m); };
-const cdp = (method, params = {}) => new Promise((ok, bad) => {
-  const id = ++seq; waiting.set(id, (m) => m.error ? bad(new Error(`${method}: ${m.error.message}`)) : ok(m.result));
-  ws.send(JSON.stringify({ id, method, params }));
-});
-const lines = existsSync(reg) ? readFileSync(reg, 'utf8').split('\n').filter(Boolean) : [];
-const winOf = async (targetId) => (await cdp('Browser.getWindowForTarget', { targetId })).windowId;
-try {
-  if (op === 'window') {
-    const { targetId } = await cdp('Target.createTarget', { url: 'about:blank', newWindow: true });
-    writeFileSync(reg, [...lines, `${name} ${await winOf(targetId)}`].join('\n') + '\n');
-    console.log(targetId);
-  } else {
-    const win = await winOf(tab);
-    const entry = `${name} ${win}`;
-    if (!lines.includes(entry)) throw new Error(`tab ${tab} is not in a window \`chrome-wrapper window\` opened — refusing to close it`);
-    const { targetInfos } = await cdp('Target.getTargets');
-    let closed = 0;
-    for (const t of targetInfos.filter((t) => t.type === 'page')) {
-      if (await winOf(t.targetId).catch(() => null) === win) { await cdp('Target.closeTarget', { targetId: t.targetId }); closed++; }
-    }
-    writeFileSync(reg, lines.filter((l) => l !== entry).map((l) => l + '\n').join(''));
-    console.log(`closed window ${win} (${closed} tab${closed === 1 ? '' : 's'})`);
-  }
-} catch (e) { console.error(e.message); process.exitCode = 1; }
-ws.close();
-JS
+    echo "$tab"
+    ;;
+
+  close-window)
+    [[ -n "$name" && -n "${3:-}" ]] || die "usage: chrome-wrapper close-window <name> <tab-id>"
+    port="$(port_of "$name")"; running "$port" || die "'$name' is not running"
+    window_cdp close "$port" "$name" "$3"
     ;;
 
   system-profiles)

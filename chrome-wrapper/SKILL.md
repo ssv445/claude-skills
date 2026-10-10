@@ -18,13 +18,16 @@ description: Use when an agent needs the real internet through a logged-in brows
 
 ```bash
 PORT=$(chrome-wrapper-<identity> --port); S="job-$$"
-W=$(chrome-wrapper-<identity> --window)                        # a NEW window, yours alone; prints its tab id
-agent-browser --session "$S" --cdp "$PORT" --pin-tab tab "$W"  # bind your session to it
+W=$(chrome-wrapper-<identity> --window "$S")                   # NEW minimized window, yours alone, session bound
 agent-browser --session "$S" --cdp "$PORT" open https://…      # navigates YOUR tab
 chrome-wrapper-<identity> --close-window "$W"                  # done: closes your window and every tab in it
 ```
 
-**Why a window, not `tab new`.** `agent-browser tab new` opens in whichever window Chrome last focused — measured: the user's own — so parallel agents' tabs pile into one window and get closed, refocused and navigated by each other. A window of your own keeps your tabs together (links opened with `click --new-tab` land in it too) and `--close-window` cleans all of them up in one call. Never reuse a window or tab you did not open, and never call `tab new` — navigate inside your window instead.
+**Why a window, not `tab new`.** `agent-browser tab new` opens in whichever window Chrome last focused — measured: the user's own — so parallel agents' tabs pile into one window and get closed, refocused and navigated by each other. Never reuse a window or tab you did not open.
+
+**One tab, navigated.** Stay in your one tab and move with `open <url>` (read a link's `href`, then `open` it). Never `tab new` or `click --new-tab` — measured: from a minimized window the new tab lands in the user's window, outside what `--close-window` cleans up. Need two pages at once? Open a second `--window` with a second session.
+
+**Why minimized.** Agent windows stay out of the user's way. open, click, eval, snapshot and screenshot all work in a minimized window and leave it minimized. Binding a session activates its tab, which un-minimizes the window, so `--window "$S"` binds and then re-minimizes for you. Don't bind with `agent-browser … tab <id>` yourself, and don't switch tabs — both bring the window back on screen. Off-screen placement doesn't work: macOS clamps the window onto whatever display sits there.
 
 **Always close it.** Run `--close-window` when you finish, including on failure — a leaked window is clutter the user has to clean up. `--close-window` only closes windows `--window` opened (tracked in `~/.chrome-wrapper/agent-windows`), so a wrong id cannot close the user's window.
 
