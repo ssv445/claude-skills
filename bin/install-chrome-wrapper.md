@@ -105,6 +105,9 @@ it does not launch).
 - **The port is the identity.** Always reach an identity via
   `agent-browser --cdp $(chrome-wrapper-<name> --port)`. Never point automation at the
   user's own Chrome, and never guess a port number.
+- **Work in your own window.** `W=$(chrome-wrapper-<name> --window "$S")` opens a minimized
+  window with your session bound (`--pin-tab`); stay in that one tab, navigate with `open`,
+  and finish with `chrome-wrapper-<name> --close-window "$W"`. Never reuse a window you did not open.
 - A wrong identity shows up as a logged-out browser. That is a signal to stop and ask —
   never to silently fall back to another identity or another browser.
 - One account lives in exactly one identity. If you find the same account signed into two,
