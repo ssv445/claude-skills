@@ -1,0 +1,499 @@
+<title>seo-desktop Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Kalam:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,700&family=Source+Sans+3:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+/* Layout: an engineer's notebook. One reading column; each mechanism is a hand-drawn figure on squared paper. Ink strokes, highlighter fills. */
+:root{
+  --bg:#f4f6f8; --paper:#ffffff; --ink:#1b2733; --muted:#5d6b7a; --grid:#e3e9ef; --line:#d3dbe3;
+  --accent:#2058a6;
+  --hl-blue:#d6e6fb; --hl-green:#d5f0dc; --hl-amber:#fde7b8; --hl-red:#f9d5d1; --hl-violet:#ebe2f7; --hl-grey:#eceff2;
+  --green:#1d7a4c; --amber:#a8620a; --red:#b3362c;
+  --hand:"Kalam", "Comic Sans MS", "Marker Felt", cursive;
+  --display:"Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+  --body:"Source Sans 3", -apple-system, "Segoe UI", sans-serif;
+  --mono:"JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10151b; --paper:#171e27; --ink:#e3e8ee; --muted:#9aa7b5; --grid:#202a35; --line:#2b3644;
+  --accent:#86b6f0;
+  --hl-blue:#1d3350; --hl-green:#173b28; --hl-amber:#4a3612; --hl-red:#4a1f1b; --hl-violet:#2e2442; --hl-grey:#232c37;
+  --green:#71cc9e; --amber:#f2b65e; --red:#f08d83; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10151b; --paper:#171e27; --ink:#e3e8ee; --muted:#9aa7b5; --grid:#202a35; --line:#2b3644;
+  --accent:#86b6f0;
+  --hl-blue:#1d3350; --hl-green:#173b28; --hl-amber:#4a3612; --hl-red:#4a1f1b; --hl-violet:#2e2442; --hl-grey:#232c37;
+  --green:#71cc9e; --amber:#f2b65e; --red:#f08d83; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:17px/1.6 var(--body);padding-inline:16px;padding-block:0 64px}
+.wrap{max-width:980px;margin:0 auto}
+h1,h2{font-family:var(--display);font-weight:700;text-wrap:balance;line-height:1.15;margin:0;letter-spacing:-.015em}
+h1{font-size:clamp(2rem,5vw,3rem)}
+h2{font-size:1.6rem}
+h3{font:700 1.15rem var(--hand);margin:0}
+p{margin:0;max-width:68ch}
+code{font-family:var(--mono);font-size:.84em}
+.eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.muted{color:var(--muted)}
+
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--line);margin-inline:-16px;padding:10px 16px;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
+nav.toc a{flex:none;font:700 .95rem var(--hand);color:var(--muted);text-decoration:none;padding:3px 10px;border-radius:999px}
+nav.toc a:hover,nav.toc a:focus-visible{background:var(--hl-blue);color:var(--ink);outline:none}
+
+.hero{padding-block:44px 0;display:grid;gap:14px}
+.hero p{font-size:1.18rem}
+section{padding-block:52px 0;display:grid;gap:16px}
+section>header{display:grid;gap:6px}
+
+figure{margin:0;background-color:var(--paper);background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:24px 24px;border:1px solid var(--line);border-radius:12px;padding:14px;overflow-x:auto}
+figure svg{display:block;width:100%;height:auto;min-width:640px}
+figcaption{font-size:.95rem;color:var(--muted);padding-top:10px;max-width:72ch}
+
+/* drawing vocabulary */
+.k{stroke:var(--ink);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none}
+.kd{stroke:var(--ink);stroke-width:1.8;stroke-dasharray:7 6;stroke-linecap:round;fill:none}
+.kf{fill:var(--paper);stroke:var(--ink);stroke-width:2;stroke-linejoin:round}
+.acc{stroke:var(--accent);stroke-width:2.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.head{fill:var(--ink)} .head-acc{fill:var(--accent)}
+.f-blue{fill:var(--hl-blue)} .f-green{fill:var(--hl-green)} .f-amber{fill:var(--hl-amber)} .f-red{fill:var(--hl-red)} .f-violet{fill:var(--hl-violet)} .f-grey{fill:var(--hl-grey)}
+.s-blue{stroke:var(--hl-blue)} .s-green{stroke:var(--hl-green)} .s-amber{stroke:var(--hl-amber)} .s-red{stroke:var(--hl-red)}
+text{font-family:var(--hand);fill:var(--ink)}
+.t{font-size:17px}
+.tb{font-size:19px;font-weight:700}
+.ts{font-size:14px;fill:var(--muted)}
+.ta{font-size:15px;fill:var(--accent);font-weight:700}
+.tg{font-size:15px;fill:var(--green);font-weight:700}
+.tr{font-size:15px;fill:var(--red);font-weight:700}
+.tam{font-size:15px;fill:var(--amber);font-weight:700}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:grid;gap:6px;align-content:start;min-width:0}
+.card ul{margin:0;padding-left:1.1em;display:grid;gap:3px}
+.card code{display:inline-block;margin:2px 3px 2px 0;padding:1px 6px;border-radius:5px;background:var(--bg);border:1px solid var(--line)}
+.scroll{overflow-x:auto;background:var(--paper);border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:.95rem}
+th,td{padding:9px 14px;text-align:left;border-bottom:1px solid var(--line)}
+th{font:700 .95rem var(--hand);color:var(--muted)}
+tr:last-child td{border-bottom:0}
+td.num{font-family:var(--mono);font-size:.85rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+footer{padding-top:52px;color:var(--muted);font-size:.9rem}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="Sections">
+  <a href="#map">The big picture</a><a href="#crawl">One page, one crawl</a><a href="#template">Menus vs content</a><a href="#runs">Run history</a><a href="#dirty">Only redo what changed</a><a href="#life">Life of a suggestion</a><a href="#offmac">Data off the Mac</a><a href="#numbers">Budgets</a><a href="#tools">Tools</a><a href="#scope">Scope</a>
+</nav>
+
+<div class="hero">
+  <span class="eyebrow">Design spec v1 · rev 2 · 2026-10-09</span>
+  <h1>seo-desktop</h1>
+  <p>A Mac app that crawls any website into a local database so AI agents can work on it. The first feature finds internal links, tells the agent exactly where to add them, and checks that they went live.</p>
+</div>
+
+<!-- 1. SYSTEM MAP -->
+<section id="map">
+  <header><span class="eyebrow">01 · Architecture</span><h2>The big picture</h2></header>
+  <figure>
+    <svg viewBox="0 0 900 620" role="img" aria-label="An AI agent calls the menu-bar app over MCP. Inside the app, Layer 2 (internal linking) reads from Layer 1 (site store), which fetches the website and is the only writer to one SQLite file per site. The agent applies link edits to the website directly, and the next crawl sees them.">
+      <defs>
+        <filter id="r1"><feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="2.6"/></filter>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head" d="M0 0 L10 5 L0 10 z"/></marker>
+        <marker id="a1b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head-acc" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+      <g filter="url(#r1)">
+        <!-- agent -->
+        <rect class="kf" x="30" y="90" width="210" height="74" rx="10"/>
+        <rect class="f-blue" x="34" y="94" width="202" height="66" rx="8"/>
+        <!-- you -->
+        <rect class="kf" x="30" y="470" width="210" height="64" rx="10"/>
+        <rect class="f-amber" x="34" y="474" width="202" height="56" rx="8"/>
+        <!-- app container -->
+        <rect class="kd" x="290" y="60" width="380" height="420" rx="16"/>
+        <rect class="kf" x="310" y="95" width="340" height="44" rx="8"/>
+        <rect class="kf" x="310" y="175" width="340" height="90" rx="10"/>
+        <rect class="f-green" x="314" y="179" width="332" height="82" rx="8"/>
+        <rect class="kf" x="310" y="325" width="340" height="130" rx="10"/>
+        <rect class="f-blue" x="314" y="329" width="332" height="122" rx="8"/>
+        <!-- website -->
+        <rect class="kf" x="730" y="345" width="150" height="76" rx="10"/>
+        <rect class="f-violet" x="734" y="349" width="142" height="68" rx="8"/>
+        <!-- disk cylinder -->
+        <path class="kf" d="M380 525 L380 585 A100 14 0 0 0 580 585 L580 525"/>
+        <ellipse class="kf" cx="480" cy="525" rx="100" ry="14"/>
+        <!-- arrows -->
+        <line class="k" x1="240" y1="122" x2="306" y2="118" marker-end="url(#a1)"/>
+        <line class="k" x1="480" y1="139" x2="480" y2="171" marker-end="url(#a1)"/>
+        <line class="k" x1="420" y1="268" x2="420" y2="321" marker-start="url(#a1)"/>
+        <line class="k" x1="560" y1="323" x2="560" y2="269" marker-end="url(#a1)"/>
+        <line class="k" x1="652" y1="372" x2="726" y2="372" marker-end="url(#a1)"/>
+        <line class="k" x1="726" y1="398" x2="654" y2="398" marker-end="url(#a1)"/>
+        <line class="k" x1="480" y1="457" x2="480" y2="507" marker-end="url(#a1)"/>
+        <line class="k" x1="240" y1="490" x2="286" y2="452" marker-end="url(#a1)"/>
+        <path class="acc" d="M135 88 L135 30 L805 30 L805 341" marker-end="url(#a1b)"/>
+      </g>
+      <text class="tb" x="135" y="122" text-anchor="middle">AI agent</text>
+      <text class="ts" x="135" y="146" text-anchor="middle">Claude Code · Cursor · Codex</text>
+      <text class="tb" x="135" y="498" text-anchor="middle">You</text>
+      <text class="ts" x="135" y="520" text-anchor="middle">install · buy · approve agents</text>
+      <text class="ts" x="305" y="84">menu-bar app · one process · starts at login</text>
+      <text class="t" x="480" y="123" text-anchor="middle">MCP server</text>
+      <text class="tb" x="480" y="203" text-anchor="middle">Layer 2 · Internal linking</text>
+      <text class="ts" x="480" y="227" text-anchor="middle">audit · suggestions · exact edits</text>
+      <text class="ts" x="480" y="248" text-anchor="middle">checks applied links went live</text>
+      <text class="tb" x="480" y="354" text-anchor="middle">Layer 1 · Site store</text>
+      <text class="ts" x="480" y="380" text-anchor="middle">crawler · cleaner · JS renderer</text>
+      <text class="ts" x="480" y="402" text-anchor="middle">embedder (on demand) · tags</text>
+      <text class="ts" x="480" y="424" text-anchor="middle">run history</text>
+      <text class="tb" x="805" y="378" text-anchor="middle">The website</text>
+      <text class="ts" x="805" y="402" text-anchor="middle">your client's site</text>
+      <text class="t" x="480" y="564" text-anchor="middle">site.sqlite</text>
+      <text class="ts" x="480" y="584" text-anchor="middle">one file per site</text>
+      <text class="ts" x="273" y="110" text-anchor="middle">MCP</text>
+      <text class="ts" x="490" y="162">routes</text>
+      <text class="ts" x="410" y="300" text-anchor="end">reads</text>
+      <text class="ts" x="570" y="292">"crawl finished"</text>
+      <text class="ts" x="570" y="310">+ changed pages</text>
+      <text class="ts" x="690" y="364" text-anchor="middle">fetches</text>
+      <text class="ts" x="690" y="416" text-anchor="middle">HTML</text>
+      <text class="ts" x="490" y="488">only writer</text>
+      <text class="ts" x="250" y="470">approves</text>
+      <text class="ta" x="470" y="22" text-anchor="middle">agent applies the link edit with its own access (CMS, git, files)</text>
+    </svg>
+    <figcaption>The blue path closes the loop. The app never edits the website. The agent does that, and the next crawl confirms the link is live. Layer 2 only reads from Layer 1, and Layer 1 only announces that a crawl finished. It never calls the modules.</figcaption>
+  </figure>
+</section>
+
+<!-- 2. CRAWL FLOW -->
+<section id="crawl">
+  <header><span class="eyebrow">02 · Layer 1</span><h2>One page, one crawl</h2></header>
+  <figure>
+    <svg viewBox="0 0 920 350" role="img" aria-label="For each URL the app asks the server whether it changed. A 304 reply skips the page. A 200 reply is cleaned into blocks, rendered first if it is an empty JavaScript page, then its text hash is compared. Same hash only updates last-seen; a different hash stores the page and logs the change. Once per crawl, repeated blocks are marked as navigation and modules are told which pages changed.">
+      <defs>
+        <filter id="r2"><feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="9"/><feDisplacementMap in="SourceGraphic" scale="2.6"/></filter>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+      <g filter="url(#r2)">
+        <rect class="kf" x="20" y="40" width="120" height="50" rx="10"/>
+        <rect class="kf" x="180" y="40" width="170" height="50" rx="10"/>
+        <rect class="kf" x="180" y="150" width="170" height="50" rx="10"/><rect class="f-green" x="184" y="154" width="162" height="42" rx="8"/>
+        <rect class="kf" x="400" y="40" width="160" height="50" rx="10"/>
+        <rect class="kd" x="400" y="150" width="160" height="50" rx="10"/>
+        <rect class="kf" x="610" y="40" width="140" height="50" rx="10"/>
+        <rect class="kf" x="610" y="150" width="140" height="50" rx="10"/><rect class="f-green" x="614" y="154" width="132" height="42" rx="8"/>
+        <rect class="kf" x="790" y="40" width="120" height="50" rx="10"/><rect class="f-amber" x="794" y="44" width="112" height="42" rx="8"/>
+        <line class="kd" x1="20" y1="236" x2="910" y2="236"/>
+        <rect class="kf" x="180" y="272" width="290" height="54" rx="10"/><rect class="f-blue" x="184" y="276" width="282" height="46" rx="8"/>
+        <rect class="kf" x="520" y="272" width="390" height="54" rx="10"/><rect class="f-blue" x="524" y="276" width="382" height="46" rx="8"/>
+        <line class="k" x1="140" y1="65" x2="176" y2="65" marker-end="url(#a2)"/>
+        <line class="k" x1="265" y1="90" x2="265" y2="146" marker-end="url(#a2)"/>
+        <line class="k" x1="350" y1="65" x2="396" y2="65" marker-end="url(#a2)"/>
+        <line class="k" x1="450" y1="90" x2="450" y2="146" marker-end="url(#a2)"/>
+        <line class="k" x1="510" y1="150" x2="510" y2="94" marker-end="url(#a2)"/>
+        <line class="k" x1="560" y1="65" x2="606" y2="65" marker-end="url(#a2)"/>
+        <line class="k" x1="680" y1="90" x2="680" y2="146" marker-end="url(#a2)"/>
+        <line class="k" x1="750" y1="65" x2="786" y2="65" marker-end="url(#a2)"/>
+        <line class="k" x1="850" y1="90" x2="850" y2="268" marker-end="url(#a2)"/>
+        <line class="k" x1="470" y1="299" x2="516" y2="299" marker-end="url(#a2)"/>
+      </g>
+      <text class="t" x="80" y="71" text-anchor="middle">Next URL</text>
+      <text class="t" x="265" y="62" text-anchor="middle">Ask the server:</text>
+      <text class="t" x="265" y="82" text-anchor="middle">changed?</text>
+      <text class="t" x="265" y="181" text-anchor="middle">Skip it</text>
+      <text class="t" x="480" y="71" text-anchor="middle">Clean into blocks</text>
+      <text class="t" x="480" y="172" text-anchor="middle">Render in</text>
+      <text class="t" x="480" y="191" text-anchor="middle">hidden browser</text>
+      <text class="t" x="680" y="71" text-anchor="middle">Same text hash?</text>
+      <text class="t" x="680" y="172" text-anchor="middle">Update</text>
+      <text class="t" x="680" y="191" text-anchor="middle">"last seen" only</text>
+      <text class="t" x="850" y="62" text-anchor="middle">Store +</text>
+      <text class="t" x="850" y="81" text-anchor="middle">log change</text>
+      <text class="tg" x="273" y="124">304</text>
+      <text class="ts" x="373" y="57" text-anchor="middle">200</text>
+      <text class="ts" x="443" y="124" text-anchor="end">empty + heavy JS</text>
+      <text class="ts" x="517" y="124">rendered</text>
+      <text class="tg" x="688" y="124">yes</text>
+      <text class="tam" x="768" y="57" text-anchor="middle">no</text>
+      <text class="ts" x="20" y="228">for each page ↑</text>
+      <text class="ts" x="20" y="256">once per crawl ↓</text>
+      <text class="t" x="325" y="295" text-anchor="middle">Mark repeated blocks</text>
+      <text class="ts" x="325" y="315" text-anchor="middle">as menu / footer (next figure)</text>
+      <text class="t" x="715" y="295" text-anchor="middle">Tell modules: "crawl finished"</text>
+      <text class="ts" x="715" y="315" text-anchor="middle">+ the list of changed pages</text>
+    </svg>
+    <figcaption>Green boxes are where the work stops early. On a recrawl most pages end there, which is why a second crawl is fast. The hash covers the cleaned text, not the raw HTML, because raw HTML changes on every load (timestamps, security tokens).</figcaption>
+  </figure>
+</section>
+
+<!-- 3. TEMPLATE DETECTION -->
+<section id="template">
+  <header><span class="eyebrow">03 · Cleaner</span><h2>How the app tells menus from content</h2></header>
+  <figure>
+    <svg viewBox="0 0 900 300" role="img" aria-label="Three pages from the same site. The menu bar and the footer have the same fingerprint on all three pages, so they are marked as template. The paragraphs are different on each page, so they are content.">
+      <defs>
+        <filter id="r3"><feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="2"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+      <g filter="url(#r3)">
+        <!-- page 1 -->
+        <rect class="kf" x="20" y="40" width="180" height="240" rx="8"/>
+        <rect class="f-grey" x="30" y="52" width="160" height="26" rx="4"/><rect class="k" x="30" y="52" width="160" height="26" rx="4"/>
+        <line class="k s-green" stroke-width="10" x1="36" y1="102" x2="170" y2="102"/>
+        <line class="k s-green" stroke-width="10" x1="36" y1="124" x2="184" y2="124"/>
+        <line class="k s-green" stroke-width="10" x1="36" y1="146" x2="150" y2="146"/>
+        <line class="k s-green" stroke-width="10" x1="36" y1="178" x2="180" y2="178"/>
+        <line class="k s-green" stroke-width="10" x1="36" y1="200" x2="120" y2="200"/>
+        <rect class="f-grey" x="30" y="242" width="160" height="26" rx="4"/><rect class="k" x="30" y="242" width="160" height="26" rx="4"/>
+        <!-- page 2 -->
+        <rect class="kf" x="230" y="40" width="180" height="240" rx="8"/>
+        <rect class="f-grey" x="240" y="52" width="160" height="26" rx="4"/><rect class="k" x="240" y="52" width="160" height="26" rx="4"/>
+        <line class="k s-green" stroke-width="10" x1="246" y1="102" x2="394" y2="102"/>
+        <line class="k s-green" stroke-width="10" x1="246" y1="124" x2="330" y2="124"/>
+        <line class="k s-green" stroke-width="10" x1="246" y1="156" x2="380" y2="156"/>
+        <line class="k s-green" stroke-width="10" x1="246" y1="178" x2="394" y2="178"/>
+        <line class="k s-green" stroke-width="10" x1="246" y1="200" x2="300" y2="200"/>
+        <rect class="f-grey" x="240" y="242" width="160" height="26" rx="4"/><rect class="k" x="240" y="242" width="160" height="26" rx="4"/>
+        <!-- page 3 -->
+        <rect class="kf" x="440" y="40" width="180" height="240" rx="8"/>
+        <rect class="f-grey" x="450" y="52" width="160" height="26" rx="4"/><rect class="k" x="450" y="52" width="160" height="26" rx="4"/>
+        <line class="k s-green" stroke-width="10" x1="456" y1="102" x2="560" y2="102"/>
+        <line class="k s-green" stroke-width="10" x1="456" y1="134" x2="604" y2="134"/>
+        <line class="k s-green" stroke-width="10" x1="456" y1="156" x2="590" y2="156"/>
+        <line class="k s-green" stroke-width="10" x1="456" y1="178" x2="520" y2="178"/>
+        <line class="k s-green" stroke-width="10" x1="456" y1="210" x2="600" y2="210"/>
+        <rect class="f-grey" x="450" y="242" width="160" height="26" rx="4"/><rect class="k" x="450" y="242" width="160" height="26" rx="4"/>
+        <!-- callouts -->
+        <line class="k" x1="676" y1="65" x2="616" y2="65" marker-end="url(#a3)"/>
+        <line class="k" x1="676" y1="155" x2="610" y2="155" marker-end="url(#a3)"/>
+        <line class="k" x1="676" y1="255" x2="616" y2="255" marker-end="url(#a3)"/>
+      </g>
+      <text class="ts" x="110" y="30" text-anchor="middle">/pricing</text>
+      <text class="ts" x="320" y="30" text-anchor="middle">/blog/seo-tips</text>
+      <text class="ts" x="530" y="30" text-anchor="middle">/guides/new</text>
+      <text class="ts" x="110" y="70" text-anchor="middle">Home · Blog · Pricing</text>
+      <text class="ts" x="320" y="70" text-anchor="middle">Home · Blog · Pricing</text>
+      <text class="ts" x="530" y="70" text-anchor="middle">Home · Blog · Pricing</text>
+      <text class="ts" x="110" y="260" text-anchor="middle">© footer links</text>
+      <text class="ts" x="320" y="260" text-anchor="middle">© footer links</text>
+      <text class="ts" x="530" y="260" text-anchor="middle">© footer links</text>
+      <text class="tb" x="684" y="60">Menu</text>
+      <text class="ts" x="684" y="80">same fingerprint on 3 of 3 → template</text>
+      <text class="tb" x="684" y="150">Paragraphs</text>
+      <text class="ts" x="684" y="170">different on every page → content</text>
+      <text class="tb" x="684" y="250">Footer</text>
+      <text class="ts" x="684" y="270">3 of 3 → template</text>
+    </svg>
+    <figcaption>Each block gets a fingerprint. After the crawl, any block found on 30% or more of the pages is labelled as template. Only links inside green content blocks count as real contextual links. This needs the whole site, which is why it runs once the crawl ends.</figcaption>
+  </figure>
+</section>
+
+<!-- 4. RUN HISTORY -->
+<section id="runs">
+  <header><span class="eyebrow">04 · History</span><h2>Every crawl is a numbered run</h2></header>
+  <figure>
+    <svg viewBox="0 0 900 330" role="img" aria-label="Timeline of four crawl runs. /pricing exists in all four runs unchanged. /blog/seo-tips is edited in run 3. /old-offer redirects in run 2 and returns 404 from run 3, which opens an issue. /guides/new appears in run 4. A link from /blog to /pricing was last seen in run 2.">
+      <defs>
+        <filter id="r4"><feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="7"/><feDisplacementMap in="SourceGraphic" scale="2.2"/></filter>
+      </defs>
+      <g filter="url(#r4)">
+        <line class="kd" x1="360" y1="45" x2="360" y2="315"/>
+        <line class="kd" x1="520" y1="45" x2="520" y2="315"/>
+        <line class="kd" x1="680" y1="45" x2="680" y2="315"/>
+        <line class="k s-blue" stroke-width="16" x1="208" y1="80" x2="832" y2="80"/>
+        <line class="k s-blue" stroke-width="16" x1="208" y1="135" x2="832" y2="135"/>
+        <circle class="kf" cx="600" cy="135" r="9"/><circle class="f-amber" cx="600" cy="135" r="6"/>
+        <line class="k s-blue" stroke-width="16" x1="208" y1="190" x2="352" y2="190"/>
+        <line class="k s-amber" stroke-width="16" x1="368" y1="190" x2="512" y2="190"/>
+        <line class="k s-red" stroke-width="16" x1="528" y1="190" x2="832" y2="190"/>
+        <line class="k s-green" stroke-width="16" x1="688" y1="245" x2="832" y2="245"/>
+        <line class="k s-blue" stroke-width="16" x1="208" y1="300" x2="512" y2="300"/>
+        <path class="k" d="M506 292 L520 308 M520 292 L506 308"/>
+      </g>
+      <text class="ts" x="280" y="34" text-anchor="middle">Run 1</text>
+      <text class="ts" x="440" y="34" text-anchor="middle">Run 2</text>
+      <text class="ts" x="600" y="34" text-anchor="middle">Run 3</text>
+      <text class="ts" x="760" y="34" text-anchor="middle">Run 4</text>
+      <text class="t" x="20" y="86">/pricing</text>
+      <text class="t" x="20" y="141">/blog/seo-tips</text>
+      <text class="t" x="20" y="196">/old-offer</text>
+      <text class="t" x="20" y="251">/guides/new</text>
+      <text class="t" x="20" y="306">link /blog → /pricing</text>
+      <text class="ts" x="520" y="106" text-anchor="middle">seen in runs 1–4, nothing to redo</text>
+      <text class="tam" x="600" y="162" text-anchor="middle">edited → re-embed, re-score</text>
+      <text class="tam" x="440" y="216" text-anchor="middle">301 redirect</text>
+      <text class="tr" x="680" y="216" text-anchor="middle">404 → "broken link" issue opened in run 3</text>
+      <text class="tg" x="760" y="271" text-anchor="middle">new, no inlinks → link target</text>
+      <text class="ts" x="530" y="305">removed: last seen in run 2</text>
+    </svg>
+    <figcaption>Each page and link stores two numbers: the run it was first seen and the run it was last seen. That's the whole history, with no snapshots. A <code>changes</code> table logs each event, so an agent can ask "what happened since run 2?" and get back: 1 page edited, 1 page broken, 1 page added, 1 link removed.</figcaption>
+  </figure>
+</section>
+
+<!-- 5. DIRTY SET -->
+<section id="dirty">
+  <header><span class="eyebrow">05 · Incremental analysis</span><h2>Only redo what changed</h2></header>
+  <figure>
+    <svg viewBox="0 0 900 300" role="img" aria-label="A link graph of nine pages. One page changed in run 4. Its three directly linked neighbours are re-checked. The other five pages keep their previous results.">
+      <defs>
+        <filter id="r5"><feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="5"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+      </defs>
+      <g filter="url(#r5)">
+        <line class="k" x1="300" y1="150" x2="190" y2="80"/>
+        <line class="k" x1="300" y1="150" x2="190" y2="230"/>
+        <line class="k" x1="300" y1="150" x2="430" y2="90"/>
+        <line class="k" x1="190" y1="80" x2="70" y2="60"/>
+        <line class="k" x1="190" y1="230" x2="70" y2="250"/>
+        <line class="k" x1="430" y1="90" x2="540" y2="60"/>
+        <line class="k" x1="430" y1="90" x2="530" y2="190"/>
+        <line class="k" x1="530" y1="190" x2="420" y2="250"/>
+        <line class="k" x1="70" y1="60" x2="70" y2="250" stroke-dasharray="1 0"/>
+        <circle class="kf" cx="300" cy="150" r="30"/><circle class="f-amber" cx="300" cy="150" r="26"/>
+        <circle class="kf" cx="190" cy="80" r="22"/><circle class="f-amber" cx="190" cy="80" r="18" opacity=".55"/>
+        <circle class="kf" cx="190" cy="230" r="22"/><circle class="f-amber" cx="190" cy="230" r="18" opacity=".55"/>
+        <circle class="kf" cx="430" cy="90" r="22"/><circle class="f-amber" cx="430" cy="90" r="18" opacity=".55"/>
+        <circle class="kf" cx="70" cy="60" r="18"/><circle class="f-grey" cx="70" cy="60" r="14"/>
+        <circle class="kf" cx="70" cy="250" r="18"/><circle class="f-grey" cx="70" cy="250" r="14"/>
+        <circle class="kf" cx="540" cy="60" r="18"/><circle class="f-grey" cx="540" cy="60" r="14"/>
+        <circle class="kf" cx="530" cy="190" r="18"/><circle class="f-grey" cx="530" cy="190" r="14"/>
+        <circle class="kf" cx="420" cy="250" r="18"/><circle class="f-grey" cx="420" cy="250" r="14"/>
+        <circle class="kf" cx="640" cy="70" r="14"/><circle class="f-amber" cx="640" cy="70" r="10"/>
+        <circle class="kf" cx="640" cy="140" r="14"/><circle class="f-amber" cx="640" cy="140" r="10" opacity=".55"/>
+        <circle class="kf" cx="640" cy="210" r="14"/><circle class="f-grey" cx="640" cy="210" r="10"/>
+      </g>
+      <text class="t" x="300" y="156" text-anchor="middle">edited</text>
+      <text class="tb" x="664" y="66">Changed this run</text>
+      <text class="ts" x="664" y="88">re-embed, re-score its suggestions</text>
+      <text class="tb" x="664" y="136">Direct neighbours</text>
+      <text class="ts" x="664" y="158">re-check links, issues, "stale" edits</text>
+      <text class="tb" x="664" y="206">Everything else</text>
+      <text class="ts" x="664" y="228">keep last run's results as they are</text>
+      <text class="ts" x="664" y="270">Site-wide scores (PageRank, click depth)</text>
+      <text class="ts" x="664" y="290">are recalculated in memory, in seconds.</text>
+    </svg>
+    <figcaption>The changed pages plus their direct link neighbours form the "dirty set". Audit issues, suggestions and verification run only on that set. Decisions already made, applied or rejected, carry over to the next run.</figcaption>
+  </figure>
+</section>
+
+<!-- 6. LIFECYCLE -->
+<section id="life">
+  <header><span class="eyebrow">06 · Internal linking</span><h2>Life of one suggestion</h2></header>
+  <figure>
+    <svg viewBox="0 0 900 290" role="img" aria-label="A suggestion starts as suggested. If the agent edits the site it becomes applied; the next crawl marks it verified, or not_found if the link is missing. If the agent says no it becomes rejected and is never suggested again. If the source paragraph changes it becomes stale.">
+      <defs>
+        <filter id="r6"><feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="11"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+        <marker id="a6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+      <g filter="url(#r6)">
+        <rect class="kf" x="40" y="100" width="150" height="46" rx="23"/><rect class="f-blue" x="44" y="104" width="142" height="38" rx="19"/>
+        <rect class="kf" x="340" y="100" width="150" height="46" rx="23"/><rect class="f-amber" x="344" y="104" width="142" height="38" rx="19"/>
+        <rect class="kf" x="660" y="36" width="170" height="46" rx="23"/><rect class="f-green" x="664" y="40" width="162" height="38" rx="19"/>
+        <rect class="kf" x="660" y="160" width="170" height="46" rx="23"/><rect class="f-red" x="664" y="164" width="162" height="38" rx="19"/>
+        <rect class="kf" x="340" y="214" width="150" height="46" rx="23"/><rect class="f-red" x="344" y="218" width="142" height="38" rx="19"/>
+        <rect class="kd" x="40" y="214" width="150" height="46" rx="23"/>
+        <line class="k" x1="190" y1="123" x2="336" y2="123" marker-end="url(#a6)"/>
+        <line class="k" x1="490" y1="114" x2="656" y2="64" marker-end="url(#a6)"/>
+        <line class="k" x1="490" y1="132" x2="656" y2="178" marker-end="url(#a6)"/>
+        <line class="k" x1="170" y1="146" x2="338" y2="226" marker-end="url(#a6)"/>
+        <line class="k" x1="115" y1="146" x2="115" y2="210" marker-end="url(#a6)"/>
+      </g>
+      <text class="tb" x="115" y="129" text-anchor="middle">suggested</text>
+      <text class="tb" x="415" y="129" text-anchor="middle">applied</text>
+      <text class="tb" x="745" y="65" text-anchor="middle">verified</text>
+      <text class="tb" x="745" y="189" text-anchor="middle">not found</text>
+      <text class="tb" x="415" y="243" text-anchor="middle">rejected</text>
+      <text class="tb" x="115" y="243" text-anchor="middle">stale</text>
+      <text class="ts" x="263" y="112" text-anchor="middle">agent edits the site</text>
+      <text class="ts" x="560" y="76" text-anchor="middle">next crawl finds the link</text>
+      <text class="ts" x="560" y="182" text-anchor="middle">not on the live page</text>
+      <text class="ts" x="270" y="196" text-anchor="middle">agent says no</text>
+      <text class="ts" x="125" y="184">source text changed</text>
+      <text class="ts" x="415" y="280" text-anchor="middle">never suggested again</text>
+    </svg>
+    <figcaption>Suggestions come with 3–5 anchor phrases already in the source paragraph, and the agent picks one. "Applied" is only the agent's claim. "Verified" is the app's proof, taken from the live page.</figcaption>
+  </figure>
+  <div class="cards">
+    <div class="card"><h3>Audit · free tier, no AI</h3><ul><li>Orphan pages and click depth</li><li>Broken links, redirect chains, nofollow</li><li>Generic or repeated anchors</li><li>Internal PageRank</li><li>Compared with LinkStorm's 2.5M-link study</li></ul></div>
+    <div class="card"><h3>Suggestions · paid</h3><ul><li>Targets: orphans, deep pages, few links, tagged <code>priority</code></li><li>Matched by meaning against the target's title and H1</li><li>Skips existing links, even through redirects or canonicals</li></ul></div>
+  </div>
+</section>
+
+<!-- 7. OFF MAC -->
+<section id="offmac">
+  <header><span class="eyebrow">07 · Transparency</span><h2>When data leaves the Mac</h2></header>
+  <figure>
+    <svg viewBox="0 0 900 280" role="img" aria-label="Everything stays inside the Mac by default. Two optional paths cross the boundary: paragraph text to a cloud embedding service, and crawl requests through a proxy. Each crossing triggers a warning.">
+      <defs>
+        <filter id="r7"><feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="2" seed="13"/><feDisplacementMap in="SourceGraphic" scale="2.4"/></filter>
+        <marker id="a7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="head" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+      <g filter="url(#r7)">
+        <rect class="kd" x="20" y="30" width="540" height="230" rx="18"/>
+        <rect class="kf" x="60" y="60" width="200" height="56" rx="10"/><rect class="f-blue" x="64" y="64" width="192" height="48" rx="8"/>
+        <rect class="kf" x="60" y="160" width="200" height="56" rx="10"/><rect class="f-violet" x="64" y="164" width="192" height="48" rx="8"/>
+        <rect class="kf" x="320" y="190" width="200" height="44" rx="10"/>
+        <rect class="kf" x="640" y="54" width="230" height="56" rx="10"/>
+        <rect class="kf" x="640" y="170" width="230" height="56" rx="10"/>
+        <line class="k" x1="260" y1="88" x2="636" y2="82" marker-end="url(#a7)" stroke-dasharray="9 6"/>
+        <line class="k" x1="260" y1="188" x2="636" y2="198" marker-end="url(#a7)" stroke-dasharray="9 6"/>
+        <circle class="kf" cx="560" cy="85" r="15"/><circle class="f-amber" cx="560" cy="85" r="11"/>
+        <circle class="kf" cx="560" cy="195" r="15"/><circle class="f-amber" cx="560" cy="195" r="11"/>
+      </g>
+      <text class="ts" x="40" y="52">your Mac · everything stays here by default</text>
+      <text class="t" x="160" y="94" text-anchor="middle">site data</text>
+      <text class="t" x="160" y="194" text-anchor="middle">seo-desktop app</text>
+      <text class="ts" x="420" y="217" text-anchor="middle">API keys · Keychain</text>
+      <text class="tb" x="560" y="91" text-anchor="middle">!</text>
+      <text class="tb" x="560" y="201" text-anchor="middle">!</text>
+      <text class="ts" x="400" y="74" text-anchor="middle">paragraph text</text>
+      <text class="ts" x="400" y="178" text-anchor="middle">all crawl requests</text>
+      <text class="t" x="755" y="80" text-anchor="middle">Cloud embeddings</text>
+      <text class="ts" x="755" y="100" text-anchor="middle">only if switched on</text>
+      <text class="t" x="755" y="196" text-anchor="middle">Proxy</text>
+      <text class="ts" x="755" y="216" text-anchor="middle">only if set</text>
+    </svg>
+    <figcaption>Agents can switch either path on. Each "!" stands for three warnings: a plain message when it's switched on ("Page text will be sent to api.openai.com"), a menu-bar badge while it stays on ("↗ Off-Mac: embeddings → openai.com"), and a macOS notification naming the agent that did it, plus an audit-log entry. Keys are never shown again.</figcaption>
+  </figure>
+</section>
+
+<!-- 8. NUMBERS -->
+<section id="numbers">
+  <header><span class="eyebrow">08 · Fast and light</span><h2>Budgets the tests enforce</h2>
+  <p class="muted">These are first estimates. The opening benchmark replaces them with measured numbers.</p></header>
+  <div class="scroll"><table>
+    <thead><tr><th>Measure</th><th>Budget</th></tr></thead>
+    <tbody>
+      <tr><td>App memory while crawling</td><td class="num">&lt; 300 MB</td></tr>
+      <tr><td>Hidden browser, only while rendering</td><td class="num">&lt; 400 MB</td></tr>
+      <tr><td>CPU time to clean one page</td><td class="num">&lt; 10 ms</td></tr>
+      <tr><td>Stored HTML per page</td><td class="num">&lt; 15 KB</td></tr>
+      <tr><td>Recrawl of 10,000 unchanged pages</td><td class="num">&lt; 3 min</td></tr>
+      <tr><td>Scoring 200,000 paragraph vectors</td><td class="num">&lt; 30 s</td></tr>
+    </tbody>
+  </table></div>
+  <div class="cards">
+    <div class="card"><h3>How it stays cool</h3><ul><li>Background work runs on the efficiency cores only</li><li>Meaning vectors are made only when a module needs them</li><li>On battery: one request at a time. In Low Power Mode: paused</li></ul></div>
+    <div class="card"><h3>What it can't speed up</h3><p class="muted">The website sets the pace. With <code>Crawl-delay: 10</code>, a 50,000-page site takes about 6 days the first time. Later runs are quick because most pages haven't changed.</p></div>
+  </div>
+</section>
+
+<section id="tools">
+  <header><span class="eyebrow">09 · Interface</span><h2>MCP tools agents use</h2></header>
+  <div class="cards">
+    <div class="card"><h3>Sites and jobs</h3><p><code>list_sites</code><code>add_site</code><code>update_site</code><code>delete_site</code><code>restore_site</code><code>crawl_site</code><code>recrawl_pages</code><code>job_status</code><code>list_jobs</code><code>cancel_job</code></p></div>
+    <div class="card"><h3>Reading the site</h3><p><code>search_pages</code><code>get_page</code><code>get_links</code><code>get_changes</code><code>semantic_search</code><code>screenshot_page</code><code>tag_pages</code><code>untag_pages</code><code>list_tags</code></p></div>
+    <div class="card"><h3>Internal linking</h3><p><code>il_audit</code><code>il_issues</code><code>il_suggest</code><code>il_opportunities</code><code>il_get_edit</code><code>il_mark</code><code>il_anchors</code><code>il_report</code><code>il_update_settings</code></p></div>
+    <div class="card"><h3>App</h3><p><code>get_settings</code><code>update_settings</code><code>activate_license</code></p></div>
+  </div>
+</section>
+
+<section id="scope">
+  <header><span class="eyebrow">10 · Scope</span><h2>Built first, and left for later</h2></header>
+  <div class="cards">
+    <div class="card"><h3>Quality gates, built first</h3><ul><li>A 10,000-page test site with a known answer key</li><li>Shyam's 880-case LinkStorm anchor benchmark: the expected anchor must be in the top 5</li><li>Hand-checked real pages in Hindi, Japanese, Arabic and German</li></ul></div>
+    <div class="card"><h3>Later, each with its own spec</h3><ul><li>Licensing and payments</li><li>WordPress, Webflow and Shopify connectors</li><li>On-device language mode</li><li>Google Search Console data</li></ul></div>
+    <div class="card"><h3>Dropped on purpose</h3><ul><li>Pause and resume (cancel, then crawl again)</li><li>Cookie login for crawling</li><li>Auto-accepting suggestions (the agent decides)</li></ul></div>
+  </div>
+</section>
+
+<footer>Source: <code>~/www/seo-desktop/.tmp/specs/2026-10-09-seo-desktop-design.md</code> (rev 2).</footer>
+</div>
