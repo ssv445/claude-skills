@@ -50,6 +50,8 @@ Each shows every product in the niche with price, rating and 1–3★ reviews (u
 - **Etsy** [1–4]: shop sales counts, "in N baskets", Bestseller badges. Strong for digital products (templates, planners) — a cheap test of whether people pay for a format before building software.
 - **AppSumo** (https://appsumo.com): lifetime deals; review count per deal ≈ buyers; detailed reviews of what's missing. Many deals in a category = tools that couldn't sell subscriptions. Buyers are deal-hunters.
 - **Gumroad** (https://gumroad.com/discover): creators' digital products with ratings and often sales counts — what a niche audience pays for directly.
+- **Envato Market** [2, 4, 5] — ThemeForest (site and admin templates, WordPress themes), CodeCanyon (plugins, scripts, app source code), VideoHive, AudioJungle, GraphicRiver. **Every item and author page shows public sales counts**, price and "member since" — sales × price is near-real revenue, the strongest evidence for digital assets. Sort a category by sales (`?sort=sales`) for the leaders; compare an author's total sales with their age. Envato takes a large cut and its traffic is falling, so check recent sales trend, not lifetime totals. (codedthemes: 2,280 sales since 2017 vs Metronic 120K — it showed the brand was small.)
+- **Other template and asset marketplaces**: Creative Market, UI8 (UI kits), TemplateMonster, Framer and Webflow template marketplaces, Figma Community (paid files). Ratings, prices and, on some, sales counts — which formats and niches people buy.
 
 ## AI answers — AEO and Google AI Overviews [2, 5, 7]
 
