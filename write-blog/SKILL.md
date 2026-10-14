@@ -143,7 +143,7 @@ Invocation:
 
 ```bash
 codex exec "<prompt>" 2>/dev/null      # 30s timeout
-agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions -p "<prompt>" 2>/dev/null   # 30s timeout
+agy --model "Gemini 3.8 Flash (High)" --dangerously-skip-permissions -p "<prompt>" 2>/dev/null   # 30s timeout
 ```
 
 Both return text/JSON; parse score field. On failure of one, continue with the other and flag in final report. If both fail in humanize loop: skip detection, run 2 fixed humanizer passes, present to user with note. If both fail in link grading: drop to Claude-only, surface to user before insertion.
@@ -603,7 +603,7 @@ For each `ref_url` in draft's bare reference list:
      ```
      Pass: full audience profile, section topic, fetched_content fields. Subagent returns JSON.
    - `codex_grade` ← `codex exec "<full prompt above>"` with same substitutions.
-   - `agy_grade` ← `agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions -p "<full prompt above>"` with same substitutions.
+   - `agy_grade` ← `agy --model "Gemini 3.8 Flash (High)" --dangerously-skip-permissions -p "<full prompt above>"` with same substitutions.
 
    **JSON parse fallback:** If a grader's stdout doesn't parse cleanly, regex-extract the first `{...}` block. If still unparseable, treat that grader as failed and continue with the other two. If 2+ fail, treat as CLI failure (Section 5.5 fallback).
 
@@ -736,7 +736,7 @@ while iteration < cfg.humanize.max_iterations (default 3):
 
     # 3. AI-detection vote (parallel) on draft_v{iteration}
     codex_response = codex exec "<detection prompt with draft_v{iteration} body>"
-    agy_response   = agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions -p "<detection prompt with draft_v{iteration} body>"
+    agy_response   = agy --model "Gemini 3.8 Flash (High)" --dangerously-skip-permissions -p "<detection prompt with draft_v{iteration} body>"
 
     # 4. Parse with JSON fallback
     for resp in [codex_response, agy_response]:
@@ -1051,7 +1051,7 @@ Title: max 46 chars (60 with suffix)
 Meta: 120-160 chars
 External links: ≥1, ≤10 (per cfg)
 Internal links: ≥1, ≤5 (per cfg)
-External CLIs: codex exec / agy --model "Gemini 3.1 Pro (High)" -p
+External CLIs: codex exec / agy --model "Gemini 3.8 Flash (High)" -p
 Pre-gate review on every artifact (3-subagent team)
 Loop-integrity filter inside every iterative loop
 
