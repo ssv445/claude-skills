@@ -67,7 +67,7 @@ Runs in a scored loop: `/humanizer` → 3-perspective filter (loss/gap/hallucina
 
 ### External CLI Reviewers
 - `codex exec "<prompt>"` — independent OpenAI-model verifier
-- `agy --model "Gemini 3.1 Pro (High)" -p "<prompt>"` — independent Google-model verifier (replaces deprecated `gemini -p`)
+- `agy --model "Gemini 3.8 Flash (High)" -p "<prompt>"` — independent Google-model verifier (replaces deprecated `gemini -p`)
 - Used for: AI-detection scoring, link value grading
 - Failure modes: one fails → continue with the other; both fail → fallback paths defined per phase
 

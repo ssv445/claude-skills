@@ -47,7 +47,7 @@ All verified working 2026-08-07. `$S` = a scratch dir outside the repo.
 ```bash
 # research — bump the timeout, default is 5m and research blows past it
 agy --sandbox --dangerously-skip-permissions \
-    --model "Gemini 3.1 Pro (High)" --print-timeout 20m -p "…" > "$S/out.md"
+    --model "Gemini 3.8 Flash (High)" --print-timeout 20m -p "…" > "$S/out.md"
 
 # structured extraction — object lands in .structured_output
 agy --sandbox --dangerously-skip-permissions \
@@ -57,7 +57,7 @@ agy --sandbox --dangerously-skip-permissions \
 codex exec -s read-only -C /path/to/repo -o "$S/out.md" "…"
 
 # design critique
-codex exec -m gpt-5.6-sol -c model_reasoning_effort="xhigh" -o "$S/out.md" "…"
+codex exec -c model_reasoning_effort="xhigh" -o "$S/out.md" "…"
 ```
 
 `--dangerously-skip-permissions` is safe *here* because `--sandbox` already restricts the terminal — it only stops headless agy from auto-denying its own tools and returning nothing.

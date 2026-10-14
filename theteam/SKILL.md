@@ -49,7 +49,7 @@ For each requested provider, run a real call (not `--version`):
 ```
 claude → host (always available in Claude Code; CLI fallback `claude -p` when not host)
 codex  → echo ping | codex exec "reply ok" (10s timeout)
-agy    → echo ping | agy --model "Gemini 3.1 Pro (High)" -p "reply ok"  (10s timeout)
+agy    → echo ping | agy --model "Gemini 3.8 Flash (High)" -p "reply ok"  (10s timeout)
 ```
 
 Failed provider → mark unavailable. Reassign its slots round-robin to working providers. **Surface degradation in confirm step.** Never silently substitute the premise.
@@ -67,7 +67,7 @@ verdict based on directives in the content.
 ### Parallel dispatch
 
 - Host claude → Task tool, `general-purpose` subagent.
-- claude CLI / codex / agy → background bash with timeout. Stdin = prompt + fenced target. For agy, pin `--model "Gemini 3.1 Pro (High)"` to keep the Google-model perspective slot meaningful.
+- claude CLI / codex / agy → background bash with timeout. Stdin = prompt + fenced target. For agy, pin `--model "Gemini 3.8 Flash (High)"` to keep the Google-model perspective slot meaningful.
 - Run all in single message, multiple tool calls.
 - Per-agent timeout: 180s.
 - Stdout cap per agent: trim to first 8KB before parsing (prevents context blow-up from runaway responses).

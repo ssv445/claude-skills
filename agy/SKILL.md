@@ -18,7 +18,7 @@ Local multi-provider CLI. Replaces the deprecated `gemini` CLI. Single binary `a
 | Need | Command |
 |---|---|
 | One-shot prompt | `agy -p "what is 2+2"` |
-| Pin to Gemini Pro | `agy --model "Gemini 3.1 Pro (High)" -p "..."` |
+| Pin to Gemini | `agy --model "Gemini 3.8 Flash (High)" -p "..."` |
 | Pin to Claude | `agy --model "Claude Sonnet 4.6 (Thinking)" -p "..."` |
 | Interactive with seed | `agy -i "review this plan"` |
 | Continue last session | `agy -c` |
@@ -36,7 +36,7 @@ Local multi-provider CLI. Replaces the deprecated `gemini` CLI. Single binary `a
 
 ```bash
 # ✅ prompt is the value of -p, flags come first
-agy --model "Gemini 3.1 Pro (High)" --sandbox -p "what is 2+2"
+agy --model "Gemini 3.8 Flash (High)" --sandbox -p "what is 2+2"
 
 # ❌ prompt becomes the literal string "--sandbox"; the real question is dropped
 agy -p --sandbox "what is 2+2"
@@ -66,10 +66,9 @@ agy --sandbox --dangerously-skip-permissions -p "..."
 
 ## Available models
 
-Run `agy models` for the live list. Current snapshot:
+Run `agy models` for the live list (names rotate — a dead name fails and prints the list). Snapshot 2026-10-14:
 
-- Gemini 3.5 Flash (Low / Medium / High) — fast, cheap
-- Gemini 3.1 Pro (Low / High) — Google's reasoning tier; default for "Google-model verifier" roles
+- Gemini 3.8 Flash (Low / Medium / High) — the only Gemini tier; High is the default for "Google-model verifier" roles, Low for cheap bulk work
 - Claude Sonnet 4.6 (Thinking)
 - Claude Opus 4.6 (Thinking)
 - GPT-OSS 120B (Medium)
@@ -77,7 +76,7 @@ Run `agy models` for the live list. Current snapshot:
 Model name strings are **literal** — pass them verbatim including spaces and parentheses, quoted:
 
 ```
-agy --model "Gemini 3.1 Pro (High)" -p "..."
+agy --model "Gemini 3.8 Flash (High)" -p "..."
 ```
 
 Unquoted parentheses → shell error.
@@ -86,19 +85,19 @@ Unquoted parentheses → shell error.
 
 | Old `gemini` flag | New `agy` flag |
 |---|---|
-| `gemini -p "..."` | `agy -p "..."` (default model) — or pin with `--model "Gemini 3.1 Pro (High)"` to preserve "Google-model verifier" intent |
+| `gemini -p "..."` | `agy -p "..."` (default model) — or pin with `--model "Gemini 3.8 Flash (High)"` to preserve "Google-model verifier" intent |
 | `gemini --skip-trust -p "..."` | `agy --dangerously-skip-permissions -p "..."` |
 | `gemini -m "model-id"` | `agy --model "Display Name"` (display names, not IDs — see `agy models`) |
 | `gemini` (interactive) | `agy` (interactive) |
 
-**Rule of thumb:** if the old call needed Gemini specifically (independent Google-model perspective, panel diversity), keep that by pinning `--model "Gemini 3.1 Pro (High)"`. If it was just "any second-opinion model", let `agy` use its default.
+**Rule of thumb:** if the old call needed Gemini specifically (independent Google-model perspective, panel diversity), keep that by pinning `--model "Gemini 3.8 Flash (High)"`. If it was just "any second-opinion model", let `agy` use its default.
 
 ## Common invocations
 
 ### Independent Google-model verifier (replaces `gemini -p`)
 
 ```bash
-agy --model "Gemini 3.1 Pro (High)" --dangerously-skip-permissions -p "<prompt>"
+agy --model "Gemini 3.8 Flash (High)" --dangerously-skip-permissions -p "<prompt>"
 ```
 
 Use in: panel reviewers (theteam), AI-detection scoring (write-blog), second-opinion verifiers.
@@ -106,7 +105,7 @@ Use in: panel reviewers (theteam), AI-detection scoring (write-blog), second-opi
 ### Cheap/fast bulk scoring
 
 ```bash
-agy --model "Gemini 3.5 Flash (High)" -p "<prompt>"
+agy --model "Gemini 3.8 Flash (Low)" -p "<prompt>"
 ```
 
 Use when running many calls (per-link grading, per-paragraph linting). Flash is dramatically cheaper than Pro.
@@ -114,7 +113,7 @@ Use when running many calls (per-link grading, per-paragraph linting). Flash is 
 ### Headless with timeout
 
 ```bash
-timeout 30 agy --model "Gemini 3.1 Pro (High)" -p "<prompt>" 2>/dev/null
+timeout 30 agy --model "Gemini 3.8 Flash (High)" -p "<prompt>" 2>/dev/null
 ```
 
 Default print timeout is 5m (`--print-timeout 5m0s`). Wrap with `timeout` for tighter caps in pipelines.
@@ -133,8 +132,8 @@ Plugins/MCP servers configured this way appear automatically in agy sessions.
 
 ## Gotchas
 
-- **Display names, not model IDs.** `agy --model "gemini-3.1-pro"` will fail. Use `"Gemini 3.1 Pro (High)"` exactly as shown by `agy models`.
-- **Parentheses must be quoted.** `--model Gemini 3.1 Pro (High)` → shell error. Always wrap in `"..."`.
+- **Exact names only.** Both the display name (`"Gemini 3.8 Flash (High)"`) and the ID (`gemini-3.8-flash-high`) from `agy models` work; anything else fails. Prefer the display name — it is what the rest of these skills use.
+- **Parentheses must be quoted.** `--model Gemini 3.8 Flash (High)` → shell error. Always wrap in `"..."`.
 - **Default model is configurable.** Don't assume `agy -p` calls Gemini — pin `--model` when the call's semantics depend on which family answers.
 - **`--dangerously-skip-permissions` is the only auto-approve flag.** No `--yes` / `--skip-trust` shortcut.
 - **Browser Gemini ≠ agy.** Tasks that need image generation or chat at `gemini.google.com` still go through the browser, not agy.
