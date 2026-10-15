@@ -24,11 +24,17 @@ start=$(date +%s); failed=""
 step() { "$@" || failed="$failed\n  - $1 ${2:-}"; }
 
 echo "repo-standards pre-push on $(git rev-parse --abbrev-ref HEAD) vs $BASE_BRANCH ($(changed_files | wc -l | tr -d ' ') changed file(s))"
-step run_cmd lint "$LINT_CMD"
-step run_cmd typecheck "$TYPECHECK_CMD"
-step run_cmd unit "$UNIT_CMD"
-step run_cmd diff-coverage "$DIFF_COVERAGE_CMD"
+class_report
+# The app's and the site's commands run by change class; the rest run on every class.
+step run_part lint app "$LINT_CMD"
+step run_part site-lint site "$SITE_LINT_CMD"
+step run_part typecheck app "$TYPECHECK_CMD"
+step run_part site-typecheck site "$SITE_TYPECHECK_CMD"
+step run_part unit app "$UNIT_CMD"
+step run_part site-unit site "$SITE_UNIT_CMD"
+step run_cmd diff-coverage "$DIFF_COVERAGE_CMD"   # picks its reports by change class
 step "$ROOT/.standards/checks/coverage-baseline.sh"
+step "$ROOT/.standards/checks/cross-reads.sh"
 step "$ROOT/.standards/checks/tdd.sh"
 step "$ROOT/.standards/checks/doc-map.sh"
 step "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate"

@@ -638,6 +638,108 @@ echo "owner-review: required — tone" >> "$dec"; git commit -qam "flag"
 ship_run
 expect pass "ship: APPROVER=agent → owner-review flag still blocks" test "$(writes)" = ""
 
+# --- change class: which checks a branch needs ---
+echo "change class"
+C="$T/cls"; mkdir -p "$C"; cd "$C" || exit 1
+git init -q -b main
+git config user.email t@example.invalid; git config user.name test
+mkdir -p .standards src tests site/src site/tests docs
+cp -R "$SKILL/scripts/." .standards/
+cat >> .standards/config.sh <<'EOF'
+SRC_GLOBS="src/* site/src/*"
+TEST_GLOBS="tests/* site/tests/*"
+TEST_FILES_CMD="./run-tests.sh"
+SITE_TEST_FILES_CMD="./run-tests.sh"
+COVERAGE_TOTAL_CMD="echo 1"
+SHARED_GLOBS="docs/shared.md"
+APP_GLOBS=".standards/*"
+SITE_GLOBS="site/*"
+DOCS_GLOBS="docs/* *.md"
+CROSS_READS_APP_FILES="tests/*.test.sh"
+CROSS_READS_SITE_FILES="site/tests/*.test.sh"
+EOF
+cat > run-tests.sh <<'EOF'
+#!/bin/sh
+rc=0; for f in "$@"; do sh "$f" || { echo "test failed: $f"; rc=1; }; done; exit $rc
+EOF
+chmod +x run-tests.sh .standards/checks/* .standards/hooks/*
+echo 'a() { echo 1; }' > src/a.sh
+echo 'o() { :; }' > src/old.sh
+echo 'v() { echo 1; }' > site/src/lib.sh
+echo 'x' > site/data.txt
+echo 'shared' > docs/shared.md
+echo 'notes' > docs/notes.md
+echo 5 > .standards/coverage-baseline
+echo 'true' > site/tests/keep.test.sh
+echo '. src/a.sh; [ "$(a)" = 1 ]' > tests/a.test.sh
+git add -A . && git commit -qm base
+cls() { bash -c '. .standards/lib/common.sh; change_class'; }
+branch() { git checkout -q main; git checkout -q -B "$1"; }
+class_is() { # class_is <want> <name>
+  expect pass "class $2 -> $1" test "$(cls)" = "$1"
+}
+
+branch feat/9-docs; echo more >> docs/notes.md; git commit -qam docs
+class_is docs "docs only"
+expect fail "coverage-baseline runs when the app is touched (self-proof)" bash -c "git checkout -q -B feat/9-probe main && echo y >> src/a.sh && git commit -qam probe && .standards/checks/coverage-baseline.sh"
+branch feat/9-docs2; echo more >> docs/notes.md; git commit -qam docs
+expect pass "coverage-baseline skipped on a docs branch" bash -c ".standards/checks/coverage-baseline.sh | grep -q 'SKIP coverage-baseline'"
+branch feat/9-site; echo 2 > site/data.txt; echo more >> docs/notes.md; git commit -qam site
+class_is site "site files and docs"
+branch feat/9-app; echo y >> src/a.sh; git commit -qam app
+class_is app "app file"
+branch feat/9-del; git rm -q src/old.sh; git commit -qm "delete an app file"
+class_is app "deleted app file (not invisible)"
+branch feat/9-both; echo y >> src/a.sh; echo 2 > site/data.txt; git commit -qam both
+class_is all "app and site"
+branch feat/9-shared; echo more >> docs/shared.md; git commit -qam shared
+class_is all "shared file"
+branch feat/9-gate; echo "# x" >> .standards/lib/common.sh; git commit -qam "gate file"
+class_is app ".standards/ is app even though it is not source"
+branch feat/9-none; git commit -q --allow-empty -m none
+class_is all "no file changed"
+expect pass "classes off (no SITE/DOCS globs) -> all" bash -c "git checkout -q feat/9-docs && . .standards/lib/common.sh && SITE_GLOBS='' DOCS_GLOBS='' && [ \"\$(change_class)\" = all ]"
+expect pass "checks_for: site branch skips app, runs site" bash -c ". .standards/lib/common.sh; ! checks_for app site && checks_for site site && ! checks_for site-change docs && checks_for site-change all && checks_for nonsense docs"
+
+echo "tdd per test kind"
+tdd() { expect "$1" "tdd: $2" .standards/checks/tdd.sh; }
+branch feat/9-t1
+echo 'v() { echo 2; }' > site/src/lib.sh; echo '. site/src/lib.sh; [ "$(v)" = 2 ]' > site/tests/v.test.sh
+git add -A . && git commit -qm "site change with a site test"
+tdd pass "site source + red/green site test"
+branch feat/9-t2
+echo 'a() { echo 3; }' > src/a.sh; echo 'true' > site/tests/other.test.sh
+git add -A . && git commit -qm "app change, only a site test"
+tdd fail "app source with only a site test"
+branch feat/9-t3
+echo 'a() { echo 3; }' > src/a.sh; echo '. src/a.sh; [ "$(a)" = 3 ]' > tests/a.test.sh
+echo 'v() { echo 2; }' > site/src/lib.sh; echo '. site/src/lib.sh; [ "$(v)" = 2 ]' > site/tests/v.test.sh
+git add -A . && git commit -qm "both with proper tests"
+tdd pass "app and site, each test red on base and green on HEAD"
+branch feat/9-t4
+echo 'a() { echo 3; }' > src/a.sh; echo 'true' > tests/a.test.sh
+echo 'v() { echo 2; }' > site/src/lib.sh; echo '. site/src/lib.sh; [ "$(v)" = 2 ]' > site/tests/v.test.sh
+git add -A . && git commit -qm "app test is green on base, site test is red"
+tdd fail "app test green on base is not hidden by a red site test"
+
+echo "cross-reads"
+cr() { expect "$1" "cross-reads: $2" .standards/checks/cross-reads.sh; }
+branch feat/9-cr
+cr pass "tests read only app paths"
+echo '. src/a.sh; cat "site/data.txt"' > tests/a.test.sh; git commit -qam "app test reads a site file"
+cr fail "app test reads a site file not in SHARED_GLOBS"
+echo 'SHARED_GLOBS="$SHARED_GLOBS site/data.txt"' >> .standards/config.sh
+cr pass "same read, path listed in SHARED_GLOBS"
+git checkout -q .standards/config.sh
+echo 'SITE_GLOBS=""; DOCS_GLOBS=""' >> .standards/config.sh
+cr pass "classes off -> check skipped"
+git checkout -q .standards/config.sh
+git checkout -q main -- tests/a.test.sh; git commit -qam "no cross read"
+echo "const p = '../docs/notes.md'" > site/tests/n.test.sh; git add site/tests/n.test.sh; git commit -qm "site test reads a docs file"
+cr fail "site test reads a docs file not in SHARED_GLOBS"
+git rm -q site/tests/n.test.sh site/tests/keep.test.sh; git commit -qm "drop site tests"
+cr fail "configured side with no file to scan fails closed"
+
 echo
 echo "$pass passed, $fail wrong"
 [ $fail -eq 0 ]

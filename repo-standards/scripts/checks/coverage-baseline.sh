@@ -5,6 +5,9 @@
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
 
 [ -n "$COVERAGE_TOTAL_CMD" ] || { info "SKIP coverage-baseline (N/A in config)"; exit 0; }
+# The total measures the app, which a site or docs change cannot move.
+class="$(change_class)"
+checks_for app "$class" || { info "SKIP coverage-baseline (change class $class: not needed)"; exit 0; }
 baseline_file=".standards/coverage-baseline"
 baseline="$(cat "$baseline_file" 2>/dev/null)"; baseline="${baseline:-0}"
 total="$(eval "$COVERAGE_TOTAL_CMD" | tail -1 | tr -d '%[:space:]')"

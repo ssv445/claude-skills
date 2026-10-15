@@ -11,7 +11,8 @@ Hard rules (the hooks back these up; treat a red hook as a stop, not an obstacle
 - `approved` / `spec-approved` labels are the owner's alone, added via `bin/approve` at a terminal. Never edit gate files, or rephrase commands, to get past `bin/ship` or the guard.
 - Asking the owner: name the exact rule that requires them (e.g. "this PR changes gate files"), and give the one command to run. Then keep working on everything that does not depend on the answer — prep, plans, other issues. Stop only when the next step needs their input.
 - An idea that is not today's work goes into the Inbox of `docs/product/roadmap.md` at once, then is checked against `docs/product/goals.md` before it becomes an item.
-- Taste and product calls go to the owner: add this exact line, at column 0, to `decisions.md`: `owner-review: required — <reason>`. Never remove one; only the owner resolves it. Mechanical calls: decide, record in `decisions.md`.
+- Taste and product calls are decide-and-log: pick your recommended option, record it (and the alternative you rejected) in `decisions.md`, and ship. Only a big call goes to the owner — a price, a public claim or pitch, a new screen or visual design, anything that costs money: add this exact line, at column 0, to `decisions.md`: `owner-review: required — <reason>`. Never remove one; only the owner resolves it. Mechanical calls: decide, record in `decisions.md`.
+- An issue you file at the owner's explicit instruction counts as owner-filed.
 
 ### Your steps (owner)
 With `APPROVER="agent"`: answer `owner-review: required` flags (and say "merge" in repos without `bin/ship`). Nothing else.

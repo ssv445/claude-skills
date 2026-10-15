@@ -84,8 +84,11 @@ if [ -f "$spec" ] && grep -qiE "$(owner_flag_re approval)" "$spec"; then
   fi
 fi
 
-run_cmd e2e "$E2E_CMD" || fail=1
-run_cmd perf "$PERF_CMD" || fail=1
+# By change class: the app's e2e and perf skip on a site or docs branch, the site's e2e runs only
+# when the site changed. With no classes configured the class is "all" and everything runs.
+run_part e2e app "$E2E_CMD" || fail=1
+run_part site-e2e site-change "$SITE_E2E_CMD" || fail=1
+run_part perf app "$PERF_CMD" || fail=1
 
 [ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
 
