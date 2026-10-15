@@ -33,6 +33,82 @@ changed_files() {
   git -c core.quotePath=false diff -z --name-only --diff-filter=ACMR "$(base_commit)" HEAD | tr '\0' '\n'
 }
 
+# Every path the branch touches, one per line: added, modified, deleted, and both sides of a
+# rename (--no-renames). changed_files leaves out deletions; the change class must not, or a
+# branch deleting a source file would look like it changed no source file.
+touched_files() {
+  git -c core.quotePath=false diff -z --name-only --no-renames "$(base_commit)" HEAD | tr '\0' '\n'
+}
+
+# --- change class: which checks a branch needs. Path lists: SHARED/APP/SITE/DOCS_GLOBS in config.sh.
+# Off (the class is always "all") until SITE_GLOBS or DOCS_GLOBS is set, so a repo that sets
+# nothing runs every check on every branch.
+
+# file_part <file>: shared | app | site | docs; the first list that matches, else app.
+file_part() {
+  if matches_any "$1" "$SHARED_GLOBS"; then echo shared
+  elif matches_any "$1" "$APP_GLOBS"; then echo app
+  elif matches_any "$1" "$SITE_GLOBS"; then echo site
+  elif matches_any "$1" "$DOCS_GLOBS"; then echo docs
+  else echo app; fi
+}
+
+# change_class: the class of the whole branch.
+#   docs  only docs files: neither the app's nor the site's checks
+#   site  site files, docs aside: the site's checks only
+#   app   app files, docs aside: every check (the site's ship-time checks only when the site changes)
+#   all   app and site files, a shared file, no file, or the list failed: every check
+# Fails closed: anything it cannot tell is "all".
+change_class() {
+  local files f app="" site=""
+  [ -n "$SITE_GLOBS$DOCS_GLOBS" ] || { echo all; return; }
+  files="$(set -o pipefail; touched_files)" && [ -n "$files" ] || { echo all; return; }
+  while IFS= read -r f; do
+    case "$(file_part "$f")" in
+      shared) echo all; return ;;
+      app) app=1 ;;
+      site) site=1 ;;
+    esac
+  done <<<"$files"
+  if [ -n "$app" ] && [ -n "$site" ]; then echo all
+  elif [ -n "$app" ]; then echo app
+  elif [ -n "$site" ]; then echo site
+  else echo docs; fi
+}
+
+# checks_for <part> [class]: whether a group of checks runs for the class (default: change_class).
+#   app          the app's lint, typecheck, tests, coverage, e2e and perf
+#   site         the site's lint, typecheck and tests at pre-push (an app change still runs them:
+#                the site's tests may read app files)
+#   site-change  the site's coverage report and ship-time checks (SITE_E2E_CMD): only when the
+#                site changed
+# Fails closed: an unknown part or class runs.
+checks_for() {
+  local c="${2:-$(change_class)}"
+  case "$1:$c" in
+    app:docs | app:site | site:docs | site-change:docs | site-change:app) return 1 ;;
+  esac
+  return 0
+}
+
+# class_report [class]: one line naming the class and what it skips, so a skip is never silent.
+class_report() {
+  local c="${1:-$(change_class)}"
+  case "$c" in
+    docs) info "change class: docs — only docs changed; skipping the app's and the site's checks" ;;
+    site) info "change class: site — only the site (and docs) changed; skipping the app's checks" ;;
+    app) info "change class: app — every check runs (the site's ship-time checks only when the site changes)" ;;
+    *) info "change class: $c — every check runs" ;;
+  esac
+}
+
+# run_part <label> <part> <command>: run_cmd when checks_for <part>, else a visible SKIP.
+run_part() {
+  local c
+  c="$(change_class)"
+  if checks_for "$2" "$c"; then run_cmd "$1" "$3"; else info "SKIP $1 (change class $c: not needed)"; fi
+}
+
 # matches_any <file> <space-separated globs>. Globs are matched with [[ == ]], where
 # * also matches "/", so "src/*" covers every depth under src/.
 matches_any() {
