@@ -5,7 +5,7 @@
 |---|---|---|---|---|
 
 ## Assumptions
-| Id | Evidence this month | Proposed status |
+| Id | Evidence this month | Status set (revertible) |
 |---|---|---|
 
 ## Roadmap
@@ -17,5 +17,10 @@
 From `docs/rule-changes.md` — one line each, so the owner can revert any they disagree with:
 -
 
-## Decisions for the owner (one at a time)
+## Decisions applied
+What the agent changed (assumption statuses, re-ranks, drops, ideas), one line each with the reason, so the owner can revert any:
+-
+
+## Big calls for the owner (one at a time)
+Only the list in the repo-standards block of `CLAUDE.md`; usually empty.
 1.

@@ -275,6 +275,40 @@ git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag"
 review "$ok" "$ok" ""
 aa fail "owner-review flag removed on the branch"
 git reset -q --hard HEAD~2
+# An answered flag closes without bin/approve: the agent turns the required line into
+# "owner-review: answered — <link> — <answer>". Any other removal still needs the owner.
+url="https://github.com/acme/app/pull/12#issuecomment-1"
+answer() { # answer <line>: commit a flag, then commit it replaced by <line>; review HEAD
+  echo "owner-review: required — copy tone" >> "$dec"; git commit -qam "flag"
+  grep -v '^owner-review: required — copy tone$' "$dec" > "$T/dec"; printf '%s\n' "$1" >> "$T/dec"
+  cp "$T/dec" "$dec"; git commit -qam "answer"
+  review "$ok" "$ok" ""
+}
+answered() { git checkout -q docs; git reset -q --hard HEAD~2; }
+answer "owner-review: answered — $url — \"keep it formal\""
+aa pass "owner-review flag closed as answered (link + answer)"
+answered
+answer "- owner-review: answered — $url — \"yes, the field stays required\""
+aa pass "answered line whose quoted answer says 'required'"
+answered
+answer "owner-review: answered — <link to the owner's answer> — \"keep it formal\""
+aa fail "answered with a placeholder link"
+answered
+answer "owner-review: answered — $url — <the answer, quoted>"
+aa fail "answered with a placeholder answer"
+answered
+answer "owner-review: answered — $url — ok; owner-review: required — still open"
+aa fail "answered line hiding an open flag"
+answered
+answer "owner-review: answered — $url"
+aa fail "answered with a link but no answer"
+answered
+printf 'owner-review: required — price\nowner-review: required — tone\n' >> "$dec"; git commit -qam "two flags"
+grep -v '^owner-review: required' "$dec" > "$T/dec"; echo "owner-review: answered — $url — \"tone: formal\"" >> "$T/dec"
+cp "$T/dec" "$dec"; git commit -qam "answer one, drop both"
+review "$ok" "$ok" ""
+aa fail "two flags removed, only one answered"
+answered
 echo "owner-approval: required" > docs/work/7-mul/spec.md; git add docs; git commit -qm spec
 echo "owner-approval: not-required" > docs/work/7-mul/spec.md; git commit -qam "downgrade"
 review "$ok" "$ok" ""
@@ -323,6 +357,48 @@ git add .Claude && git commit -qm "gate dir, other case"
 review "$ok" "$ok" ""
 aa fail "gate file in a differently-cased dir (.Claude/)"
 git reset -q --hard HEAD~1
+
+# Only the repo-standards block of CLAUDE.md / AGENTS.md is a gate file: the facts around it
+# are any PR's to edit. Markers missing or malformed on either side → the whole file counts.
+# The base holds facts plus the real installed block, so the template's markers are proven too.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main
+{ echo "# App"; echo "Folders: src/"; echo; cat "$SKILL/templates/claude-md-block.md"; echo; echo "Ports: 3000"; } > CLAUDE.md
+mkdir -p web; cp CLAUDE.md web/AGENTS.md
+git add CLAUDE.md web && git commit -qm "main: CLAUDE.md with block"
+git checkout -q feat/7-mul; git rebase -q main
+sed 's|^Folders: src/$|Folders: src/ web/|' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "list a new folder"
+review "$ok" "$ok" ""
+aa pass "CLAUDE.md edited outside the repo-standards block"
+expect pass "agent-approval --gate-files: edit outside the block lists nothing" \
+  test -z "$(.standards/checks/agent-approval.sh --gate-files)"
+git checkout -q docs; git reset -q --hard HEAD~1
+sed 's|^- Every change starts from a GitHub issue|- Most changes start from a GitHub issue|' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "edit a rule"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md edited inside the repo-standards block"
+expect pass "agent-approval --gate-files: edit inside the block lists CLAUDE.md" \
+  test "$(.standards/checks/agent-approval.sh --gate-files)" = "CLAUDE.md"
+git checkout -q docs; git reset -q --hard HEAD~1
+sed 's|^Ports: 3000$|Ports: 4000|' web/AGENTS.md > "$T/c" && cp "$T/c" web/AGENTS.md; git commit -qam "nested AGENTS.md fact"
+review "$ok" "$ok" ""
+aa pass "nested AGENTS.md edited outside the block"
+git checkout -q docs; git reset -q --hard HEAD~1
+grep -v '^<!-- repo-standards:end -->$' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "drop the end marker"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md end marker removed → whole file counts"
+git checkout -q docs; git reset -q --hard HEAD~1
+{ echo "<!-- repo-standards:begin -->"; cat CLAUDE.md; } > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "second begin marker"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md with two begin markers → whole file counts"
+git checkout -q docs; git reset -q --hard HEAD~1
+git checkout -q main; git reset -q --hard "$main0"
+echo "agents: keep it short" > CLAUDE.md; git add CLAUDE.md; git commit -qm "main: CLAUDE.md, no markers"
+git checkout -q feat/7-mul; git reset -q --hard "$feat"; git rebase -q main
+{ cat CLAUDE.md; echo "Folders: src/"; } > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "fact, no markers"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md without markers on base → whole file counts"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
 
 # A gate-file change ships on a passing gate-change review plus a line appended to the
 # owner's rule-change log, committed so the review covers it.
@@ -772,6 +848,36 @@ echo 'SRC_GLOBS=""' >> .standards/config.sh
 tdd pass "SRC_GLOBS explicitly empty → N/A"
 expect pass "tdd: empty SRC_GLOBS prints an N/A line" grep -q "N/A: SRC_GLOBS empty" "$T/last.log.prev"
 git checkout -q .standards/config.sh
+
+echo "docs-only lane"
+# A branch touching only docs needs no spec or plan gate; the pre-merge gate still applies.
+dl() { expect "$1" "docs-only: $2" .standards/checks/decision-log.sh "Spec gate" "Plan gate"; }
+branch feat/9-dl; mkdir -p docs/work/9-dl; echo more >> docs/notes.md
+echo "# Decisions — #9" > docs/work/9-dl/decisions.md
+git add -A . && git commit -qm "docs-only, no gate sections"
+dl pass "spec + plan gates absent"
+expect fail "docs-only: pre-merge gate still required" .standards/checks/decision-log.sh "Pre-merge gate"
+printf '## Spec gate\nVerdict: N/A — docs-only\n\n## Plan gate\nVerdict: N/A — docs-only: wording\n' >> docs/work/9-dl/decisions.md
+dl pass "Verdict: N/A — docs-only"
+git checkout -q docs
+printf '## Spec gate\nVerdict: PENDING\n' >> docs/work/9-dl/decisions.md
+dl fail "spec gate present and PENDING"
+git checkout -q docs
+echo y >> src/a.sh; git commit -qam "now an app change too"
+dl fail "app file touched → spec + plan gates required"
+git reset -q --hard HEAD~1
+# Without DOCS_GLOBS: only prose files, none under SRC_GLOBS or TEST_GLOBS.
+echo 'DOCS_GLOBS=""' >> .standards/config.sh
+dl pass "DOCS_GLOBS unset, only .md files touched"
+git checkout -q .standards/config.sh
+echo '{}' > package.json; git add package.json; git commit -qm "a manifest"
+echo 'DOCS_GLOBS=""' >> .standards/config.sh
+dl fail "DOCS_GLOBS unset, package.json touched"
+git checkout -q .standards/config.sh; git reset -q --hard HEAD~1
+echo "# notes" > src/README.md; git add src; git commit -qm "readme under src"
+echo 'DOCS_GLOBS=""' >> .standards/config.sh
+dl fail "a .md under SRC_GLOBS is source, not docs"
+git checkout -q .standards/config.sh; git reset -q --hard HEAD~1
 
 echo "cross-reads"
 cr() { expect "$1" "cross-reads: $2" .standards/checks/cross-reads.sh; }

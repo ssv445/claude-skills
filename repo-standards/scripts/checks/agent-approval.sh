@@ -41,8 +41,34 @@ raises_baseline() {
   awk -v o="$old" -v n="$new" 'BEGIN { exit !(n + 0 >= o + 0) }'
 }
 
+# std_block <rev> <path>: the repo-standards block of a CLAUDE.md / AGENTS.md at <rev> — the
+# lines between its begin and end markers. Fails when the file is absent there or the
+# markers are not exactly one begin followed by one end.
+STD_BEGIN="<!-- repo-standards:begin -->"
+STD_END="<!-- repo-standards:end -->"
+std_block() {
+  git show "$1:$2" 2>/dev/null | awk -v b="$STD_BEGIN" -v e="$STD_END" '
+    { sub(/[ \t\r]+$/, "") }
+    $0 == b { nb++; if (ne) bad = 1; inside = 1; next }
+    $0 == e { ne++; if (!inside) bad = 1; inside = 0; next }
+    inside { out = out $0 "\n" }
+    END { if (bad || nb != 1 || ne != 1) exit 1; printf "%s", out }'
+}
+
+# block_unchanged <path>: CLAUDE.md / AGENTS.md whose repo-standards block is the same on
+# base and HEAD. Only that block holds rules; the rest of the file is facts any PR may edit
+# (in some repos an architecture doc nearly every PR touches). Fails closed: a file without
+# well-formed markers on either side counts whole.
+block_unchanged() {
+  local old new
+  old="$(std_block "$base" "$1")" || return 1
+  new="$(std_block HEAD "$1")" || return 1
+  [ "$old" = "$new" ]
+}
+
 # gate_files_touched: sets $touched to the gate files the branch changes (space-led, "" =
 # none) and $baseline_raised when the only baseline edit is a raise, which is no gate change.
+# A CLAUDE.md / AGENTS.md counts only when its repo-standards block changed (block_unchanged).
 # --no-renames (in $changed): a moved file shows both paths.
 # nocasematch: ".Claude/" is ".claude/" on a case-insensitive filesystem.
 gate_files_touched() {
@@ -51,7 +77,9 @@ gate_files_touched() {
   shopt -s nocasematch
   while IFS= read -r -d '' f; do
     if [ "$f" = ".standards/coverage-baseline" ] && raises_baseline; then baseline_raised=1; continue; fi
-    matches_any "$f" "$GATE_FILES" && touched="$touched $f"
+    matches_any "$f" "$GATE_FILES" || continue
+    case "${f##*/}" in CLAUDE.md|AGENTS.md) block_unchanged "$f" && continue ;; esac
+    touched="$touched $f"
   done < "$changed"
   shopt -u nocasematch
 }
@@ -116,19 +144,32 @@ else
   # a. Pre-merge gate passed: both reviewers PASS, or they split and the arbiter ruled PASS.
   gate_review "Pre-merge gate"
 
-  # b. Nobody flagged a taste or product call for the owner.
-  flags="$(grep -inE "$(owner_flag_re review)" "$dec")"
-  [ -z "$flags" ] && info "ok   no owner-review flag" || miss "owner review requested in $dec: $flags"
+  # b. No big call is waiting on the owner. An answered flag (owner_answered_re) is closed.
+  flags="$(owner_flags "$dec")"
+  [ -z "$flags" ] && info "ok   no open owner-review flag" || miss "owner review requested in $dec: $flags"
 fi
 
 # Owner-only flags removed by any commit on the branch (added then deleted counts too).
 # -m: a merge commit's diff against each parent, so a flag dropped while merging shows.
+# An owner-review flag may go only by turning into an answered line: each distinct removed
+# flag needs one answered line in decisions.md now. owner-approval: required has no answered
+# form — removing it always needs the owner.
 if [ -n "$base" ]; then
   if log="$(git log -m -p --format= "$base..HEAD" -- "docs/work/$(issue_number)-*")"; then
     # Removed lines, minus the diff's "-" marker, judged by the same flag patterns.
-    removed="$(printf '%s\n' "$log" | grep -E '^-' | grep -vE '^--- (a/|/dev/null)' | sed 's/^-//' \
-      | grep -iE "$(owner_flag_re review)|$(owner_flag_re approval)")"
-    [ -z "$removed" ] && info "ok   no owner flag removed" || miss "owner flag removed on this branch: $removed"
+    removed="$(printf '%s\n' "$log" | grep -E '^-' | grep -vE '^--- (a/|/dev/null)' | sed 's/^-//')"
+    gone_approval="$(printf '%s\n' "$removed" | grep -iE "$(owner_flag_re approval)")"
+    # An edited answered line is no removed flag, even if its answer says "required".
+    gone_review="$(printf '%s\n' "$removed" | grep -iE "$(owner_flag_re review)" \
+      | while IFS= read -r l; do [ -n "$(printf '%s\n' "$l" | owner_answered_lines -)" ] || printf '%s\n' "$l"; done | sort -u)"
+    answered=0
+    [ -z "$dec" ] || [ ! -f "$dec" ] || answered="$(owner_answered_lines "$dec" | wc -l | tr -d ' ')"
+    gone=0; [ -z "$gone_review" ] || gone="$(printf '%s\n' "$gone_review" | wc -l | tr -d ' ')"
+    [ -z "$gone_approval" ] || miss "owner-approval flag removed on this branch: $gone_approval"
+    if [ "$gone" -eq 0 ]; then info "ok   no owner-review flag removed"
+    elif [ "$gone" -le "$answered" ]; then info "ok   $gone owner-review flag(s) closed as answered"
+    else miss "owner-review flag removed on this branch without an answer ($gone removed, $answered answered): $gone_review — replace it with 'owner-review: answered — <link to the owner's answer> — <the answer, quoted>'"
+    fi
   else miss "git log $base..HEAD failed"
   fi
 fi
@@ -161,5 +202,5 @@ if [ $diff_ok -eq 1 ] && git diff -U0 --no-renames "$base" HEAD -- "$RULE_LOG" |
   miss "$RULE_LOG lost or changed a line — it only grows; append instead"
 fi
 
-[ $fail -eq 0 ] || { red "FAIL agent-approval: fix the misses above; the owner is needed only for an owner-review flag, a removed owner flag, no base, or (APPROVER=owner) gate files"; exit 1; }
+[ $fail -eq 0 ] || { red "FAIL agent-approval: fix the misses above; the owner is needed only to answer an owner-review flag (then close it as answered), for a removed owner-approval flag, no base, or (APPROVER=owner) gate files"; exit 1; }
 green "PASS agent-approval"

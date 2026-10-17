@@ -1,6 +1,6 @@
 # Goals
 
-Every roadmap item serves at least one goal. An idea that serves none is either rejected or a sign a goal is missing — ask the owner.
+Every roadmap item serves at least one goal. An idea that serves none is rejected to `ideas-rejected.md` with "if a goal is missing, say so"; the owner reads and reverts.
 
 ### G-1 <goal title>
 - metric: <what is measured, in which tool from stack.md>

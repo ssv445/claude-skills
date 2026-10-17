@@ -112,7 +112,7 @@ if [ -z "$approval" ]; then
   else
     cat "$owner_log"
     printf '%s\n' "$out"
-    red "ship BLOCKED: fix the misses above, then re-run; for an owner-review flag, a removed owner flag, no base, or (APPROVER=owner) gate files, ask the owner to run bin/approve $pr"
+    red "ship BLOCKED: fix the misses above, then re-run; an owner-review flag the owner has answered, close as answered in decisions.md; for no base, a removed owner-approval flag or (APPROVER=owner) gate files, ask the owner to run bin/approve $pr"
     exit 1
   fi
 fi
@@ -171,10 +171,10 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 
 - Pre-merge gate \`Verdict: PASS\`: both reviewers PASS, or one PASS and the arbiter PASS; no duplicate gate lines
 - \`Reviewed:\` commit covers the head — every file the branch changes matches it, decisions.md aside
-- No \`owner-review: required\` line in decisions.md, and no owner flag removed on the branch
+- No open \`owner-review: required\` line in decisions.md, every removed one closed as answered, and no \`owner-approval: required\` removed
 - $gate_line
 - $spec_line
-- Spec gate, plan gate, e2e and perf passed
+- Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed
 
 Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
 fi

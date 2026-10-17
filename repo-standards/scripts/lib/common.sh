@@ -174,6 +174,47 @@ owner_flag_re() {
   esac
 }
 
+# owner_answered_re: anchored ERE (use with grep -i) for a closed owner-review flag:
+#   owner-review: answered — <link to the owner's answer> — <the answer, quoted>
+# The link must be a real URL and the answer real text: a "<placeholder>" does not count.
+# An agent writes it in place of the flag once the owner has answered, so an answered
+# question needs no bin/approve. It checks the shape only: agents post as the owner, so who
+# wrote the answer cannot be proven here (the gates are a speed bump for honest agents).
+owner_answered_re() {
+  printf '^ {0,3}([-*] +)?owner-review: answered (—|-) https?://[^ <>]+ (—|-) [^ <]'
+}
+
+# owner_answered_lines <file>: the file's answered flags. A line naming owner-review twice is
+# not one (it could hide an open flag behind a closed one).
+owner_answered_lines() {
+  grep -iE "$(owner_answered_re)" "$1" | grep -viE 'owner-review.*owner-review'
+}
+
+# owner_flags <file>: the file's open owner-review flags, "<line>:<text>", or nothing. An
+# answered flag is closed even when the quoted answer says "required".
+owner_flags() {
+  local l
+  grep -inE "$(owner_flag_re review)" "$1" | while IFS= read -r l; do
+    [ -n "$(printf '%s\n' "${l#*:}" | owner_answered_lines -)" ] || printf '%s\n' "$l"
+  done
+}
+
+# docs_only: the branch touches docs and nothing else, so it needs no spec or plan gate.
+# No touched file may match SRC_GLOBS or TEST_GLOBS. With DOCS_GLOBS set, the change class
+# must be docs (no app, site or shared file). Without it, every touched file must be prose
+# (DOCS_ONLY_DEFAULT_GLOBS): a package.json or requirements.txt is not docs. Fails closed:
+# no file, or a list git cannot produce, is not docs-only.
+DOCS_ONLY_DEFAULT_GLOBS="*.md *.mdx *.markdown *.rst *.adoc"
+docs_only() {
+  local files f
+  files="$(set -o pipefail; touched_files)" && [ -n "$files" ] || return 1
+  while IFS= read -r f; do
+    matches_any "$f" "$SRC_GLOBS $TEST_GLOBS" && return 1
+    [ -n "$DOCS_GLOBS" ] || matches_any "$f" "$DOCS_ONLY_DEFAULT_GLOBS" || return 1
+  done <<<"$files"
+  [ -z "$DOCS_GLOBS" ] || [ "$(change_class)" = docs ]
+}
+
 # section_count <file> <section heading text> <line prefix> → how many lines in that
 # section start with the prefix.
 section_count() {
