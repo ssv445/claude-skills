@@ -23,6 +23,20 @@ for f in "$SKILL"/tests/guard-fixtures/*.json; do
   case "$n" in block-*) want=fail ;; *) want=pass ;; esac
   expect "$want" "guard $n" bash "$SKILL/scripts/guard.sh" < "$f"
 done
+# Fail closed without jq: a PATH holding every tool the guard uses but jq. The command is
+# one the guard allows, so only the missing jq can block it.
+mkdir -p "$T/nojq"
+for t in cat git dirname awk sed grep head tr; do ln -s "$(command -v "$t")" "$T/nojq/$t"; done
+expect fail "guard: no jq on PATH → blocks (fail closed)" \
+  env PATH="$T/nojq" /bin/bash "$SKILL/scripts/guard.sh" < "$SKILL/tests/guard-fixtures/allow-push.json"
+expect pass "guard: no jq → says it needs jq, and how to install it" grep -q "guard needs jq.*brew install jq" "$T/last.log.prev"
+# Without jq: still out of scope from a cwd outside this repo, and installing jq (exactly, no
+# options) is the way out. nojq-block-* fixtures are harmless with jq (above: pass), blocked without.
+for f in "$SKILL"/tests/guard-fixtures/*nojq*.json; do
+  n="$(basename "$f" .json)"
+  case "$n" in block-*|nojq-block-*) want=fail ;; *) want=pass ;; esac
+  expect "$want" "guard (no jq) $n" env PATH="$T/nojq" /bin/bash "$SKILL/scripts/guard.sh" < "$f"
+done
 
 # --- a tiny shell project with the standards installed ---
 R="$T/repo"; mkdir -p "$R"; cd "$R" || exit 1
@@ -212,6 +226,7 @@ git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; 
 git branch -q -D main
 review "$ok" "$ok" ""
 aa fail "no base commit (base ref deleted)"
+expect fail "agent-approval --gate-files: no base → fails closed" .standards/checks/agent-approval.sh --gate-files
 git checkout -q docs; git branch -q main "$main0"
 
 review "$ok" "$ok" ""
@@ -640,6 +655,24 @@ expect fail "ship: gate change, label fails after merge → run fails" ship_run 
 echo "owner-review: required — tone" >> "$dec"; git commit -qam "flag"
 ship_run
 expect pass "ship: APPROVER=agent → owner-review flag still blocks" test "$(writes)" = ""
+# The owner approves the same gate change: still labelled and recorded, whoever approved.
+ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh"
+expect pass "ship: owner-approved gate change → merge, then comment" test "$(writes)" = "merge;comment;"
+expect pass "ship: owner-approved gate change → PR labelled rules-changed" grep -q -- "pr edit 12 --add-label rules-changed" "$T/gh.log"
+expect pass "ship: owner-approved gate change → comment lists the gate file" grep -q 'Gate files changed.*CLAUDE.md' "$T/gh.log"
+expect fail "ship: owner-approved gate change, label fails → run fails" ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh" GH_FAIL="rules-changed"
+expect fail "ship: owner-approved gate change, comment fails → run fails" ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh" GH_FAIL="pr comment"
+# No gate-file list, no merge: a check that cannot list the branch's changes (stub, on the base
+# and so on the rebased branch too) stops an owner-approved ship before the merge.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; cp "$SKILL/tests/ship-fixtures/agent-approval-cannot-list.sh" .standards/checks/agent-approval.sh
+chmod +x .standards/checks/agent-approval.sh; git commit -qam "stub agent-approval" && git push -q origin main
+git checkout -q feat/1-x; git rebase -q main
+ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh"
+expect pass "ship: gate files cannot be listed → nothing written (no merge)" test "$(writes)" = ""
+expect pass "ship: gate files cannot be listed → says so" grep -q "could not list the gate files" "$T/ship.out"
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
 
 # --- change class: which checks a branch needs ---
 echo "change class"
@@ -724,6 +757,21 @@ echo 'a() { echo 3; }' > src/a.sh; echo 'true' > tests/a.test.sh
 echo 'v() { echo 2; }' > site/src/lib.sh; echo '. site/src/lib.sh; [ "$(v)" = 2 ]' > site/tests/v.test.sh
 git add -A . && git commit -qm "app test is green on base, site test is red"
 tdd fail "app test green on base is not hidden by a red site test"
+# No source change passes only when SRC_GLOBS can match source at all (config edits stay
+# uncommitted: the check sources the working copy, the diff reads commits).
+git checkout -q feat/9-docs
+tdd pass "no source change, SRC_GLOBS matches tracked source"
+echo 'SRC_GLOBS="web/* server/*"' >> .standards/config.sh
+tdd fail "no source change, SRC_GLOBS matches no tracked file"
+expect pass "tdd: zero-match failure names SRC_GLOBS" grep -q "SRC_GLOBS matches no tracked file" "$T/last.log.prev"
+git checkout -q .standards/config.sh
+echo 'SRC_GLOBS="src/*"' >> .standards/config.sh
+tdd fail "site tests tracked, SRC_GLOBS covers no site source"
+git checkout -q .standards/config.sh
+echo 'SRC_GLOBS=""' >> .standards/config.sh
+tdd pass "SRC_GLOBS explicitly empty → N/A"
+expect pass "tdd: empty SRC_GLOBS prints an N/A line" grep -q "N/A: SRC_GLOBS empty" "$T/last.log.prev"
+git checkout -q .standards/config.sh
 
 echo "cross-reads"
 cr() { expect "$1" "cross-reads: $2" .standards/checks/cross-reads.sh; }

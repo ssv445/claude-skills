@@ -36,7 +36,9 @@ END {
   }
   for (i = 1; i <= n; i++) {
     id = ids[i]; st = f[id, "status"]
-    if (st !~ /^(planned|ready|in-progress|shipped|dropped)/) err(id ": status \"" st "\" not one of planned|ready|in-progress|shipped|dropped")
+    # The word must end there ("plannedX", "planned-x" are no status: "-" is part of a word, as
+    # in in-progress); any punctuation or a reason may follow ("dropped: dup of R-2", "shipped.").
+    if (st !~ /^(planned|ready|in-progress|shipped|dropped)([^A-Za-z0-9_-]|$)/) err(id ": status \"" st "\" not one of planned|ready|in-progress|shipped|dropped")
     if (f[id, "goal"] == "" || f[id, "goal"] == "-") err(id ": serves no goal")
     m = split(f[id, "goal"], gs, ",")
     for (j = 1; j <= m; j++) { g = trim(gs[j]); if (g != "-" && !(g in goal)) err(id ": goal " g " not in goals.md") }

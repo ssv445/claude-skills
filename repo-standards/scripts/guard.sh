@@ -6,14 +6,31 @@
 # It judges only commands aimed at this repo (the one holding .standards/guard.sh): a
 # command that starts with `cd <dir>` or uses `git -C <dir>` outside it, runs from a
 # session cwd outside it, or names another GitHub repo with -R/--repo, is not its business.
-json="$(cat)"
-cmd="$(printf '%s' "$json" | jq -r '.tool_input.command // ""')"
-cwd="$(printf '%s' "$json" | jq -r '.cwd // ""')"
-
+# It reads the hook JSON with jq. Without jq (or on JSON jq cannot read) it cannot tell what
+# a command does, so from a session cwd in this repo it blocks everything but installing jq.
 block() { printf 'repo-standards guard: %s\n' "$1" >&2; exit 2; }
 
+json="$(cat)"
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 root="$(cd "$root" && pwd -P)"
+
+# raw_field <key>: a top-level-looking "key":"value" read without jq. Only values with no
+# quote or backslash are read; anything else reads as empty (and so counts as this repo).
+raw_field() { printf '%s' "$json" | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"([^"\\]*)".*/\1/p' | head -1; }
+if ! command -v jq >/dev/null 2>&1; then
+  c="$(raw_field cwd)"
+  if [ -n "$c" ] && t="$(cd "$c" 2>/dev/null && pwd -P)"; then
+    case "$t/" in "$root"/*) ;; *) exit 0 ;; esac
+  fi
+  # The way out: a command that is only a package-manager install of jq, nothing chained.
+  # Exact allowlist, no options: a package-manager option can run commands (apt-get -o …).
+  raw_field command | grep -Eqx '[[:space:]]*(brew install jq|(sudo )?apt-get install -y jq)[[:space:]]*' && exit 0
+  block "guard needs jq to read commands aimed at this repo — install it (macOS: brew install jq; Debian/Ubuntu: sudo apt-get install -y jq). Exactly those commands are allowed; everything else here is blocked until then."
+fi
+# jq failing (malformed hook JSON) would leave the command empty and pass every check below.
+cmd="$(printf '%s' "$json" | jq -r '.tool_input.command // ""')" \
+  && cwd="$(printf '%s' "$json" | jq -r '.cwd // ""')" \
+  || block "could not read the hook JSON (jq failed) — the command cannot be judged, so it is blocked."
 
 # Heredoc bodies are data (file contents, messages), never commands: drop them.
 cmd="$(printf '%s\n' "$cmd" | awk '
@@ -52,9 +69,17 @@ printf '%s' "$cmd" | grep -Eq 'gh[[:space:]]+pr[[:space:]]+merge' \
   && block "merge only through bin/ship, which runs the pre-merge gates."
 printf '%s' "$cmd" | grep -Eq -- '--no-verify|HUSKY=0|LEFTHOOK=0|SKIP_HOOKS' \
   && block "hooks are the gates; fix what they report instead of bypassing them."
-# Setting or unsetting core.hooksPath, not reading it.
-if printf '%s' "$cmd" | grep -Eq -- 'core\.hooksPath[[:space:]]*=|--unset(-all)?[[:space:]]+core\.hooksPath|core\.hooksPath[[:space:]]+[^;&|[:space:]]' \
-   && ! printf '%s' "$cmd" | grep -Eq -- '--get(-all|-regexp)?[[:space:]]+core\.hooksPath'; then
+# Setting or unsetting core.hooksPath, not reading it. The install's own setup line
+# (`git config [--local] core.hooksPath .standards/hooks`, exactly, ending the command) points
+# hooks AT the gates, so it is dropped first; anything else chained to it is still judged.
+# A read (`git config --get[-all|-regexp] core.hooksPath`) is dropped the same way — only that
+# segment, so a read cannot excuse a write chained after it.
+# Lowercased first: git config section and key names are case-insensitive (core.HOOKSPATH is
+# core.hooksPath).
+hp="$(printf '%s\n' "$cmd" | tr '[:upper:]' '[:lower:]' | sed -E \
+  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?core\.hookspath[[:space:]]+\.standards/hooks([[:space:]]*([;&|]|$))#\2#g' \
+  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?--get(-all|-regexp)?[[:space:]]+core\.hookspath([[:space:]]*([;&|]|$))#\3#g')"
+if printf '%s' "$hp" | grep -Eq -- 'core\.hookspath[[:space:]]*=|--unset(-all)?[[:space:]]+core\.hookspath|core\.hookspath[[:space:]]+[^;&|[:space:]]'; then
   block "hooks are the gates; fix what they report instead of bypassing them."
 fi
 printf '%s' "$cmd" | grep -Eq "${at_cmd}([^;&|[:space:]]*/)?bin/approve([[:space:]]|$)" \

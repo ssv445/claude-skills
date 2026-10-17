@@ -13,7 +13,48 @@ done
 info "tdd: source changed:${src:- none}"
 info "tdd: tests changed:${tests:- none}"
 
-if [ -z "$src" ]; then green "PASS tdd (no source change)"; exit 0; fi
+# Two kinds: "site" (a file under SITE_GLOBS, run with SITE_TEST_FILES_CMD) and "app" (the rest).
+# Each kind runs red→green on its own: one combined run would let a failing app test hide a site
+# test that already passes on the base (and the reverse). With SITE_GLOBS empty everything is "app".
+kind_of() { if matches_any "$1" "$SITE_GLOBS"; then echo site; else echo app; fi; }
+
+# src_globs_cover: "no source change" is a pass only when SRC_GLOBS can match source at all.
+# Globs that match no tracked file (code in web/ and server/, globs still the default src/*)
+# would pass every branch silently. With SITE_GLOBS set, the same per kind: a kind with tracked
+# tests but no tracked source has its source outside SRC_GLOBS. Tests win over source, as above.
+# Speed (30k-file repos): git's pathspec match pre-filters to files the globs could match — its
+# default pathspec "*" also crosses "/", so it is a superset and matches_any keeps the exact
+# rule — and the scan stops once no answer can change (SITE_GLOBS empty: the first source file;
+# set: the first source file of each kind).
+src_globs_cover() {
+  local f app_s="" site_s="" app_t="" site_t="" k t s
+  while IFS= read -r -d '' f; do
+    if matches_any "$f" "$SITE_GLOBS"; then k=site; else k=app; fi
+    if matches_any "$f" "$TEST_GLOBS"; then
+      case "$k" in site) site_t=1 ;; *) app_t=1 ;; esac
+    elif matches_any "$f" "$SRC_GLOBS"; then
+      case "$k" in site) site_s=1 ;; *) app_s=1 ;; esac
+    fi
+    if [ -z "$SITE_GLOBS" ]; then [ -z "$app_s" ] || break
+    elif [ -n "$app_s" ] && [ -n "$site_s" ]; then break; fi
+  done < <(set -f; git -c core.quotePath=false ls-files -z -- $SRC_GLOBS $TEST_GLOBS 2>/dev/null)
+  if [ -z "$app_s$site_s" ]; then
+    red "FAIL tdd: SRC_GLOBS matches no tracked file — set it in .standards/config.sh (or SRC_GLOBS=\"\" with a # N/A — reason comment for a repo with no source)"; return 1
+  fi
+  [ -n "$SITE_GLOBS" ] || return 0
+  for k in app site; do
+    case "$k" in app) t="$app_t"; s="$app_s" ;; site) t="$site_t"; s="$site_s" ;; esac
+    if [ -n "$t" ] && [ -z "$s" ]; then
+      red "FAIL tdd: $k tests are tracked but SRC_GLOBS matches no $k source file — add the $k's source paths to SRC_GLOBS in .standards/config.sh"; return 1
+    fi
+  done
+}
+
+if [ -z "$src" ]; then
+  if [ -z "$SRC_GLOBS" ]; then green "PASS tdd (N/A: SRC_GLOBS empty — no source in this repo)"; exit 0; fi
+  src_globs_cover || exit 1
+  green "PASS tdd (no source change)"; exit 0
+fi
 
 dec="$(decisions_file)"
 # Exception needs a real reason: a "<reason>" placeholder does not count.
@@ -24,10 +65,6 @@ fi
 if [ -z "$tests" ]; then red "FAIL tdd: source changed with no test change (or record 'TDD: N/A — reason' in decisions.md)"; exit 1; fi
 if [ -z "$TEST_FILES_CMD" ]; then red "FAIL tdd: TEST_FILES_CMD is not configured"; exit 1; fi
 
-# Two kinds: "site" (a file under SITE_GLOBS, run with SITE_TEST_FILES_CMD) and "app" (the rest).
-# Each kind runs red→green on its own: one combined run would let a failing app test hide a site
-# test that already passes on the base (and the reverse). With SITE_GLOBS empty everything is "app".
-kind_of() { if matches_any "$1" "$SITE_GLOBS"; then echo site; else echo app; fi; }
 app_src=""; site_src=""; app_tests=""; site_tests=""
 for f in $src; do
   if [ "$(kind_of "$f")" = site ]; then site_src="$site_src $f"; else app_src="$app_src $f"; fi

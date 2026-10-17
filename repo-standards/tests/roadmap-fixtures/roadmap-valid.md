@@ -24,3 +24,28 @@
 - requires: cap:native-app
 - provides: cap:reminders
 - assumptions: A-1
+
+### R-4 Desktop widget
+- goal: G-1
+- status: dropped — no demand in the review
+- requires: -
+
+### R-5 Tablet layout
+- goal: G-1
+- status: dropped: dup of R-2
+- requires: -
+
+### R-6 Watch app
+- goal: G-1
+- status: dropped, dup
+- requires: -
+
+### R-7 Widgets v2
+- goal: G-1
+- status: dropped—dup
+- requires: -
+
+### R-8 Sign-in
+- goal: G-1
+- status: shipped.
+- requires: -

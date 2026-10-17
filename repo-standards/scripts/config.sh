@@ -26,8 +26,10 @@ DIFF_COVERAGE_CMD=""     # must exit non-zero when changed-line coverage < DIFF_
 DIFF_COVERAGE_MIN=90
 COVERAGE_TOTAL_CMD=""    # prints total line coverage as a bare number, e.g. 87.4; compared to .standards/coverage-baseline.
                          # Measures the app, so it is skipped when change classes are on and the app is untouched
-TEST_FILES_CMD=""        # runs ONLY the test files appended as arguments, e.g. "pnpm vitest run"
-SITE_TEST_FILES_CMD=""   # same for test files under SITE_GLOBS; empty = TEST_FILES_CMD
+TEST_FILES_CMD=""        # runs ONLY the test files appended as arguments, e.g. "pnpm vitest run". Must exit
+                         # non-zero when it runs zero tests: an empty filter must never count as green
+                         # (a runner that passes on "no tests found" turns TDD's red→green into a no-op)
+SITE_TEST_FILES_CMD=""   # same for test files under SITE_GLOBS, same zero-tests rule; empty = TEST_FILES_CMD
 SEED_CHECK_CMD=""        # validates seeds against the current schema
 
 # Space-separated globs; * also matches "/".
