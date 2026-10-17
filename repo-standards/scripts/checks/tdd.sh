@@ -22,6 +22,10 @@ kind_of() { if matches_any "$1" "$SITE_GLOBS"; then echo site; else echo app; fi
 # Globs that match no tracked file (code in web/ and server/, globs still the default src/*)
 # would pass every branch silently. With SITE_GLOBS set, the same per kind: a kind with tracked
 # tests but no tracked source has its source outside SRC_GLOBS. Tests win over source, as above.
+# Speed (30k-file repos): git's pathspec match pre-filters to files the globs could match — its
+# default pathspec "*" also crosses "/", so it is a superset and matches_any keeps the exact
+# rule — and the scan stops once no answer can change (SITE_GLOBS empty: the first source file;
+# set: the first source file of each kind).
 src_globs_cover() {
   local f app_s="" site_s="" app_t="" site_t="" k t s
   while IFS= read -r -d '' f; do
@@ -31,7 +35,9 @@ src_globs_cover() {
     elif matches_any "$f" "$SRC_GLOBS"; then
       case "$k" in site) site_s=1 ;; *) app_s=1 ;; esac
     fi
-  done < <(git -c core.quotePath=false ls-files -z)
+    if [ -z "$SITE_GLOBS" ]; then [ -z "$app_s" ] || break
+    elif [ -n "$app_s" ] && [ -n "$site_s" ]; then break; fi
+  done < <(set -f; git -c core.quotePath=false ls-files -z -- $SRC_GLOBS $TEST_GLOBS 2>/dev/null)
   if [ -z "$app_s$site_s" ]; then
     red "FAIL tdd: SRC_GLOBS matches no tracked file — set it in .standards/config.sh (or SRC_GLOBS=\"\" with a # N/A — reason comment for a repo with no source)"; return 1
   fi

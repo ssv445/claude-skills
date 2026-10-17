@@ -6,17 +6,30 @@
 # It judges only commands aimed at this repo (the one holding .standards/guard.sh): a
 # command that starts with `cd <dir>` or uses `git -C <dir>` outside it, runs from a
 # session cwd outside it, or names another GitHub repo with -R/--repo, is not its business.
+# It reads the hook JSON with jq. Without jq (or on JSON jq cannot read) it cannot tell what
+# a command does, so from a session cwd in this repo it blocks everything but installing jq.
 block() { printf 'repo-standards guard: %s\n' "$1" >&2; exit 2; }
 
-# Without jq the command reads as empty and every check below passes: fail closed instead.
-command -v jq >/dev/null 2>&1 || block "guard needs jq — install it (brew install jq / apt-get install jq); every command is blocked until then."
-
 json="$(cat)"
-cmd="$(printf '%s' "$json" | jq -r '.tool_input.command // ""')"
-cwd="$(printf '%s' "$json" | jq -r '.cwd // ""')"
-
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 root="$(cd "$root" && pwd -P)"
+
+# raw_field <key>: a top-level-looking "key":"value" read without jq. Only values with no
+# quote or backslash are read; anything else reads as empty (and so counts as this repo).
+raw_field() { printf '%s' "$json" | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"([^"\\]*)".*/\1/p' | head -1; }
+if ! command -v jq >/dev/null 2>&1; then
+  c="$(raw_field cwd)"
+  if [ -n "$c" ] && t="$(cd "$c" 2>/dev/null && pwd -P)"; then
+    case "$t/" in "$root"/*) ;; *) exit 0 ;; esac
+  fi
+  # The way out: a command that is only a package-manager install of jq, nothing chained.
+  raw_field command | grep -Eqx '[[:space:]]*(sudo[[:space:]]+)?(brew|apt-get|apt|dnf|yum|apk|pacman|port)[[:space:]]+(install|add|-S)([[:space:]]+-[^[:space:];&|]+)*[[:space:]]+jq[[:space:]]*' && exit 0
+  block "guard needs jq to read commands aimed at this repo — install it (macOS: brew install jq; Debian/Ubuntu: sudo apt-get install jq). That install command is allowed; everything else here is blocked until then."
+fi
+# jq failing (malformed hook JSON) would leave the command empty and pass every check below.
+cmd="$(printf '%s' "$json" | jq -r '.tool_input.command // ""')" \
+  && cwd="$(printf '%s' "$json" | jq -r '.cwd // ""')" \
+  || block "could not read the hook JSON (jq failed) — the command cannot be judged, so it is blocked."
 
 # Heredoc bodies are data (file contents, messages), never commands: drop them.
 cmd="$(printf '%s\n' "$cmd" | awk '
@@ -60,10 +73,12 @@ printf '%s' "$cmd" | grep -Eq -- '--no-verify|HUSKY=0|LEFTHOOK=0|SKIP_HOOKS' \
 # hooks AT the gates, so it is dropped first; anything else chained to it is still judged.
 # A read (`git config --get[-all|-regexp] core.hooksPath`) is dropped the same way — only that
 # segment, so a read cannot excuse a write chained after it.
-hp="$(printf '%s\n' "$cmd" | sed -E \
-  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?core\.hooksPath[[:space:]]+\.standards/hooks([[:space:]]*([;&|]|$))#\2#g' \
-  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?--get(-all|-regexp)?[[:space:]]+core\.hooksPath([[:space:]]*([;&|]|$))#\3#g')"
-if printf '%s' "$hp" | grep -Eq -- 'core\.hooksPath[[:space:]]*=|--unset(-all)?[[:space:]]+core\.hooksPath|core\.hooksPath[[:space:]]+[^;&|[:space:]]'; then
+# Lowercased first: git config section and key names are case-insensitive (core.HOOKSPATH is
+# core.hooksPath).
+hp="$(printf '%s\n' "$cmd" | tr '[:upper:]' '[:lower:]' | sed -E \
+  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?core\.hookspath[[:space:]]+\.standards/hooks([[:space:]]*([;&|]|$))#\2#g' \
+  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?--get(-all|-regexp)?[[:space:]]+core\.hookspath([[:space:]]*([;&|]|$))#\3#g')"
+if printf '%s' "$hp" | grep -Eq -- 'core\.hookspath[[:space:]]*=|--unset(-all)?[[:space:]]+core\.hookspath|core\.hookspath[[:space:]]+[^;&|[:space:]]'; then
   block "hooks are the gates; fix what they report instead of bypassing them."
 fi
 printf '%s' "$cmd" | grep -Eq "${at_cmd}([^;&|[:space:]]*/)?bin/approve([[:space:]]|$)" \

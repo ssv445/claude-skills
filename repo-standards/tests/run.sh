@@ -29,7 +29,13 @@ mkdir -p "$T/nojq"
 for t in cat git dirname awk sed grep head tr; do ln -s "$(command -v "$t")" "$T/nojq/$t"; done
 expect fail "guard: no jq on PATH → blocks (fail closed)" \
   env PATH="$T/nojq" /bin/bash "$SKILL/scripts/guard.sh" < "$SKILL/tests/guard-fixtures/allow-push.json"
-expect pass "guard: no jq → says it needs jq" grep -q "guard needs jq" "$T/last.log.prev"
+expect pass "guard: no jq → says it needs jq, and how to install it" grep -q "guard needs jq.*brew install jq" "$T/last.log.prev"
+# Without jq: still out of scope from a cwd outside this repo, and installing jq (alone) is the way out.
+for f in "$SKILL"/tests/guard-fixtures/*nojq*.json; do
+  n="$(basename "$f" .json)"
+  case "$n" in block-*) want=fail ;; *) want=pass ;; esac
+  expect "$want" "guard (no jq) $n" env PATH="$T/nojq" /bin/bash "$SKILL/scripts/guard.sh" < "$f"
+done
 
 # --- a tiny shell project with the standards installed ---
 R="$T/repo"; mkdir -p "$R"; cd "$R" || exit 1
@@ -219,6 +225,7 @@ git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; 
 git branch -q -D main
 review "$ok" "$ok" ""
 aa fail "no base commit (base ref deleted)"
+expect fail "agent-approval --gate-files: no base → fails closed" .standards/checks/agent-approval.sh --gate-files
 git checkout -q docs; git branch -q main "$main0"
 
 review "$ok" "$ok" ""
@@ -654,6 +661,17 @@ expect pass "ship: owner-approved gate change → PR labelled rules-changed" gre
 expect pass "ship: owner-approved gate change → comment lists the gate file" grep -q 'Gate files changed.*CLAUDE.md' "$T/gh.log"
 expect fail "ship: owner-approved gate change, label fails → run fails" ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh" GH_FAIL="rules-changed"
 expect fail "ship: owner-approved gate change, comment fails → run fails" ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh" GH_FAIL="pr comment"
+# No gate-file list, no merge: a check that cannot list the branch's changes (stub, on the base
+# and so on the rebased branch too) stops an owner-approved ship before the merge.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; cp "$SKILL/tests/ship-fixtures/agent-approval-cannot-list.sh" .standards/checks/agent-approval.sh
+chmod +x .standards/checks/agent-approval.sh; git commit -qam "stub agent-approval" && git push -q origin main
+git checkout -q feat/1-x; git rebase -q main
+ship_run GH_LABELS="$T/approved" GH_PAGES="$fresh"
+expect pass "ship: gate files cannot be listed → nothing written (no merge)" test "$(writes)" = ""
+expect pass "ship: gate files cannot be listed → says so" grep -q "could not list the gate files" "$T/ship.out"
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
 
 # --- change class: which checks a branch needs ---
 echo "change class"
