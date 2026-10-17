@@ -620,6 +620,16 @@ review "$ok" "$ok" ""
 aa fail "coverage baseline with extra lines"
 git checkout -q docs
 git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+# No baseline on the base counts as 0 (coverage-baseline.sh reads it so): creating the file
+# with one number raises it, which the ratchet asks for, so it needs no gate-change review.
+echo 85 > .standards/coverage-baseline; git add .standards; git commit -qm "first baseline"
+review "$ok" "$ok" ""
+aa pass "coverage baseline created (absent on base) with one number"
+git checkout -q docs; git reset -q --hard HEAD~1
+printf '90\n# note\n' > .standards/coverage-baseline; git add .standards; git commit -qm "first baseline plus text"
+review "$ok" "$ok" ""
+aa fail "coverage baseline created with extra lines"
+git checkout -q docs; git reset -q --hard "$feat"
 
 # APPROVER, read from the base's config.sh: "agent" lets the agent approve gate-file changes;
 # owner-review flags still block. A branch cannot switch the mode that judges it.
@@ -697,7 +707,22 @@ echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
 expect fail "coverage: total 80 below baseline 85" env COVERAGE_TOTAL_CMD="echo 80" bash -c '. .standards/config.sh; COVERAGE_TOTAL_CMD="echo 80"; sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 80\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
 expect pass "coverage: total 90 at/above baseline 85" bash -c 'sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 90\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
+expect pass "coverage: above baseline → prints the new baseline" grep -q "raise it: set .standards/coverage-baseline to 90" "$T/last.log.prev"
+# The ratchet (bin/ship runs --ratchet): a total more than COVERAGE_RATCHET_SLACK above the
+# baseline fails until the baseline is raised, printing the exact edit.
+cov() { # cov <pass|fail> <name> <total> [slack]: --ratchet with COVERAGE_TOTAL_CMD="echo <total>"
+  cp .standards/config.sh "$T/cfg.bak"
+  sed -e "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo $3\"|" -e "s|^COVERAGE_RATCHET_SLACK=.*|COVERAGE_RATCHET_SLACK=${4:-2}|" "$T/cfg.bak" > .standards/config.sh
+  expect "$1" "coverage ratchet: $2" .standards/checks/coverage-baseline.sh --ratchet
+  cp "$T/cfg.bak" .standards/config.sh
+}
+cov pass "total 86.5, baseline 85, slack 2" 86.5
+cov fail "total 98.8, baseline 85, slack 2" 98.8
+expect pass "coverage ratchet: prints the one-line edit" grep -q "set .standards/coverage-baseline to 98 " "$T/last.log.prev"
+cov pass "total 98.8, baseline 85, slack 20" 98.8 20
+cov fail "below baseline still fails" 80
 srm "${R:?}/.standards/coverage-baseline"
+cov fail "no baseline file counts as 0" 50
 
 echo "file-size"
 expect pass "file-size: small files" .standards/checks/file-size.sh
@@ -709,6 +734,18 @@ for i in $(seq 1 30); do echo "x$i() { :; }"; done > "src/grö.sh"
 git add src && git commit -qm "big, non-ASCII name"
 expect fail "file-size: non-ASCII file name over max 20" .standards/checks/file-size.sh
 git reset -q --hard HEAD~1
+# Grandfathered: a file already over the limit on the base blocks only when the branch grows it.
+main0="$(git rev-parse main)"
+git checkout -q main; for i in $(seq 1 30); do echo "x$i() { :; }"; done > src/legacy.sh
+git add src && git commit -qm "main: legacy file over the limit"
+git checkout -q -b feat/8-size
+sed 's/^x5() .*/x5() { echo five; }/' src/legacy.sh > "$T/l" && cp "$T/l" src/legacy.sh; git commit -qam "edit, same length"
+expect pass "file-size: over-limit file on base, edited, not grown" .standards/checks/file-size.sh
+expect pass "file-size: says over limit but not grown" grep -q "over limit but not grown: src/legacy.sh (30 lines)" "$T/last.log.prev"
+echo 'x31() { :; }' >> src/legacy.sh; git commit -qam "grow it"
+expect fail "file-size: over-limit file on base, grown" .standards/checks/file-size.sh
+expect pass "file-size: names the base length to get back to" grep -q "src/legacy.sh: 31 lines, was 30 on base" "$T/last.log.prev"
+git checkout -q feat/7-mul; git branch -q -D feat/8-size; git branch -q -f main "$main0"
 
 echo "roadmap"
 expect pass "roadmap: absent (product layer not used)" .standards/checks/roadmap.sh
@@ -777,6 +814,28 @@ expect pass "ship: no gate change → comment says so, no rules-changed label" \
 ship_run GH_FAIL="pr merge"
 expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"
 expect pass "ship: no gate change, comment fails after merge → warns, run succeeds" ship_run GH_FAIL="pr comment"
+expect pass "ship: MERGE_MODE default → --squash" grep -q -- "^pr merge 12 --squash " "$T/gh.log"
+# MERGE_MODE and the coverage ratchet, set on the base like any config.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main
+sed -e 's/^MERGE_MODE=.*/MERGE_MODE="merge"/' -e 's/^COVERAGE_TOTAL_CMD=.*/COVERAGE_TOTAL_CMD="echo $FAKE_COV"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+echo 80 > .standards/coverage-baseline; git add .standards; git commit -qm "main: merge commits, coverage" && git push -q origin main
+git checkout -q feat/1-x; git rebase -q main
+ship_run FAKE_COV=81.5
+expect pass "ship: MERGE_MODE=merge → gh pr merge --merge" bash -c "test '$(writes)' = 'merge;comment;' && grep -q -- '^pr merge 12 --merge ' '$T/gh.log'"
+ship_run FAKE_COV=98.8
+expect pass "ship: coverage 98.8 vs baseline 80 → nothing written" test "$(writes)" = ""
+expect pass "ship: coverage ratchet prints the edit" grep -q "set .standards/coverage-baseline to 98 " "$T/ship.out"
+echo 98 > .standards/coverage-baseline; git commit -qam "raise baseline"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "re-review"
+ship_run FAKE_COV=98.8
+expect pass "ship: baseline raised → agent approves and merges" test "$(writes)" = "merge;comment;"
+sed 's/^MERGE_MODE=.*/MERGE_MODE="fast"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh; git commit -qam "bad mode"
+ship_run FAKE_COV=98.8
+expect pass "ship: unknown MERGE_MODE → nothing written, says which values" \
+  bash -c "test -z '$(writes)' && grep -q 'MERGE_MODE=\"fast\" — use squash, merge or rebase' '$T/ship.out'"
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
 echo "owner-review: required — taste" >> "$dec"; git commit -qam "flag"
 ship_run
 expect pass "ship: agent refused, no owner label → nothing written" test "$(writes)" = ""
@@ -957,6 +1016,31 @@ echo 'SRC_GLOBS=""' >> .standards/config.sh
 tdd pass "SRC_GLOBS explicitly empty → N/A"
 expect pass "tdd: empty SRC_GLOBS prints an N/A line" grep -q "N/A: SRC_GLOBS empty" "$T/last.log.prev"
 git checkout -q .standards/config.sh
+# Each changed test file must be red on its own: a red file in the same run must not hide one
+# that already passes on the base (same kind, unlike feat/9-t4).
+branch feat/9-t5
+echo 'a() { echo 3; }' > src/a.sh; echo '. src/a.sh; [ "$(a)" = 3 ]' > tests/a.test.sh; echo 'true' > tests/b.test.sh
+git add -A . && git commit -qm "two app tests, one green on base"
+tdd fail "app test green on base is not hidden by a red app test"
+expect pass "tdd: names the test that passes on base" grep -q "tests/b.test.sh passes on the base code" "$T/last.log.prev"
+git rm -q tests/b.test.sh; git commit -qm "drop the green test"
+tdd pass "each changed test red on its own"
+expect pass "tdd: prints each file's red time" grep -q "tests/a.test.sh red on base ([0-9][0-9]*s)" "$T/last.log.prev"
+# Compile-red: the base fails only because the test names what does not exist there yet. With
+# TDD_COMPILE_FAIL_RE matching that output, it is labelled and needs a decisions.md line.
+branch feat/9-t6; mkdir -p docs/work/9-t6
+echo 'a() { echo 1; }; a3() { echo 3; }' > src/a.sh; echo '. src/a.sh; [ "$(a3)" = 3 ]' > tests/a3.test.sh
+echo "# Decisions — #9" > docs/work/9-t6/decisions.md
+git add -A . && git commit -qm "new function, test names it"
+tdd pass "missing function on base, TDD_COMPILE_FAIL_RE unset → red"
+echo 'TDD_COMPILE_FAIL_RE="command not found|not found"' >> .standards/config.sh
+tdd fail "compile-only red without a TDD: compile-red line"
+expect pass "tdd: labels it compile only" grep -q "tests/a3.test.sh red (compile only — assertion not proven)" "$T/last.log.prev"
+echo "TDD: compile-red — <reason>" >> docs/work/9-t6/decisions.md
+tdd fail "compile-red line with a placeholder reason"
+echo "TDD: compile-red — a3 is new; the test asserts its value once it exists" >> docs/work/9-t6/decisions.md
+tdd pass "compile-only red with a TDD: compile-red line"
+git checkout -q .standards/config.sh docs
 
 echo "docs-only lane"
 # A branch touching only docs needs no spec or plan gate; the pre-merge gate still applies.
@@ -1034,6 +1118,32 @@ echo "const p = '../docs/notes.md'" > site/tests/n.test.sh; git add site/tests/n
 cr fail "site test reads a docs file not in SHARED_GLOBS"
 git rm -q site/tests/n.test.sh site/tests/keep.test.sh; git commit -qm "drop site tests"
 cr fail "configured side with no file to scan fails closed"
+
+echo "guards"
+# GUARDS_CMD runs in pre-push by change class: GUARDS_PART "app" (default) skips it on a docs
+# or site branch; "always" runs it on every branch. The probe guard exits $GUARD_RC.
+pp() { # pp <GUARD_RC>: pre-push of HEAD; output in $T/pp.out
+  printf 'refs/heads/x %s refs/heads/x %s\n' "$(git rev-parse HEAD)" "$z" > "$T/pp-refs"
+  GUARD_RC="$1" .standards/hooks/pre-push < "$T/pp-refs" > "$T/pp.out" 2>&1
+}
+git checkout -q main
+printf '#!/bin/sh\necho "guard-probe: scanned src/"\nexit ${GUARD_RC:-0}\n' > guard-probe.sh; chmod +x guard-probe.sh
+echo 'GUARDS_CMD="./guard-probe.sh"' >> .standards/config.sh; git add guard-probe.sh .standards; git commit -qm "main: a guard"
+branch feat/9-gd; echo more >> docs/notes.md; git commit -qam docs
+pp 1
+expect pass "guards: docs branch → SKIP guards" grep -q "SKIP guards (change class docs" "$T/pp.out"
+branch feat/9-ga; echo y >> src/a.sh; git commit -qam app
+pp 1
+expect pass "guards: app branch, guard fails → FAIL guards, push blocked" \
+  bash -c "grep -q 'FAIL guards' '$T/pp.out' && grep -q 'pre-push BLOCKED' '$T/pp.out'"
+pp 0
+expect pass "guards: app branch, guard passes → PASS guards, its output shown" \
+  bash -c "grep -q 'PASS guards' '$T/pp.out' && grep -q 'guard-probe: scanned src/' '$T/pp.out'"
+git checkout -q main; echo 'GUARDS_PART="always"' >> .standards/config.sh; git commit -qam "main: guards always"
+branch feat/9-gd2; echo more >> docs/notes.md; git commit -qam docs
+pp 1
+expect pass "guards: GUARDS_PART=always → runs on a docs branch" grep -q "FAIL guards" "$T/pp.out"
+git checkout -q main; git reset -q --hard HEAD~2
 
 # --- safe_rm: the only way .standards/ scripts delete ---
 echo "safe-rm"

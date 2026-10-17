@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# TDD red→green: the branch's changed test files must FAIL against the base branch's
-# source and PASS against HEAD. Proves the tests were written to catch this change,
-# whatever order the commits were made in.
+# TDD red→green: each of the branch's changed test files must FAIL, run on its own, against
+# the base branch's source, and together they must PASS against HEAD. Proves the tests were
+# written to catch this change, whatever order the commits were made in.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
 
 src=""; tests=""
@@ -96,9 +96,29 @@ red_green() {
     git show "HEAD:$f" > "$scratch/$f"
   done
 
-  info "tdd[$label]: running new tests against base source (must fail)"
-  if (cd "$scratch" && eval "$cmd $files") >/dev/null 2>&1; then
-    red "FAIL tdd[$label]: changed tests pass on the base code — they do not catch this change"; return 1
+  # One file per run: in one combined run, a red file hides a file that already passes on the
+  # base. This costs a runner start per file, so each file's time is printed for the pre-push budget.
+  info "tdd[$label]: running each new test file on its own against base source (must fail)"
+  local out start bad="" compile=""
+  for f in $files; do
+    start=$(date +%s)
+    if out="$(cd "$scratch" && eval "$cmd $f" 2>&1)"; then
+      red "  $f passes on the base code ($(( $(date +%s) - start ))s) — it does not catch this change"; bad=1
+    elif [ -n "${TDD_COMPILE_FAIL_RE:-}" ] && printf '%s\n' "$out" | grep -qE "$TDD_COMPILE_FAIL_RE"; then
+      info "$f red (compile only — assertion not proven) ($(( $(date +%s) - start ))s)"; compile=1
+    else
+      info "$f red on base ($(( $(date +%s) - start ))s)"
+    fi
+  done
+  if [ -n "$bad" ]; then red "FAIL tdd[$label]: every changed test file must fail on the base code on its own"; return 1; fi
+  # A compile-only red proves the test names something new, not that its assertion catches
+  # the change: accepted only with a reason in decisions.md (a "<reason>" placeholder does not count).
+  if [ -n "$compile" ]; then
+    if [ -n "$dec" ] && [ -f "$dec" ] && grep -q '^TDD: compile-red — [^<]' "$dec"; then
+      info "$(grep '^TDD: compile-red — [^<]' "$dec" | head -1)"
+    else
+      red "FAIL tdd[$label]: red only from a compile error (TDD_COMPILE_FAIL_RE) — make the assertion fail on base (e.g. stub the new name there), or record 'TDD: compile-red — <reason>' in ${dec:-decisions.md}"; return 1
+    fi
   fi
   cleanup
   info "tdd[$label]: running new tests against HEAD (must pass)"

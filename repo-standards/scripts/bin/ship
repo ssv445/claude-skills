@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# bin/ship [pr]: the only merge path. Runs the pre-merge gates, then squash-merges.
+# bin/ship [pr]: the only merge path. Runs the pre-merge gates, then merges (MERGE_MODE in
+# config.sh: squash by default, merge or rebase).
 # Approval: the owner's `approved` label, or — when every gate passes and
 # .standards/checks/agent-approval.sh agrees — the agent's own.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
@@ -43,6 +44,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Checked before any gate runs, so a typo never fails only at the last step.
+case "${MERGE_MODE:=squash}" in
+  squash|merge|rebase) ;;
+  *) red "FAIL ship: MERGE_MODE=\"$MERGE_MODE\" — use squash, merge or rebase in .standards/config.sh"; exit 1 ;;
+esac
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
 [ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
 json="$(gh pr view "$pr" --json headRefName,headRefOid,labels,closingIssuesReferences)" || exit 1
@@ -93,6 +99,8 @@ fi
 run_part e2e app "$E2E_CMD" || fail=1
 run_part site-e2e site-change "$SITE_E2E_CMD" || fail=1
 run_part perf app "$PERF_CMD" || fail=1
+# The baseline must follow coverage up: pre-push only stops it falling.
+"$ROOT/.standards/checks/coverage-baseline.sh" --ratchet || fail=1
 
 [ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
 
@@ -129,7 +137,7 @@ changed_gates="$("$checker" --gate-files)" || { red "FAIL ship: could not list t
 [ -z "$changed_gates" ] || entries="$(git diff -U0 --no-renames "$(base_commit)" HEAD -- docs/rule-changes.md | sed -n 's/^+\(- [0-9]\{4\}-.*\)/\1/p')"
 
 # --match-head-commit: refuse if the PR moved after these gates ran.
-gh pr merge "$pr" --squash --delete-branch --match-head-commit "$head_oid" || { red "FAIL ship: merge refused"; exit 1; }
+gh pr merge "$pr" "--$MERGE_MODE" --delete-branch --match-head-commit "$head_oid" || { red "FAIL ship: merge refused"; exit 1; }
 green "shipped #$pr ($approval-approved)"
 # The record is posted only once the merge happened, so it never claims an unmerged PR.
 # A gate change, whoever approved: the owner reads it in docs/rule-changes.md (merged with

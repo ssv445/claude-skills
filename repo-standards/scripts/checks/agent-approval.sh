@@ -30,11 +30,15 @@ else miss "git diff $base HEAD failed"
 fi
 
 # raises_baseline: the branch only raises .standards/coverage-baseline — one number on
-# base and HEAD, HEAD's >= base's. coverage-baseline.sh asks for exactly that edit; any
-# other change to it (lower, extra text, new, deleted) stays a gate change.
+# base and HEAD, HEAD's >= base's. No file on the base counts as 0, as coverage-baseline.sh
+# reads it, so creating it with one number is a raise (the ratchet asks for it on a fresh
+# install). coverage-baseline.sh asks for exactly that edit; any other change to it (lower,
+# extra text, deleted) stays a gate change.
 raises_baseline() {
   local old new num='^[0-9]+(\.[0-9]+)?$'
-  old="$(git show "$base:.standards/coverage-baseline" 2>/dev/null)" || return 1
+  if git cat-file -e "$base:.standards/coverage-baseline" 2>/dev/null; then
+    old="$(git show "$base:.standards/coverage-baseline")" || return 1
+  else old=0; fi
   new="$(git show "HEAD:.standards/coverage-baseline" 2>/dev/null)" || return 1
   printf '%s\n' "$old" | grep -qE "$num" && [ "$(printf '%s\n' "$old" | wc -l)" -eq 1 ] || return 1
   printf '%s\n' "$new" | grep -qE "$num" && [ "$(printf '%s\n' "$new" | wc -l)" -eq 1 ] || return 1
