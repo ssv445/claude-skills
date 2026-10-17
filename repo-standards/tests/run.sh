@@ -34,7 +34,10 @@ sed -e 's|^TEST_FILES_CMD=.*|TEST_FILES_CMD="./run-tests.sh"|' \
     -e 's|^UNIT_CMD=.*|UNIT_CMD="./run-tests.sh tests/*.test.sh"|' \
     -e 's|^FILE_SIZE_GLOBS=.*|FILE_SIZE_GLOBS="*.sh"|' \
     -e 's|^MAX_FILE_LINES=.*|MAX_FILE_LINES=20|' \
+    -e 's|^APPROVER=.*|APPROVER="owner"|' \
     "$SKILL/scripts/config.sh" > .standards/config.sh
+# The shipped default is agent mode; fixtures start in owner mode and switch the base explicitly.
+expect pass "config: template default is APPROVER=agent" grep -qx 'APPROVER="agent"' "$SKILL/scripts/config.sh"
 cat > run-tests.sh <<'EOF'
 #!/bin/sh
 rc=0; for f in "$@"; do sh "$f" || { echo "test failed: $f"; rc=1; }; done; exit $rc
@@ -319,7 +322,7 @@ gcr() {
     { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"
 }
 entry="- 2026-10-07 #7 — Agents now keep CLAUDE.md short."
-# Owner mode (the default): a full gate-change review does not stand in for the owner.
+# Owner mode (the fixtures' start): a full gate-change review does not stand in for the owner.
 echo "agents: keep it short" > CLAUDE.md; echo "$entry" > docs/rule-changes.md
 git add CLAUDE.md docs && git commit -qm "gate file + log line"
 review "$ok" "$ok" ""; gcr "$ok" "$ok" ""
@@ -540,7 +543,7 @@ git clone -q "$T/origin.git" "$T/ship" 2>/dev/null; cd "$T/ship" || exit 1
 git config user.email t@example.invalid; git config user.name test
 mkdir -p .standards bin src docs/work/1-x
 cp -R "$SKILL/scripts/." .standards/; cp "$SKILL/scripts/bin/ship" bin/ship
-sed 's/^OWNER=""/OWNER="owner"/' "$SKILL/scripts/config.sh" > .standards/config.sh
+sed -e 's/^OWNER=""/OWNER="owner"/' -e 's/^APPROVER=.*/APPROVER="owner"/' "$SKILL/scripts/config.sh" > .standards/config.sh
 chmod +x bin/ship .standards/checks/* .standards/bin/*
 echo base > src/a.txt
 git add -A && git commit -qm base && git push -q origin main
