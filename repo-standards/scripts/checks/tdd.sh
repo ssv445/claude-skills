@@ -77,14 +77,28 @@ done
 if [ -n "$app_src" ] && [ -z "$app_tests" ]; then red "FAIL tdd: app source changed with no app test change:$app_src"; exit 1; fi
 if [ -n "$site_src" ] && [ -z "$site_tests" ]; then red "FAIL tdd: site source changed with no site test change:$site_src"; exit 1; fi
 
+# tdd_line <kind> <file>: prints the "TDD: <kind> — <files> — <reason>" line in decisions.md
+# that names <file> (alone or in a comma list), or fails. A line naming no file covers
+# nothing, and a "<reason>" placeholder does not count. Bytes (LC_ALL=C): " — " is multibyte.
+tdd_line() {
+  [ -n "$dec" ] && [ -f "$dec" ] || return 1
+  LC_ALL=C awk -v p="TDD: $1 — " -v f="$2" -v sep=" — " '
+    index($0, p) != 1 { next }
+    { r = substr($0, length(p) + 1); i = index(r, sep); if (!i) next
+      why = substr(r, i + length(sep)); if (why !~ /^[^< ]/) next
+      n = split(substr(r, 1, i - 1), fs, ",")
+      for (k = 1; k <= n; k++) { x = fs[k]; gsub(/^[ \t]+|[ \t]+$/, "", x); if (x == f) { print; found = 1; exit } } }
+    END { exit !found }' "$dec"
+}
+
 scratch=""
 # The scratch checkout is a mktemp -d dir, which safe_rm allows (a temp dir, not the temp root).
 cleanup() { [ -n "$scratch" ] && { drop_worktree "$scratch"; scratch=""; }; }
 trap cleanup EXIT
 
-# red_green <label> <test command> <test files>
+# red_green <label> <test command> <test files> <source changed: 1 or empty>
 red_green() {
-  local label="$1" cmd="$2" files="$3" d f
+  local label="$1" cmd="$2" files="$3" need_red="$4" d f
   scratch="$(mktemp -d)"
   git worktree add --detach -q "$scratch" "$(base_commit)" || { red "FAIL tdd: could not create scratch checkout"; return 1; }
   for d in $DEPS_LINKS; do
@@ -99,32 +113,41 @@ red_green() {
   # One file per run: in one combined run, a red file hides a file that already passes on the
   # base. This costs a runner start per file, so each file's time is printed for the pre-push budget.
   info "tdd[$label]: running each new test file on its own against base source (must fail)"
-  local out start bad="" compile=""
+  # A file green on base fails, unless decisions.md declares it a refactor (same assertions,
+  # reshaped). A compile-only red proves the test names something new, not that its assertion
+  # catches the change: accepted only with a per-file compile-red line. Either way the fail
+  # message prints the exact line to add.
+  local out start l green_files="" compile_files="" reds=0
   for f in $files; do
     start=$(date +%s)
     if out="$(cd "$scratch" && eval "$cmd $f" 2>&1)"; then
-      red "  $f passes on the base code ($(( $(date +%s) - start ))s) — it does not catch this change"; bad=1
+      if l="$(tdd_line refactor "$f")"; then info "$f passes on base — declared: $l"
+      else red "  $f passes on the base code ($(( $(date +%s) - start ))s) — it does not catch this change"; green_files="$green_files $f"; fi
     elif [ -n "${TDD_COMPILE_FAIL_RE:-}" ] && printf '%s\n' "$out" | grep -qE "$TDD_COMPILE_FAIL_RE"; then
-      info "$f red (compile only — assertion not proven) ($(( $(date +%s) - start ))s)"; compile=1
+      info "$f red (compile only — assertion not proven) ($(( $(date +%s) - start ))s)"
+      if l="$(tdd_line compile-red "$f")"; then info "$l"; reds=$((reds + 1)); else compile_files="$compile_files $f"; fi
     else
-      info "$f red on base ($(( $(date +%s) - start ))s)"
+      info "$f red on base ($(( $(date +%s) - start ))s)"; reds=$((reds + 1))
     fi
   done
-  if [ -n "$bad" ]; then red "FAIL tdd[$label]: every changed test file must fail on the base code on its own"; return 1; fi
-  # A compile-only red proves the test names something new, not that its assertion catches
-  # the change: accepted only with a reason in decisions.md (a "<reason>" placeholder does not count).
-  if [ -n "$compile" ]; then
-    if [ -n "$dec" ] && [ -f "$dec" ] && grep -q '^TDD: compile-red — [^<]' "$dec"; then
-      info "$(grep '^TDD: compile-red — [^<]' "$dec" | head -1)"
-    else
-      red "FAIL tdd[$label]: red only from a compile error (TDD_COMPILE_FAIL_RE) — make the assertion fail on base (e.g. stub the new name there), or record 'TDD: compile-red — <reason>' in ${dec:-decisions.md}"; return 1
-    fi
+  if [ -n "$green_files" ]; then
+    red "FAIL tdd[$label]: every changed test file must fail on the base code on its own. A file that only reshapes tests the base already passes: add to ${dec:-decisions.md}, one line per file:"
+    for f in $green_files; do red "    TDD: refactor — $f — <reason>"; done
+    return 1
+  fi
+  if [ -n "$compile_files" ]; then
+    red "FAIL tdd[$label]: red only from a compile error (TDD_COMPILE_FAIL_RE) — make the assertion fail on base (e.g. stub the new name there), or add to ${dec:-decisions.md}, one line per file:"
+    for f in $compile_files; do red "    TDD: compile-red — $f — <reason>"; done
+    return 1
+  fi
+  if [ -n "$need_red" ] && [ $reds -eq 0 ]; then
+    red "FAIL tdd[$label]: source changed but no changed test file is red on base — add a test that fails on the base code (a declared refactor proves nothing about the change), or record 'TDD: N/A — reason'"; return 1
   fi
   cleanup
   info "tdd[$label]: running new tests against HEAD (must pass)"
   if ! eval "$cmd $files"; then red "FAIL tdd[$label]: changed tests fail on HEAD"; return 1; fi
 }
 
-if [ -n "$app_tests" ]; then red_green app "$TEST_FILES_CMD" "$app_tests" || exit 1; cleanup; fi
-if [ -n "$site_tests" ]; then red_green site "${SITE_TEST_FILES_CMD:-$TEST_FILES_CMD}" "$site_tests" || exit 1; cleanup; fi
+if [ -n "$app_tests" ]; then red_green app "$TEST_FILES_CMD" "$app_tests" "${app_src:+1}" || exit 1; cleanup; fi
+if [ -n "$site_tests" ]; then red_green site "${SITE_TEST_FILES_CMD:-$TEST_FILES_CMD}" "$site_tests" "${site_src:+1}" || exit 1; cleanup; fi
 green "PASS tdd (red on base, green on HEAD, per test kind)"

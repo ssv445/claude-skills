@@ -7,18 +7,26 @@
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
 
 over=0; n=0; base="$(base_commit)"
+# Renames on the branch, "<old>\t<new>" per line (git's rename detection): a grandfathered file
+# moved to a new path keeps its base length, or a pure move would block like a new file.
+renames="$([ -n "$base" ] && git -c core.quotePath=false diff --name-status -M --diff-filter=R "$base" HEAD | cut -f2-)"
 for f in $(changed_files); do
   matches_any "$f" "$FILE_SIZE_GLOBS" || continue
   n=$((n + 1))
   lines=$(wc -l < "$f" | tr -d ' ')
   [ "$lines" -gt "$MAX_FILE_LINES" ] || continue
-  # Length on the base; empty when the file is new there (a rename counts as new).
-  was=""
-  if [ -n "$base" ] && git cat-file -e "$base:$f" 2>/dev/null; then was="$(git show "$base:$f" | wc -l | tr -d ' ')"; fi
+  # Length on the base, at the same path or (renamed) the old one; empty when the file is new.
+  was=""; from="$f"
+  if [ -n "$base" ] && ! git cat-file -e "$base:$f" 2>/dev/null; then
+    from="$(printf '%s\n' "$renames" | awk -F'\t' -v f="$f" '$2 == f { print $1; exit }')"
+  fi
+  if [ -n "$from" ] && [ -n "$base" ] && git cat-file -e "$base:$from" 2>/dev/null; then was="$(git show "$base:$from" | wc -l | tr -d ' ')"; fi
+  as=""; [ "$from" = "$f" ] || as=" as $from"
   if [ -n "$was" ] && [ "$was" -gt "$MAX_FILE_LINES" ] && [ "$lines" -le "$was" ]; then
-    info "over limit but not grown: $f ($lines lines)"
+    if [ -n "$as" ]; then info "over limit but not grown: $f ($lines lines; was $was$as)"
+    else info "over limit but not grown: $f ($lines lines)"; fi
   elif [ -n "$was" ] && [ "$was" -gt "$MAX_FILE_LINES" ]; then
-    red "  over $f: $lines lines, was $was on base (max $MAX_FILE_LINES) — keep it at $was lines or fewer, or split it"; over=1
+    red "  over $f: $lines lines, was $was on base$as (max $MAX_FILE_LINES) — keep it at $was lines or fewer, or split it"; over=1
   else
     red "  over $f: $lines lines (max $MAX_FILE_LINES)"; over=1
   fi

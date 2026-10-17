@@ -714,7 +714,25 @@ echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
 expect fail "coverage: total 80 below baseline 85" env COVERAGE_TOTAL_CMD="echo 80" bash -c '. .standards/config.sh; COVERAGE_TOTAL_CMD="echo 80"; sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 80\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
 expect pass "coverage: total 90 at/above baseline 85" bash -c 'sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 90\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
-expect pass "coverage: above baseline → prints the new baseline" grep -q "raise it: set .standards/coverage-baseline to 90" "$T/last.log.prev"
+# The suggested baseline is floor(total) − 1: a wobble under one point on the next run never fails.
+expect pass "coverage: above baseline → prints the new baseline, floor − 1" grep -q "raise it: set .standards/coverage-baseline to 89 " "$T/last.log.prev"
+# A total that is no number, or a command that fails, fails both modes, naming the output: junk
+# never counts as 0 (with no baseline file, 0 ≥ 0 would pass).
+covc() { # covc <name> <fixture> [--ratchet]: COVERAGE_TOTAL_CMD="sh <fixture>" must fail
+  cp .standards/config.sh "$T/cfg.bak"
+  sed "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"sh $SKILL/tests/coverage-fixtures/$2\"|" "$T/cfg.bak" > .standards/config.sh
+  expect fail "coverage${3:+ $3}: $1" .standards/checks/coverage-baseline.sh ${3:-}
+  cp "$T/cfg.bak" .standards/config.sh
+}
+mv .standards/coverage-baseline "$T/baseline.bak"
+for flag in "" --ratchet; do
+  covc "command prints no number (no baseline file)" junk.sh $flag
+  expect pass "coverage${flag:+ $flag}: ... names the output" grep -q "COVERAGE_TOTAL_CMD printed 'Error: coverage tool crashed'" "$T/last.log.prev"
+  covc "command exits non-zero" crash.sh $flag
+  expect pass "coverage${flag:+ $flag}: ... names the exit code" grep -q "COVERAGE_TOTAL_CMD exited 3" "$T/last.log.prev"
+  covc "last line is a status line, not the number" trailer.sh $flag
+done
+mv "$T/baseline.bak" .standards/coverage-baseline
 # The ratchet (bin/ship runs --ratchet): a total more than COVERAGE_RATCHET_SLACK above the
 # baseline fails until the baseline is raised, printing the exact edit.
 cov() { # cov <pass|fail> <name> <total> [slack]: --ratchet with COVERAGE_TOTAL_CMD="echo <total>"
@@ -725,7 +743,7 @@ cov() { # cov <pass|fail> <name> <total> [slack]: --ratchet with COVERAGE_TOTAL_
 }
 cov pass "total 86.5, baseline 85, slack 2" 86.5
 cov fail "total 98.8, baseline 85, slack 2" 98.8
-expect pass "coverage ratchet: prints the one-line edit" grep -q "set .standards/coverage-baseline to 98 " "$T/last.log.prev"
+expect pass "coverage ratchet: prints the one-line edit" grep -q "set .standards/coverage-baseline to 97 " "$T/last.log.prev"
 cov pass "total 98.8, baseline 85, slack 20" 98.8 20
 cov fail "below baseline still fails" 80
 srm "${R:?}/.standards/coverage-baseline"
@@ -752,6 +770,13 @@ expect pass "file-size: says over limit but not grown" grep -q "over limit but n
 echo 'x31() { :; }' >> src/legacy.sh; git commit -qam "grow it"
 expect fail "file-size: over-limit file on base, grown" .standards/checks/file-size.sh
 expect pass "file-size: names the base length to get back to" grep -q "src/legacy.sh: 31 lines, was 30 on base" "$T/last.log.prev"
+# A rename (git's rename detection) keeps the grandfathering: judged against the old path's length.
+git reset -q --hard HEAD~2
+git mv src/legacy.sh src/legacy2.sh; sed '$d' src/legacy2.sh > "$T/l" && cp "$T/l" src/legacy2.sh; git commit -qam "rename and shrink"
+expect pass "file-size: grandfathered file renamed and shrunk" .standards/checks/file-size.sh
+expect pass "file-size: ... names the old path" grep -q "over limit but not grown: src/legacy2.sh (29 lines; was 30 as src/legacy.sh)" "$T/last.log.prev"
+printf 'y1() { :; }\ny2() { :; }\n' >> src/legacy2.sh; git commit -qam "grow the renamed file"
+expect fail "file-size: grandfathered file renamed and grown" .standards/checks/file-size.sh
 git checkout -q feat/7-mul; git branch -q -D feat/8-size; git branch -q -f main "$main0"
 # Evidence images belong on the PR: a new one under docs/work/ over EVIDENCE_MAX_KB (300) fails.
 head -c 409600 /dev/zero > docs/work/7-mul/after.PNG; git add docs; git commit -qm "big screenshot"
@@ -866,8 +891,8 @@ ship_run FAKE_COV=81.5
 expect pass "ship: MERGE_MODE=merge → gh pr merge --merge" bash -c "test '$(writes)' = 'merge;comment;' && grep -q -- '^pr merge 12 --merge ' '$T/gh.log'"
 ship_run FAKE_COV=98.8
 expect pass "ship: coverage 98.8 vs baseline 80 → nothing written" test "$(writes)" = ""
-expect pass "ship: coverage ratchet prints the edit" grep -q "set .standards/coverage-baseline to 98 " "$T/ship.out"
-echo 98 > .standards/coverage-baseline; git commit -qam "raise baseline"
+expect pass "ship: coverage ratchet prints the edit" grep -q "set .standards/coverage-baseline to 97 " "$T/ship.out"
+echo 97 > .standards/coverage-baseline; git commit -qam "raise baseline"
 review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "re-review"
 ship_run FAKE_COV=98.8
 expect pass "ship: baseline raised → agent approves and merges" test "$(writes)" = "merge;comment;"
@@ -1063,6 +1088,11 @@ class_is docs "docs only"
 expect fail "coverage-baseline runs when the app is touched (self-proof)" bash -c "git checkout -q -B feat/9-probe main && echo y >> src/a.sh && git commit -qam probe && .standards/checks/coverage-baseline.sh"
 branch feat/9-docs2; echo more >> docs/notes.md; git commit -qam docs
 expect pass "coverage-baseline skipped on a docs branch" bash -c ".standards/checks/coverage-baseline.sh | grep -q 'SKIP coverage-baseline'"
+# The ratchet too: drift from earlier merges (total 90 vs baseline 5) must not block a docs PR.
+expect pass "coverage ratchet skipped on a docs branch, says so" \
+  bash -c "echo 'COVERAGE_TOTAL_CMD=\"echo 90\"' >> .standards/config.sh; out=\$(.standards/checks/coverage-baseline.sh --ratchet); rc=\$?; git checkout -q .standards/config.sh; [ \$rc -eq 0 ] && printf '%s' \"\$out\" | grep -q 'SKIP coverage-baseline (change class docs'"
+expect fail "coverage ratchet: same drift on an app branch fails (self-proof)" \
+  bash -c "git checkout -q -B feat/9-probe2 main && echo y >> src/a.sh && git commit -qam probe && echo 'COVERAGE_TOTAL_CMD=\"echo 90\"' >> .standards/config.sh; .standards/checks/coverage-baseline.sh --ratchet; rc=\$?; git checkout -q .standards/config.sh; exit \$rc"
 branch feat/9-site; echo 2 > site/data.txt; echo more >> docs/notes.md; git commit -qam site
 class_is site "site files and docs"
 branch feat/9-app; echo y >> src/a.sh; git commit -qam app
@@ -1134,12 +1164,34 @@ git add -A . && git commit -qm "new function, test names it"
 tdd pass "missing function on base, TDD_COMPILE_FAIL_RE unset → red"
 echo 'TDD_COMPILE_FAIL_RE="command not found|not found"' >> .standards/config.sh
 tdd fail "compile-only red without a TDD: compile-red line"
-expect pass "tdd: labels it compile only" grep -q "tests/a3.test.sh red (compile only — assertion not proven)" "$T/last.log.prev"
-echo "TDD: compile-red — <reason>" >> docs/work/9-t6/decisions.md
+cp "$T/last.log" "$T/compile.log"
+expect pass "tdd: labels it compile only" grep -q "tests/a3.test.sh red (compile only — assertion not proven)" "$T/compile.log"
+expect pass "tdd: prints the exact compile-red line to add" grep -q "TDD: compile-red — tests/a3.test.sh — <reason>" "$T/compile.log"
+echo "TDD: compile-red — tests/a3.test.sh — <reason>" >> docs/work/9-t6/decisions.md
 tdd fail "compile-red line with a placeholder reason"
 echo "TDD: compile-red — a3 is new; the test asserts its value once it exists" >> docs/work/9-t6/decisions.md
-tdd pass "compile-only red with a TDD: compile-red line"
+tdd fail "compile-red line naming no file covers nothing"
+echo "TDD: compile-red — tests/other.test.sh — a3 is new" >> docs/work/9-t6/decisions.md
+tdd fail "compile-red line naming another file"
+echo "TDD: compile-red — tests/x.test.sh, tests/a3.test.sh — a3 is new; the test asserts its value once it exists" >> docs/work/9-t6/decisions.md
+tdd pass "compile-only red, its file in a compile-red comma list"
 git checkout -q .standards/config.sh docs
+# A refactored test file that still passes on base: blocked until decisions.md names it in
+# "TDD: refactor — <file> — <reason>"; the fail message prints that line. Another changed test
+# must still be red: a refactor alone proves nothing about the source change.
+branch feat/9-t7; mkdir -p docs/work/9-t7; echo "# Decisions — #9" > docs/work/9-t7/decisions.md
+echo 'a() { echo 1; }; b() { echo 2; }' > src/a.sh; echo '. src/a.sh; [ "$(b)" = 2 ]' > tests/b.test.sh
+echo '. src/a.sh; test "$(a)" = 1' > tests/a.test.sh
+git add -A . && git commit -qm "new b with a red test, a.test.sh refactored"
+tdd fail "refactored test green on base, no TDD: refactor line"
+expect pass "tdd: prints the exact refactor line to add" grep -q "TDD: refactor — tests/a.test.sh — <reason>" "$T/last.log.prev"
+echo "TDD: refactor — tests/a.test.sh — <reason>" >> docs/work/9-t7/decisions.md
+tdd fail "refactor line with a placeholder reason"
+echo "TDD: refactor — tests/a.test.sh — same assertion, test instead of [ ]" >> docs/work/9-t7/decisions.md
+tdd pass "refactored test named in a TDD: refactor line, another test red"
+git rm -q tests/b.test.sh; git commit -qm "only the refactor left"
+tdd fail "source change whose only test change is a declared refactor"
+git checkout -q docs
 
 echo "docs-only lane"
 # A branch touching only docs needs no spec or plan gate; the pre-merge gate still applies.
