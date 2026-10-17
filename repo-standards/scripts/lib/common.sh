@@ -287,10 +287,13 @@ run_cmd() {
 
 # _srm_phys <dir>: sets _srm_phys to the dir's physical absolute path (../ and symlinks
 # resolved), or fails when it does not exist. CDPATH off so a relative dir means ./dir; the
-# trailing x keeps a name that ends in a newline intact through $( ).
+# trailing x keeps a name that ends in a newline intact through $( ). pwd -P keeps a leading
+# "//" (POSIX leaves it implementation-defined): folded to one "/", or //home would not
+# match the /home prefix checks.
 _srm_phys() {
   _srm_phys="$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P && echo x)" || return 1
   _srm_phys="${_srm_phys%?x}"
+  while :; do case "$_srm_phys" in //*) _srm_phys="${_srm_phys#/}" ;; *) break ;; esac; done  # safe_rm: slashes
 }
 
 # _srm_target <path>: sets _srm_target to the physical path safe_rm would remove, or sets
@@ -298,7 +301,7 @@ _srm_phys() {
 # what it points to. Each check is one line tagged "# safe_rm: <name>" so tests/run.sh can
 # drop one from a copy and prove its cases notice.
 _srm_target() {
-  local p="$1" dir base t home top root tmpdir="" roots=()
+  local p="$1" dir base t home top root tmpdir="" holds_home="" roots=()
   [ -n "$p" ] || { _srm_why="empty path"; return 1; }
   while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
   [ "$p" != / ] || { _srm_why="is /"; return 1; }
@@ -310,28 +313,32 @@ _srm_target() {
   # $HOME, and anything holding it. No $HOME to compare with: refuse, never guess.
   [ -n "${HOME:-}" ] && _srm_phys "$HOME" || { _srm_why="HOME unset or missing — cannot check"; return 1; }
   home="$_srm_phys"
+  [ "$home" != / ] || { _srm_why="HOME is / — cannot check"; return 1; }  # safe_rm: home-root
   case "$home/" in "$t"/*) _srm_why="is \$HOME or holds it"; return 1 ;; esac  # safe_rm: home
   # Temp roots. One that is /, $HOME or holds $HOME is ignored: TMPDIR=$HOME would make all
   # of $HOME deletable. ~/tmp stays a root, for what is strictly inside it. A root holding
   # the repo is kept: /var/folders holds the repos tests build, and the repo root and .git/
-  # are refused below either way.
+  # are refused below either way. A relative TMPDIR would resolve against the cwd: ignored.
   for root in "${TMPDIR:-}" /tmp /private/tmp /var/folders; do
-    [ -n "$root" ] && _srm_phys "$root" || continue
+    case "$root" in /*) ;; *) continue ;; esac  # safe_rm: abs-tmpdir
+    _srm_phys "$root" || continue
     case "$home/" in "${_srm_phys%/}"/*) continue ;; esac  # safe_rm: tmp-root
     case "$_srm_phys/" in "$t"/*) _srm_why="is a temp root or holds one"; return 1 ;; esac
     [ "$root" != "${TMPDIR:-}" ] || tmpdir="$_srm_phys"
     roots+=("$_srm_phys")
   done
-  # The repo: strictly inside, never the root, anything holding it, or .git/.
+  # The repo: strictly inside, never the root, anything holding it, or .git/. A repo that is
+  # $HOME or holds it (dotfiles) is no allowed root: it would make all of $HOME deletable.
   if top="$(git rev-parse --show-toplevel 2>/dev/null)" && _srm_phys "$top"; then
     top="$_srm_phys"
     case "$top/" in "$t"/*) _srm_why="is the repo root or holds it"; return 1 ;; esac
     case "$t/" in "$top/.git/"*) _srm_why="inside .git/"; return 1 ;; esac  # safe_rm: git-dir
-    case "$t" in "$top"/*) _srm_target="$t"; return 0 ;; esac
+    case "$home/" in "$top"/*) holds_home=1 ;; esac  # safe_rm: repo-home
+    [ -n "$holds_home" ] || case "$t" in "$top"/*) _srm_target="$t"; return 0 ;; esac
   fi
   # $TMPDIR first: it is the caller's own choice of temp dir, even when it sits under $HOME.
   [ -z "$tmpdir" ] || case "$t" in "$tmpdir"/*) _srm_target="$t"; return 0 ;; esac
-  case "$t" in "$home"/*) _srm_why="under \$HOME, outside the repo"; return 1 ;; esac  # safe_rm: home-rule
+  case "$t" in "$home"/*) _srm_why="under \$HOME, outside the repo${holds_home:+ (the repo holds \$HOME, so it is no allowed root)}"; return 1 ;; esac  # safe_rm: home-rule
   for root in "${roots[@]}"; do
     case "$t" in "$root"/*) _srm_target="$t"; return 0 ;; esac
   done

@@ -1037,22 +1037,13 @@ cr fail "configured side with no file to scan fails closed"
 
 # --- safe_rm: the only way .standards/ scripts delete ---
 echo "safe-rm"
-# rm_lint <dir or file>...: prints file:line of every bare rm command (full-line comments and
-# `git rm` aside) and fails if there is one. The allow marker excuses one line in
-# lib/common.sh (safe_rm itself) and one in run.sh (the EXIT trap); anywhere else it is a hit.
-# The marker is assembled here so this line is not itself a marker.
+# rm_lint <dir or file>...: prints file:line of every deletion command but `git rm`, and
+# fails if there is one. The program (tests/saferm-fixtures/rm-lint.awk) and its allow list
+# (rm-allow.txt: the exact safe_rm line and the exact EXIT trap line, by path) live outside
+# the scanned files, so their patterns are no hits here. A lint, not a sandbox.
 rm_lint() {
-  local mark="rm-lint"
-  find "$@" -type f -exec awk -v mark="$mark: allow" '
-    FNR == 1 { n = split(FILENAME, a, "/"); base = a[n]; allowed = 0 }
-    /^[[:space:]]*#/ { next }
-    index($0, mark) {
-      if ((base == "common.sh" || base == "run.sh") && !allowed++) next
-      print FILENAME ":" FNR ": allow marker outside safe_rm or the trap: " $0; bad = 1; next
-    }
-    { s = $0; gsub(/git[[:space:]]+rm[[:space:]]/, "", s) }
-    s ~ /(^|[^A-Za-z0-9_.-])rm[[:space:]]/ { print FILENAME ":" FNR ": " $0; bad = 1 }
-    END { exit bad }' {} +
+  local fx="$SKILL/tests/saferm-fixtures"
+  find "$@" -type f -exec awk -v allow="$fx/rm-allow.txt" -f "$fx/rm-lint.awk" "$fx/rm-allow.txt" {} +
 }
 expect pass "lint-rm: scripts/ and tests/run.sh are clean" rm_lint "$SKILL/scripts" "$SKILL/tests/run.sh"
 # Planted in a copy, never in the real scripts/.
@@ -1064,6 +1055,16 @@ expect pass "lint-rm: names the planted file:line" grep -q "lint-probe/checks/td
 cp "$SKILL/scripts/checks/tdd.sh" "$T/lint-probe/checks/tdd.sh"
 cat "$SKILL/tests/saferm-fixtures/marked-rm.sh" >> "$T/lint-probe/checks/doc-map.sh"
 expect fail "lint-rm: the marker outside common.sh excuses nothing" rm_lint "$T/lint-probe"
+# Disguised forms, one per line, planted in a copy: every one must be flagged.
+cp "$SKILL/scripts/checks/doc-map.sh" "$T/lint-probe/checks/doc-map.sh"
+cp "$SKILL/tests/saferm-fixtures/evade.sh" "$T/lint-probe/checks/evade.sh"
+rm_lint "$T/lint-probe" > "$T/evade.out" 2>&1
+expect pass "lint-rm: flags every disguised form ($(grep -c '/evade.sh:[0-9]*: L' "$T/evade.out") of $(grep -c '^L' "$SKILL/tests/saferm-fixtures/evade.sh"))" \
+  test "$(grep -c '/evade.sh:[0-9]*: L' "$T/evade.out")" = "$(grep -c '^L' "$SKILL/tests/saferm-fixtures/evade.sh")"
+# The marker is honoured by exact line and path, not by file name: a new checks/run.sh gets none.
+cp -R "$SKILL/scripts" "$T/lint-probe2"
+cp "$SKILL/tests/saferm-fixtures/marked-rm.sh" "$T/lint-probe2/checks/run.sh"
+expect fail "lint-rm: a new file named run.sh gets no free marker" rm_lint "$T/lint-probe2"
 
 # saferm_box <dir> <common.sh>: a fake HOME (<dir>/home) and fake TMPDIR (<dir>/tmp) holding
 # sentinel files, and a git repo inside the fake HOME (like ~/www/repo) with .standards/
@@ -1073,16 +1074,24 @@ saferm_box() {
   mkdir -p "$B/home/secret" "$B/home/docs" "$B/home/tmp/x" "$B/home/www/repo" "$B/tmp" || return 1
   : > "$B/sentinel"; : > "$B/home/sentinel"; : > "$B/home/secret/sentinel"; : > "$B/home/docs/sentinel"
   : > "$B/home/www/outside.txt"; : > "$B/tmp/sentinel"
+  # Two repos holding their $HOME: one is $HOME (dotfiles), one is its parent.
+  mkdir -p "$B/dot/home/docs" "$B/par/home/docs" || return 1
+  : > "$B/dot/home/docs/sentinel"; : > "$B/par/home/docs/sentinel"
   (cd "$B/home/www/repo" && git init -q -b main && mkdir -p .standards && cp -R "$SKILL/scripts/." .standards/ \
     && cp "$2" .standards/lib/common.sh && : > .git/sentinel && mkdir -p junk1 junk2/sub && : > junk2/sub/f \
-    && ln -s "$B/home/secret" link-to-secret && ln -s "$B/home" home-link)
+    && ln -s "$B/home/secret" link-to-secret && ln -s "$B/home" home-link) || return 1
+  for d in "$B/dot/home" "$B/par"; do
+    (cd "$d" && git init -q -b main && cp -R "$B/home/www/repo/.standards" .standards) || return 1
+  done
 }
 # sr_run <box> <arg>...: safe_rm in the box's repo, as the box's HOME and TMPDIR.
 sr_run() { local B="$1"; shift; sr_tmp "$B" "$B/tmp" "$@"; }
 # sr_tmp <box> <tmpdir> <arg>...: the same with another TMPDIR.
-sr_tmp() {
-  local B="$1" tmp="$2"; shift 2
-  (cd "$B/home/www/repo" && HOME="$B/home" TMPDIR="$tmp" bash "$SKILL/tests/saferm-fixtures/safe-rm.sh" "$@")
+sr_tmp() { local B="$1" tmp="$2"; shift 2; sr_at "$B/home/www/repo" "$B/home" "$tmp" "$@"; }
+# sr_at <cwd> <HOME> <TMPDIR> <arg>...: safe_rm run from <cwd> as that HOME and TMPDIR.
+sr_at() {
+  local cwd="$1" home="$2" tmp="$3"; shift 3
+  (cd "$cwd" && HOME="$home" TMPDIR="$tmp" bash "$SKILL/tests/saferm-fixtures/safe-rm.sh" "$@")
 }
 # saferm_cases <box>: every refusal, then the sentinels, then what it must delete.
 saferm_cases() {
@@ -1111,9 +1120,21 @@ saferm_cases() {
   expect fail "safe_rm: TMPDIR=parent of \$HOME → \$HOME/docs refused" sr_tmp "$B" "$B" "$B/home/docs"
   expect fail "safe_rm: TMPDIR=/ → --check \$HOME/docs refused" sr_tmp "$B" / --check "$B/home/docs"
   expect fail "safe_rm: TMPDIR=\$HOME/tmp → \$HOME/docs refused" sr_tmp "$B" "$B/home/tmp" "$B/home/docs"
+  # A leading // (pwd -P keeps it) must not slip past the prefix checks.
+  expect fail "safe_rm: TMPDIR=//<holds \$HOME> → //\$HOME/docs refused" sr_tmp "$B" "/$B" "/$B/home/docs"
+  expect fail "safe_rm: HOME=//\$HOME → \$HOME/docs refused" sr_at "$R2" "/$B/home" "$B/tmp" "$B/home/docs"
+  expect fail "safe_rm: HOME=/ → --check \$HOME/docs refused" sr_at "$R2" / "$B/tmp" --check "$B/home/docs"
+  # A relative TMPDIR would resolve against the cwd: ignored.
+  expect fail "safe_rm: TMPDIR=.. → a file beside the repo refused" sr_tmp "$B" .. "$B/home/www/outside.txt"
+  expect fail "safe_rm: TMPDIR=../../secret → a file in it refused" sr_tmp "$B" ../../secret "$B/home/secret/sentinel"
+  # A repo that is $HOME or holds it (dotfiles) is no allowed root.
+  expect fail "safe_rm: repo = \$HOME → \$HOME/docs refused" sr_at "$B/dot/home" "$B/dot/home" "$B/tmp" "$B/dot/home/docs"
+  expect pass "safe_rm: ... and says the repo holds \$HOME" grep -q 'repo holds \$HOME' "$T/last.log.prev"
+  expect fail "safe_rm: repo holds \$HOME → \$HOME/docs refused" sr_at "$B/par" "$B/par/home" "$B/tmp" "$B/par/home/docs"
   expect fail "safe_rm: one good and one bad path → refused" sr_run "$B" "$R2/junk1" "$B/home/secret/sentinel"
   expect pass "safe_rm: ... and the good one is not deleted either" test -d "$R2/junk1"
   for d in "$B/sentinel" "$B/home/sentinel" "$B/home/secret/sentinel" "$B/home/docs/sentinel" "$B/home/www/outside.txt" \
+           "$B/dot/home/docs/sentinel" "$B/par/home/docs/sentinel" \
            "$B/tmp/sentinel" "$R2/.git/sentinel" "$R2/.git/HEAD" "$R2/.standards/lib/common.sh"; do
     expect pass "safe_rm: still there after every refusal: ${d#"$B"/}" test -e "$d"
   done
@@ -1126,6 +1147,9 @@ saferm_cases() {
   expect pass "safe_rm: ... is gone" test ! -e "$d"
   expect pass "safe_rm: TMPDIR=\$HOME/tmp → a dir inside it" sr_tmp "$B" "$B/home/tmp" "$B/home/tmp/x"
   expect pass "safe_rm: ... is gone" test ! -e "$B/home/tmp/x"
+  d="$(mktemp -d "$B/tmp/dot.XXXXXX")"
+  expect pass "safe_rm: repo = \$HOME → a mktemp -d dir is still deletable" sr_at "$B/dot/home" "$B/dot/home" "$B/tmp" "$d"
+  expect pass "safe_rm: ... is gone" test ! -e "$d"
   expect pass "safe_rm: missing path, parent passes → no-op" sr_run "$B" "$R2/never-existed"
   expect pass "safe_rm: a symlink to \$HOME" sr_run "$B" "$R2/home-link"
   expect pass "safe_rm: ... removes the link" test ! -L "$R2/home-link"
@@ -1138,7 +1162,7 @@ saferm_cases "$T/box"
 # checks (/, $HOME itself, the repo root, the home rule) are layered behind these: dropping
 # one alone is caught by another, so it is no bite test. (The home rule only bites when a
 # temp root holds $HOME, and tmp-root now ignores such a root.)
-for weak in git-dir tmp-root; do
+for weak in git-dir tmp-root slashes home-root abs-tmpdir repo-home; do
   sed "/# safe_rm: $weak\$/d" "$SKILL/scripts/lib/common.sh" > "$T/common-$weak.sh"
   expect pass "safe_rm bite: copy without '$weak' lost exactly one line" \
     test "$(( $(wc -l < "$SKILL/scripts/lib/common.sh") - $(wc -l < "$T/common-$weak.sh") ))" = 1

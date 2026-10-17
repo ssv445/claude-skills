@@ -1,0 +1,2 @@
+lib/common.sh	    rm -rf -- "$t" || bad=1  # rm-lint: allow (the one rm in .standards/)
+tests/run.sh	trap 'case "${T:?}" in "$TMPROOT"/repo-standards-test.?*) rm -rf -- "$T" ;; esac' EXIT  # rm-lint: allow
