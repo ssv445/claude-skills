@@ -28,9 +28,10 @@ if ! awk -v t="$total" -v b="$baseline" 'BEGIN { exit !(t + 0 >= b + 0) }'; then
 fi
 # The suggested baseline is one point under the total rounded down (never below 0), so a
 # run-to-run wobble under one point never fails the next push: 85.05 suggests 84, and a
-# rerun at 84.95 still passes.
-new="$(awk -v t="$total" 'BEGIN { n = int(t) - 1; printf "%d", (n < 0 ? 0 : n) }')"
+# rerun at 84.95 still passes. It must also pass the ratchet itself: when total − that is more
+# than the slack (slack under 2), it is the total rounded down.
 slack="${COVERAGE_RATCHET_SLACK:-2}"
+new="$(awk -v t="$total" -v s="$slack" 'BEGIN { n = int(t) - 1; if (t - n > s + 0) n = int(t); printf "%d", (n < 0 ? 0 : n) }')"
 edit="set $baseline_file to $new (the file holds that one number and nothing else)"
 if [ "${1:-}" = "--ratchet" ] && awk -v t="$total" -v b="$baseline" -v s="$slack" 'BEGIN { exit !(t - b > s) }'; then
   red "FAIL coverage-ratchet: total $total is more than $slack points above baseline $baseline — in this PR, $edit"; exit 1

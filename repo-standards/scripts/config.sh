@@ -80,11 +80,13 @@ PERF_CMD=""              # must exit non-zero when a budget from a spec's Expect
 MERGE_MODE="squash"      # how bin/ship merges: squash | merge (keeps step-split commits) | rebase
 COVERAGE_RATCHET_SLACK=2 # bin/ship fails when total coverage is more than this many points above
                          # .standards/coverage-baseline, and prints the one-line raise
-# Deploy (optional; empty = bin/ship stops at the merge). After the merge bin/ship runs both from
-# a fresh detached checkout of origin/BASE_BRANCH in a temp dir, never from this working copy.
+# Deploy (optional; empty = bin/ship stops at the merge). Once the PR is merged, bin/ship runs both
+# from a fresh detached checkout of origin/BASE_BRANCH in a temp dir (cwd and $ROOT point at it),
+# using the values in the base's copy of this file: an unmerged edit here deploys nothing.
 DEPLOY_CMD=""            # e.g. "pnpm install --frozen-lockfile && pnpm run deploy"
-LIVE_CHECK_CMD=""        # must exit non-zero when production does not serve this build (e.g. the live
-                         # asset name differs from dist/index.html). Read-only, or a capped few requests
+LIVE_CHECK_CMD=""        # required with DEPLOY_CMD: exits non-zero when production does not serve this
+                         # build (e.g. the live asset name differs from dist/index.html). Read-only,
+                         # or a capped few requests
 
 # --- intake ---
 AGENT_ISSUES_PER_NIGHT=1

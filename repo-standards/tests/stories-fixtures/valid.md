@@ -21,3 +21,15 @@
 
 **Story:** As someone adding, I can add zero.
 - **Covered by:** `tests/stories/area.test.sh` “adds zero”
+
+## US-AD-05: A link beside the tests
+
+**Covered by:** `tests/stories/area.test.sh` "adds zero"; see https://example.com/spec.html and `https://example.com/a/b.html`
+
+## US-AD-07: A bare test path (matches TEST_GLOBS)
+
+**Covered by:** tests/stories/area.test.sh "adds two numbers"; notes in docs/spec/adding.md
+
+## US-AD-06: Old devices
+
+**Covered by:** manual only (needs a v1.2/v1.3 device; see src/old/device.md)

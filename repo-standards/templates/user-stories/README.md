@@ -11,7 +11,7 @@ An id looks like `US-CH-04`. `US` means user story, the two letters name the fil
 - **Story:** one sentence, "As someone ..., I can ... so that ...".
 - **Notes:** exact behaviour, with limits and numbers.
 - **Test cases:** numbered Given / When / Then steps.
-- **Coverage:** a "Covered by" line naming the automated tests that check it — each test file in backticks, then each test name in double quotes — or saying "manual only". On every push `.standards/checks/stories.sh` checks that each file exists and holds each quoted name. A long name may be cut short with `...`, at the end or in the middle; each part between the dots must match. Quote only test names, never other text.
+- **Coverage:** a "Covered by" line naming the automated tests that check it — each test file (in backticks, or bare when it matches `TEST_GLOBS`), then each test name in double quotes — or saying "manual only". On every push `.standards/checks/stories.sh` checks that each file exists and holds each quoted name. A long name may be cut short with `...`, at the end or in the middle; each part between the dots must match. Quote only test names, never other text.
 
 Example (a code block, so the check skips it):
 

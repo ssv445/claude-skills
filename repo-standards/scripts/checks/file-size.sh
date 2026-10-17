@@ -35,7 +35,8 @@ info "file-size: $n changed source file(s) checked"
 
 # Evidence: screenshots and recordings go on the PR, not into git (one repo had 36 MB of them
 # under docs/work/). A new image or video there over EVIDENCE_MAX_KB fails; a small diagram may
-# stay. Only added files: evidence already on the base is not this branch's to move.
+# stay. Only files new at their path (added, or renamed/moved in): evidence already there on
+# the base is not this branch's to move.
 max_kb="${EVIDENCE_MAX_KB:-300}"; imgs=0; big=0
 while IFS= read -r f; do
   case "$f" in docs/work/*) ;; *) continue ;; esac
@@ -43,7 +44,7 @@ while IFS= read -r f; do
   imgs=$((imgs + 1))
   kb=$(( ($(wc -c < "$f") + 1023) / 1024 ))
   [ "$kb" -le "$max_kb" ] || { red "  over $f: $kb KB (max $max_kb KB) — attach it to the PR instead (gh pr create|edit --attach ./$f) and remove it from the branch"; big=1; }
-done < <([ -n "$base" ] && git -c core.quotePath=false diff -z --name-only --diff-filter=A "$base" HEAD | tr '\0' '\n')
+done < <([ -n "$base" ] && git -c core.quotePath=false diff -z --name-only -M --diff-filter=AR "$base" HEAD | tr '\0' '\n')
 info "file-size: $imgs new image(s) under docs/work/ checked"
 
 [ $over -eq 0 ] || red "FAIL file-size: split the file(s) above, or (already over on base) do not make them longer"

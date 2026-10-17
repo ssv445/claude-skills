@@ -46,30 +46,51 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# deploy_base: DEPLOY_CMD, then LIVE_CHECK_CMD, from a fresh detached checkout of
-# origin/BASE_BRANCH in a temp dir — never this working copy, which may hold unmerged or
-# uncommitted files. The checkout is removed whatever happens. Returns 0 deployed and confirmed
-# (or no LIVE_CHECK_CMD), 1 the deploy failed, 2 the live check failed.
+# base_deploy_cfg: sets base_deploy and base_live to DEPLOY_CMD and LIVE_CHECK_CMD from
+# origin/BASE_BRANCH's config.sh, never this working copy's: an uncommitted or unmerged edit
+# must not decide what runs against production. Evaluated in a subshell with both unset first,
+# so a base without them does not inherit the working copy's values.
+base_deploy_cfg() {
+  local cfg
+  cfg="$(git show "origin/$BASE_BRANCH:.standards/config.sh" 2>/dev/null)" || cfg=""
+  base_deploy="$(unset DEPLOY_CMD LIVE_CHECK_CMD; eval "$cfg" >/dev/null 2>&1; printf '%s' "${DEPLOY_CMD:-}")"
+  base_live="$(unset DEPLOY_CMD LIVE_CHECK_CMD; eval "$cfg" >/dev/null 2>&1; printf '%s' "${LIVE_CHECK_CMD:-}")"
+}
+# deploy_cfg_ok <deploy> <live> <where>: a deploy needs a live check, or nobody knows it worked.
+deploy_cfg_ok() {
+  [ -z "$1" ] || [ -n "$2" ] && return 0
+  red "FAIL ship: DEPLOY_CMD is set but LIVE_CHECK_CMD is empty in $3 — add a read-only check that production serves this build (e.g. the live asset name matches the build's)"
+  return 1
+}
+# deploy_base: the base's DEPLOY_CMD, then its LIVE_CHECK_CMD, from a fresh detached checkout of
+# origin/BASE_BRANCH in a temp dir, with ROOT and the cwd set to it so "$ROOT/..." scripts are
+# the merged ones. The checkout is removed whatever happens. Returns 0 deployed and confirmed,
+# 1 the deploy failed (or could not start), 2 the live check failed, 3 no DEPLOY_CMD on the base.
 deploy_wt=""
 deploy_base() {
   local rc=0
   git fetch -q origin "$BASE_BRANCH" || { red "FAIL deploy: could not fetch origin/$BASE_BRANCH"; return 1; }
+  base_deploy_cfg
+  [ -n "$base_deploy" ] || { info "SKIP deploy (DEPLOY_CMD empty in origin/$BASE_BRANCH's .standards/config.sh)"; return 3; }
+  deploy_cfg_ok "$base_deploy" "$base_live" "origin/$BASE_BRANCH's .standards/config.sh" || return 1
   deploy_wt="$(mktemp -d "${TMPDIR:-/tmp}/standards-deploy.XXXXXX")" || return 1
   if ! git worktree add --detach -q "$deploy_wt" "origin/$BASE_BRANCH"; then
     red "FAIL deploy: could not check out origin/$BASE_BRANCH"; drop_worktree "$deploy_wt"; deploy_wt=""; return 1
   fi
   info "deploy: origin/$BASE_BRANCH at $(git -C "$deploy_wt" rev-parse --short HEAD), from a fresh checkout"
-  (cd "$deploy_wt" && run_cmd deploy "$DEPLOY_CMD") || rc=1
-  if [ $rc -eq 0 ] && [ -n "${LIVE_CHECK_CMD:-}" ]; then (cd "$deploy_wt" && run_cmd live-check "$LIVE_CHECK_CMD") || rc=2
-  elif [ $rc -eq 0 ]; then info "SKIP live-check (LIVE_CHECK_CMD empty: production not confirmed)"; fi
+  (cd "$deploy_wt" && ROOT="$deploy_wt" && run_cmd deploy "$base_deploy") || rc=1
+  if [ $rc -eq 0 ]; then (cd "$deploy_wt" && ROOT="$deploy_wt" && run_cmd live-check "$base_live") || rc=2; fi
   drop_worktree "$deploy_wt"; deploy_wt=""
   return $rc
 }
 # bin/ship --deploy: only the deploy stage, for a re-run after a failed deploy or live check.
 if [ "${1:-}" = --deploy ]; then
-  [ -n "${DEPLOY_CMD:-}" ] || { red "FAIL ship --deploy: DEPLOY_CMD is empty in .standards/config.sh"; exit 1; }
-  deploy_base || { red "FAIL ship --deploy: fix the cause above, then re-run bin/ship --deploy"; exit 1; }
-  green "deployed origin/$BASE_BRANCH"; exit 0
+  deploy_base; rc=$?
+  case $rc in
+    0) green "deployed origin/$BASE_BRANCH"; exit 0 ;;
+    3) red "FAIL ship --deploy: DEPLOY_CMD is empty in origin/$BASE_BRANCH's .standards/config.sh"; exit 1 ;;
+    *) red "FAIL ship --deploy: fix the cause above, then re-run bin/ship --deploy"; exit 1 ;;
+  esac
 fi
 
 # Checked before any gate runs, so a typo never fails only at the last step.
@@ -77,6 +98,11 @@ case "${MERGE_MODE:=squash}" in
   squash|merge|rebase) ;;
   *) red "FAIL ship: MERGE_MODE=\"$MERGE_MODE\" — use squash, merge or rebase in .standards/config.sh"; exit 1 ;;
 esac
+# The deploy config, on the base (what deploys after this merge) and on this branch (what the
+# next merge deploys): a DEPLOY_CMD without a LIVE_CHECK_CMD fails now, not after the merge.
+base_deploy_cfg
+deploy_cfg_ok "$base_deploy" "$base_live" "origin/$BASE_BRANCH's .standards/config.sh" || exit 1
+deploy_cfg_ok "${DEPLOY_CMD:-}" "${LIVE_CHECK_CMD:-}" ".standards/config.sh" || exit 1
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
 [ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
 json="$(gh pr view "$pr" --json headRefName,headRefOid,labels,closingIssuesReferences,body)" || exit 1
@@ -136,6 +162,11 @@ run_part perf app "$PERF_CMD" || fail=1
 if [ -n "${UI_GLOBS:-}" ]; then
   ui="$(touched_files | while IFS= read -r f; do matches_any "$f" "$UI_GLOBS" && printf '%s ' "$f"; done)"
   body="$(printf '%s' "$json" | jq -r '.body // ""')"
+  # HTML comments render as nothing: a commented-out image (a template hint) is no screenshot.
+  while [[ "$body" == *"<!--"* ]]; do
+    rest="${body#*<!--}"
+    if [[ "$rest" == *"-->"* ]]; then body="${body%%<!--*}${rest#*-->}"; else body="${body%%<!--*}"; fi
+  done
   if [ -z "$ui" ]; then info "ok   ui-evidence: no file in UI_GLOBS changed"
   elif printf '%s\n' "$body" | grep -qiE '!\[|<img|https://github\.com/user-attachments/'; then info "ok   ui-evidence: screenshot in the PR body"
   elif printf '%s\n' "$body" | grep -qE '^Screenshots: N/A — [^< ]'; then info "ok   ui-evidence: $(printf '%s\n' "$body" | grep -E '^Screenshots: N/A — ' | head -1)"
@@ -233,14 +264,24 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 
 Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
 fi
-# Deploy and confirm (optional): the merge already happened, so a failure here cannot undo it —
-# it fails the run loudly and says what to do next.
-if [ -n "${DEPLOY_CMD:-}" ]; then
-  deploy_base
-  case $? in
+# Deploy and confirm (optional, the base's DEPLOY_CMD): the merge already happened, so a failure
+# here cannot undo it — it fails the run loudly and says what to do next. Only once the PR is
+# MERGED and its merge commit is on origin/BASE_BRANCH: a merge queue or auto-merge returns
+# before the merge lands, and deploying then would ship the old base.
+git fetch -q origin "$BASE_BRANCH"; base_deploy_cfg
+if [ -n "$base_deploy" ]; then
+  merged="$(gh pr view "$pr" --json state,mergeCommit 2>/dev/null)"
+  state="$(printf '%s' "$merged" | jq -r '.state // "unknown"' 2>/dev/null)"; state="${state:-unknown}"
+  oid="$(printf '%s' "$merged" | jq -r '.mergeCommit.oid // ""' 2>/dev/null)"
+  if [ "$state" != MERGED ] || [ -z "$oid" ] || ! git merge-base --is-ancestor "$oid" "origin/$BASE_BRANCH" 2>/dev/null; then
+    red "SKIP deploy: #$pr is not merged into origin/$BASE_BRANCH yet (state $state) — a merge queue or auto-merge lands it later; once it has, run: bin/ship --deploy"
+  else
+    deploy_base
+    case $? in
     0) green "deployed origin/$BASE_BRANCH" ;;
     1) red "FAIL deploy: #$pr is merged, but the deploy failed — production still runs the previous build. Fix the cause (a new issue + PR if it is in the repo), then: bin/ship --deploy"; record_fail=1 ;;
-    *) red "FAIL live-check: #$pr is merged and deployed, but production does not match the build. Roll back or fix forward now (a new issue + PR), then confirm: bin/ship --deploy"; record_fail=1 ;;
-  esac
+    2) red "FAIL live-check: #$pr is merged and deployed, but production does not match the build. Roll back or fix forward now (a new issue + PR), then confirm: bin/ship --deploy"; record_fail=1 ;;
+    esac
+  fi
 fi
 [ -z "$record_fail" ] || exit 1

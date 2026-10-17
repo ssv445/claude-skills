@@ -674,6 +674,8 @@ case "$*" in
   "pr view --json number"*) echo 12 ;;
   "pr view 12 --json headRefName"*) # the PR body is the file $GH_BODY, when set
     jq -cn --arg r "$GH_BRANCH" --arg o "$GH_HEAD" --rawfile b "${GH_BODY:-/dev/null}" '{headRefName:$r,headRefOid:$o,body:$b}' ;;
+  "pr view 12 --json state"*) # after the merge: GH_STATE (default MERGED), merge commit GH_MERGE_OID (default origin/main)
+    jq -cn --arg s "${GH_STATE:-MERGED}" --arg m "${GH_MERGE_OID:-$(git rev-parse origin/main)}" '{state:$s,mergeCommit:{oid:$m}}' ;;
   "repo view"*) echo o/r ;;
   "api "*) # GH_PAGES holds a JSON array of pages. Like real gh: --slurp prints them all as
            # one array; -q applies its filter to each page separately.
@@ -745,6 +747,9 @@ cov pass "total 86.5, baseline 85, slack 2" 86.5
 cov fail "total 98.8, baseline 85, slack 2" 98.8
 expect pass "coverage ratchet: prints the one-line edit" grep -q "set .standards/coverage-baseline to 97 " "$T/last.log.prev"
 cov pass "total 98.8, baseline 85, slack 20" 98.8 20
+# The suggestion must itself pass the ratchet: total − suggestion ≤ slack (slack 1: 98, not 97).
+cov fail "total 98.8, baseline 85, slack 1" 98.8 1
+expect pass "coverage ratchet: slack 1 → suggests 98" grep -q "set .standards/coverage-baseline to 98 " "$T/last.log.prev"
 cov fail "below baseline still fails" 80
 srm "${R:?}/.standards/coverage-baseline"
 cov fail "no baseline file counts as 0" 50
@@ -788,6 +793,12 @@ git add docs assets; git commit -qm "small diagram, big product asset"
 expect pass "file-size: 10 KB image under docs/work/, 400 KB asset elsewhere" .standards/checks/file-size.sh
 expect pass "file-size: counts the images it checked" grep -q "1 new image(s) under docs/work/ checked" "$T/last.log.prev"
 git reset -q --hard HEAD~1
+# An image moved into docs/work/ (a rename) counts as new there.
+main0="$(git rev-parse main)"
+git checkout -q main; mkdir -p assets; head -c 409600 /dev/zero > assets/shot.png; git add assets; git commit -qm "main: big asset"
+git checkout -q -b feat/8-img; mkdir -p docs/work/8-img; git mv assets/shot.png docs/work/8-img/shot.png; git commit -qm "move it into evidence"
+expect fail "file-size: 400 KB image moved into docs/work/" .standards/checks/file-size.sh
+git checkout -q feat/7-mul; git branch -q -D feat/8-img; git branch -q -f main "$main0"
 
 echo "roadmap"
 expect pass "roadmap: absent (product layer not used)" .standards/checks/roadmap.sh
@@ -816,7 +827,8 @@ for f in "$SKILL"/tests/stories-fixtures/*.md; do
   case "$n" in valid) want=pass ;; *) want=fail ;; esac
   expect "$want" "stories: $n" .standards/checks/stories.sh
   case "$n" in
-    valid) expect pass "stories: valid → prints what it checked" grep -q "4 Covered by line(s), 3 file reference(s), 5 test name(s)" "$T/last.log.prev" ;;
+    valid) expect pass "stories: valid → prints what it checked" grep -q "7 Covered by line(s), 5 file reference(s), 7 test name(s)" "$T/last.log.prev" ;;
+    bare-missing) expect pass "stories: a bare TEST_GLOBS path that does not exist → named" grep -q "(US-AD-08): tests/stories/no-such.test.sh does not exist" "$T/last.log.prev" ;;
     missing-name) expect pass "stories: names the story, file and missing test" \
       grep -q "01-adding.md:6 (US-AD-09): tests/stories/area.test.sh has no \"subtracts two numbers\"" "$T/last.log.prev" ;;
     missing-file) expect pass "stories: names the missing file" grep -q "(US-AD-05): tests/stories/no-such.test.sh does not exist" "$T/last.log.prev" ;;
@@ -954,6 +966,9 @@ expect pass "ship: markdown image in the PR body → merge" test "$(writes)" = "
 body '<img width="375" alt="after" src="https://github.com/user-attachments/assets/0f0f">'
 ship_run GH_BODY="$T/body"
 expect pass "ship: <img> in the PR body → merge" test "$(writes)" = "merge;comment;"
+body "<!-- template hint:" "![after](https://github.com/user-attachments/assets/0f0f)" "-->"
+ship_run GH_BODY="$T/body"
+expect pass "ship: image only inside an HTML comment → nothing written" test "$(writes)" = ""
 body "Screenshots: N/A — <reason>"
 ship_run GH_BODY="$T/body"
 expect pass "ship: 'Screenshots: N/A' with a placeholder → nothing written" test "$(writes)" = ""
@@ -967,10 +982,11 @@ expect pass "ship: UI_GLOBS empty → no image needed" test "$(writes)" = "merge
 
 # Deploy: with DEPLOY_CMD set (on the base), bin/ship deploys after the merge from a fresh
 # detached checkout of origin/main in a temp dir, runs LIVE_CHECK_CMD there, then removes it.
-probe="$SKILL/tests/ship-fixtures/deploy-probe.sh"
-git checkout -q main
-sed -e "s|^DEPLOY_CMD=.*|DEPLOY_CMD=\"bash '$probe' deploy\"|" -e "s|^LIVE_CHECK_CMD=.*|LIVE_CHECK_CMD=\"bash '$probe' live\"|" .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
-git commit -qam "main: deploy" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+# The deploy script is committed on main and named through $ROOT, which bin/ship points at the
+# fresh checkout: an unmerged edit of the script or of config.sh must never run.
+git checkout -q main; cp "$SKILL/tests/ship-fixtures/deploy-probe.sh" deploy-probe.sh
+sed -e "s|^DEPLOY_CMD=.*|DEPLOY_CMD='bash \$ROOT/deploy-probe.sh deploy'|" -e "s|^LIVE_CHECK_CMD=.*|LIVE_CHECK_CMD='bash \$ROOT/deploy-probe.sh live'|" .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git add deploy-probe.sh .standards; git commit -qm "main: deploy" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
 dep() { : > "$T/probe.log"; ship_run PROBE_LOG="$T/probe.log" "$@"; }   # dep [VAR=value ...]
 probe_dir() { awk -v s="$1" '$1 == s { print $2 }' "$T/probe.log"; }   # probe_dir <step>: where it ran
 dep
@@ -992,6 +1008,27 @@ expect pass "ship --deploy: deploys origin/main only, no merge" \
   env PROBE_LOG="$T/probe.log" GH_LOG="$T/gh.log" PATH="$T/fakebin:$PATH" bash bin/ship --deploy
 expect pass "ship --deploy: ... ran deploy and live, wrote nothing to GitHub" \
   bash -c "test \"\$(awk '{ print \$1 }' '$T/probe.log' | tr '\n' ' ')\" = 'deploy live ' && test -z \"\$(grep -E '^pr (merge|comment)' '$T/gh.log')\""
+# Uncommitted edits to config.sh and to the deploy script in the working copy: the base's run.
+sed "s|^DEPLOY_CMD=.*|DEPLOY_CMD='bash \$ROOT/deploy-probe.sh rogue'|" .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+cp "$SKILL/tests/ship-fixtures/deploy-probe-branch.sh" deploy-probe.sh
+: > "$T/probe.log"
+env PROBE_LOG="$T/probe.log" GH_LOG="$T/gh.log" PATH="$T/fakebin:$PATH" bash bin/ship --deploy > "$T/ship.out" 2>&1
+expect pass "ship --deploy: unmerged config.sh and script edits never run (base's DEPLOY_CMD, base's script)" \
+  test "$(awk '{ print $1 }' "$T/probe.log" | tr '\n' ' ')" = "deploy live "
+git checkout -q -- .standards/config.sh deploy-probe.sh
+# Merged? A merge queue or auto-merge leaves the PR open: no deploy, and say how to deploy later.
+dep GH_STATE=OPEN
+expect pass "ship: PR still OPEN after the merge call → no deploy, says so" \
+  bash -c "test '$(writes)' = 'merge;comment;' && test ! -s '$T/probe.log' && grep -q 'SKIP deploy: #12 is not merged into origin/main yet (state OPEN)' '$T/ship.out'"
+dep GH_MERGE_OID="$(git rev-parse HEAD)"
+expect pass "ship: merge commit not on origin/main → no deploy" \
+  bash -c "test ! -s '$T/probe.log' && grep -q 'SKIP deploy: #12 is not merged into origin/main yet' '$T/ship.out'"
+# A deploy needs a live check: DEPLOY_CMD without LIVE_CHECK_CMD fails at ship start, nothing written.
+git checkout -q main; sed 's|^LIVE_CHECK_CMD=.*|LIVE_CHECK_CMD=""|' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "main: no live check" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+dep
+expect pass "ship: DEPLOY_CMD without LIVE_CHECK_CMD → nothing written, says so" \
+  bash -c "test -z '$(writes)' && test ! -s '$T/probe.log' && grep -q 'DEPLOY_CMD is set but LIVE_CHECK_CMD is empty' '$T/ship.out'"
 git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
 git checkout -q feat/1-x; git reset -q --hard "$feat"
 
