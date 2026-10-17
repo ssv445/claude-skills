@@ -9,7 +9,8 @@ owner-approval: not-required   # required if: architecture, schema/data model, n
 As a <user>, I want <capability>, so that <outcome>.
 
 ## Acceptance criteria
-- [ ] AC1: <observable behaviour>
+With `docs/user-stories/`: each criterion cites the story it changes (`US-XX-NN`), or the new id it adds there.
+- [ ] AC1: <observable behaviour> (US-XX-NN)
 - [ ] AC2: ...
 
 ## Expectations

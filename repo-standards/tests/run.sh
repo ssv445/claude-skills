@@ -4,9 +4,16 @@
 # Usage: bash repo-standards/tests/run.sh
 set -u
 SKILL="$(cd "$(dirname "$0")/.." && pwd)"
-T="$(mktemp -d)"
-trap 'rm -rf "$T"' EXIT
+TMPROOT="${TMPDIR:-/tmp}"; TMPROOT="${TMPROOT%/}"
+T="$(mktemp -d "$TMPROOT/repo-standards-test.XXXXXX")" || exit 1
+# The one bare rm in this file (the rm lint allows it by its marker): safe_rm lives in an
+# installed common.sh, which may not exist when this trap fires. ${T:?} and the case keep it
+# to the dir mktemp just made under the temp root.
+trap 'case "${T:?}" in "$TMPROOT"/repo-standards-test.?*) rm -rf -- "$T" ;; esac' EXIT  # rm-lint: allow
 pass=0; fail=0
+# srm <path>...: delete through safe_rm from the test repo's installed common.sh, with every
+# path anchored on $R. A refusal leaves state the later tests would misread: stop the run.
+srm() { (cd "${R:?}" && bash "$SKILL/tests/saferm-fixtures/safe-rm.sh" "$@") || { echo "FATAL safe_rm refused: $*"; exit 1; }; }
 
 expect() { # expect <pass|fail> <name> <command...>
   local want="$1" name="$2"; shift 2
@@ -52,6 +59,11 @@ sed -e 's|^TEST_FILES_CMD=.*|TEST_FILES_CMD="./run-tests.sh"|' \
     "$SKILL/scripts/config.sh" > .standards/config.sh
 # The shipped default is agent mode; fixtures start in owner mode and switch the base explicitly.
 expect pass "config: template default is APPROVER=agent" grep -qx 'APPROVER="agent"' "$SKILL/scripts/config.sh"
+# The install copies scripts/ to .standards/, so scripts/VERSION becomes .standards/VERSION: it
+# must be the version in SKILL.md's frontmatter, or an upgrade diffs against the wrong release.
+skill_version="$(sed -n '1,/^---$/{s/^version: *//p;}' "$SKILL/SKILL.md" | head -1)"
+expect pass "version: scripts/VERSION = SKILL.md version ($skill_version)" \
+  test -n "$skill_version" -a "$(cat "$SKILL/scripts/VERSION" 2>/dev/null)" = "$skill_version"
 cat > run-tests.sh <<'EOF'
 #!/bin/sh
 rc=0; for f in "$@"; do sh "$f" || { echo "test failed: $f"; rc=1; }; done; exit $rc
@@ -88,6 +100,7 @@ cat > tests/mul.test.sh <<'EOF'
 EOF
 git add tests && git commit -qm "real mul test"
 expect pass "tdd: red on base, green on HEAD" .standards/checks/tdd.sh
+expect pass "tdd: scratch checkout removed (drop_worktree)" test "$(git worktree list | wc -l | tr -d ' ')" = 1
 
 echo "doc-map"
 echo 'charge() { :; }' > src/billing/charge.sh
@@ -613,6 +626,16 @@ review "$ok" "$ok" ""
 aa fail "coverage baseline with extra lines"
 git checkout -q docs
 git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+# No baseline on the base counts as 0 (coverage-baseline.sh reads it so): creating the file
+# with one number raises it, which the ratchet asks for, so it needs no gate-change review.
+echo 85 > .standards/coverage-baseline; git add .standards; git commit -qm "first baseline"
+review "$ok" "$ok" ""
+aa pass "coverage baseline created (absent on base) with one number"
+git checkout -q docs; git reset -q --hard HEAD~1
+printf '90\n# note\n' > .standards/coverage-baseline; git add .standards; git commit -qm "first baseline plus text"
+review "$ok" "$ok" ""
+aa fail "coverage baseline created with extra lines"
+git checkout -q docs; git reset -q --hard "$feat"
 
 # APPROVER, read from the base's config.sh: "agent" lets the agent approve gate-file changes;
 # owner-review flags still block. A branch cannot switch the mode that judges it.
@@ -649,7 +672,10 @@ echo "$*" >> "$GH_LOG"
 if [ -n "${GH_FAIL:-}" ]; then case "$*" in *"$GH_FAIL"*) exit 1 ;; esac; fi
 case "$*" in
   "pr view --json number"*) echo 12 ;;
-  "pr view 12 --json headRefName"*) printf '{"headRefName":"%s","headRefOid":"%s"}\n' "$GH_BRANCH" "$GH_HEAD" ;;
+  "pr view 12 --json headRefName"*) # the PR body is the file $GH_BODY, when set
+    jq -cn --arg r "$GH_BRANCH" --arg o "$GH_HEAD" --rawfile b "${GH_BODY:-/dev/null}" '{headRefName:$r,headRefOid:$o,body:$b}' ;;
+  "pr view 12 --json state"*) # after the merge: GH_STATE (default MERGED), merge commit GH_MERGE_OID (default origin/main)
+    jq -cn --arg s "${GH_STATE:-MERGED}" --arg m "${GH_MERGE_OID:-$(git rev-parse origin/main)}" '{state:$s,mergeCommit:{oid:$m}}' ;;
   "repo view"*) echo o/r ;;
   "api "*) # GH_PAGES holds a JSON array of pages. Like real gh: --slurp prints them all as
            # one array; -q applies its filter to each page separately.
@@ -690,7 +716,43 @@ echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
 expect fail "coverage: total 80 below baseline 85" env COVERAGE_TOTAL_CMD="echo 80" bash -c '. .standards/config.sh; COVERAGE_TOTAL_CMD="echo 80"; sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 80\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
 expect pass "coverage: total 90 at/above baseline 85" bash -c 'sed -i.bak "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo 90\"|" .standards/config.sh; .standards/checks/coverage-baseline.sh; rc=$?; mv .standards/config.sh.bak .standards/config.sh; exit $rc'
-rm .standards/coverage-baseline
+# The suggested baseline is floor(total) − 1: a wobble under one point on the next run never fails.
+expect pass "coverage: above baseline → prints the new baseline, floor − 1" grep -q "raise it: set .standards/coverage-baseline to 89 " "$T/last.log.prev"
+# A total that is no number, or a command that fails, fails both modes, naming the output: junk
+# never counts as 0 (with no baseline file, 0 ≥ 0 would pass).
+covc() { # covc <name> <fixture> [--ratchet]: COVERAGE_TOTAL_CMD="sh <fixture>" must fail
+  cp .standards/config.sh "$T/cfg.bak"
+  sed "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"sh $SKILL/tests/coverage-fixtures/$2\"|" "$T/cfg.bak" > .standards/config.sh
+  expect fail "coverage${3:+ $3}: $1" .standards/checks/coverage-baseline.sh ${3:-}
+  cp "$T/cfg.bak" .standards/config.sh
+}
+mv .standards/coverage-baseline "$T/baseline.bak"
+for flag in "" --ratchet; do
+  covc "command prints no number (no baseline file)" junk.sh $flag
+  expect pass "coverage${flag:+ $flag}: ... names the output" grep -q "COVERAGE_TOTAL_CMD printed 'Error: coverage tool crashed'" "$T/last.log.prev"
+  covc "command exits non-zero" crash.sh $flag
+  expect pass "coverage${flag:+ $flag}: ... names the exit code" grep -q "COVERAGE_TOTAL_CMD exited 3" "$T/last.log.prev"
+  covc "last line is a status line, not the number" trailer.sh $flag
+done
+mv "$T/baseline.bak" .standards/coverage-baseline
+# The ratchet (bin/ship runs --ratchet): a total more than COVERAGE_RATCHET_SLACK above the
+# baseline fails until the baseline is raised, printing the exact edit.
+cov() { # cov <pass|fail> <name> <total> [slack]: --ratchet with COVERAGE_TOTAL_CMD="echo <total>"
+  cp .standards/config.sh "$T/cfg.bak"
+  sed -e "s|^COVERAGE_TOTAL_CMD=.*|COVERAGE_TOTAL_CMD=\"echo $3\"|" -e "s|^COVERAGE_RATCHET_SLACK=.*|COVERAGE_RATCHET_SLACK=${4:-2}|" "$T/cfg.bak" > .standards/config.sh
+  expect "$1" "coverage ratchet: $2" .standards/checks/coverage-baseline.sh --ratchet
+  cp "$T/cfg.bak" .standards/config.sh
+}
+cov pass "total 86.5, baseline 85, slack 2" 86.5
+cov fail "total 98.8, baseline 85, slack 2" 98.8
+expect pass "coverage ratchet: prints the one-line edit" grep -q "set .standards/coverage-baseline to 97 " "$T/last.log.prev"
+cov pass "total 98.8, baseline 85, slack 20" 98.8 20
+# The suggestion must itself pass the ratchet: total − suggestion ≤ slack (slack 1: 98, not 97).
+cov fail "total 98.8, baseline 85, slack 1" 98.8 1
+expect pass "coverage ratchet: slack 1 → suggests 98" grep -q "set .standards/coverage-baseline to 98 " "$T/last.log.prev"
+cov fail "below baseline still fails" 80
+srm "${R:?}/.standards/coverage-baseline"
+cov fail "no baseline file counts as 0" 50
 
 echo "file-size"
 expect pass "file-size: small files" .standards/checks/file-size.sh
@@ -702,6 +764,41 @@ for i in $(seq 1 30); do echo "x$i() { :; }"; done > "src/grö.sh"
 git add src && git commit -qm "big, non-ASCII name"
 expect fail "file-size: non-ASCII file name over max 20" .standards/checks/file-size.sh
 git reset -q --hard HEAD~1
+# Grandfathered: a file already over the limit on the base blocks only when the branch grows it.
+main0="$(git rev-parse main)"
+git checkout -q main; for i in $(seq 1 30); do echo "x$i() { :; }"; done > src/legacy.sh
+git add src && git commit -qm "main: legacy file over the limit"
+git checkout -q -b feat/8-size
+sed 's/^x5() .*/x5() { echo five; }/' src/legacy.sh > "$T/l" && cp "$T/l" src/legacy.sh; git commit -qam "edit, same length"
+expect pass "file-size: over-limit file on base, edited, not grown" .standards/checks/file-size.sh
+expect pass "file-size: says over limit but not grown" grep -q "over limit but not grown: src/legacy.sh (30 lines)" "$T/last.log.prev"
+echo 'x31() { :; }' >> src/legacy.sh; git commit -qam "grow it"
+expect fail "file-size: over-limit file on base, grown" .standards/checks/file-size.sh
+expect pass "file-size: names the base length to get back to" grep -q "src/legacy.sh: 31 lines, was 30 on base" "$T/last.log.prev"
+# A rename (git's rename detection) keeps the grandfathering: judged against the old path's length.
+git reset -q --hard HEAD~2
+git mv src/legacy.sh src/legacy2.sh; sed '$d' src/legacy2.sh > "$T/l" && cp "$T/l" src/legacy2.sh; git commit -qam "rename and shrink"
+expect pass "file-size: grandfathered file renamed and shrunk" .standards/checks/file-size.sh
+expect pass "file-size: ... names the old path" grep -q "over limit but not grown: src/legacy2.sh (29 lines; was 30 as src/legacy.sh)" "$T/last.log.prev"
+printf 'y1() { :; }\ny2() { :; }\n' >> src/legacy2.sh; git commit -qam "grow the renamed file"
+expect fail "file-size: grandfathered file renamed and grown" .standards/checks/file-size.sh
+git checkout -q feat/7-mul; git branch -q -D feat/8-size; git branch -q -f main "$main0"
+# Evidence images belong on the PR: a new one under docs/work/ over EVIDENCE_MAX_KB (300) fails.
+head -c 409600 /dev/zero > docs/work/7-mul/after.PNG; git add docs; git commit -qm "big screenshot"
+expect fail "file-size: new 400 KB image under docs/work/" .standards/checks/file-size.sh
+expect pass "file-size: says attach it to the PR instead" grep -q "docs/work/7-mul/after.PNG: 400 KB.*attach it to the PR instead" "$T/last.log.prev"
+git reset -q --hard HEAD~1
+head -c 10240 /dev/zero > docs/work/7-mul/diagram.png; mkdir -p assets; head -c 409600 /dev/zero > assets/logo.png
+git add docs assets; git commit -qm "small diagram, big product asset"
+expect pass "file-size: 10 KB image under docs/work/, 400 KB asset elsewhere" .standards/checks/file-size.sh
+expect pass "file-size: counts the images it checked" grep -q "1 new image(s) under docs/work/ checked" "$T/last.log.prev"
+git reset -q --hard HEAD~1
+# An image moved into docs/work/ (a rename) counts as new there.
+main0="$(git rev-parse main)"
+git checkout -q main; mkdir -p assets; head -c 409600 /dev/zero > assets/shot.png; git add assets; git commit -qm "main: big asset"
+git checkout -q -b feat/8-img; mkdir -p docs/work/8-img; git mv assets/shot.png docs/work/8-img/shot.png; git commit -qm "move it into evidence"
+expect fail "file-size: 400 KB image moved into docs/work/" .standards/checks/file-size.sh
+git checkout -q feat/7-mul; git branch -q -D feat/8-img; git branch -q -f main "$main0"
 
 echo "roadmap"
 expect pass "roadmap: absent (product layer not used)" .standards/checks/roadmap.sh
@@ -715,7 +812,32 @@ for f in "$SKILL"/tests/roadmap-fixtures/roadmap-*.md; do
 done
 cp "$SKILL"/templates/product/goals.md "$SKILL"/templates/product/assumptions.md "$SKILL"/templates/product/roadmap.md docs/product/
 expect pass "roadmap: installed templates are valid" .standards/checks/roadmap.sh
-rm -rf docs/product
+srm "${R:?}/docs/product"
+
+echo "stories"
+# Optional: only with docs/user-stories/. Every "Covered by" file exists and holds each quoted
+# test name; a line naming no file must say "manual only".
+expect pass "stories: no docs/user-stories/ → N/A" .standards/checks/stories.sh
+expect pass "stories: says N/A" grep -q "N/A: no docs/user-stories/" "$T/last.log.prev"
+mkdir -p docs/user-stories tests/stories
+cp "$SKILL/tests/stories-fixtures/area.test.sh" tests/stories/
+for f in "$SKILL"/tests/stories-fixtures/*.md; do
+  n="$(basename "$f" .md)"
+  cp "$f" docs/user-stories/01-adding.md
+  case "$n" in valid) want=pass ;; *) want=fail ;; esac
+  expect "$want" "stories: $n" .standards/checks/stories.sh
+  case "$n" in
+    valid) expect pass "stories: valid → prints what it checked" grep -q "7 Covered by line(s), 5 file reference(s), 7 test name(s)" "$T/last.log.prev" ;;
+    bare-missing) expect pass "stories: a bare TEST_GLOBS path that does not exist → named" grep -q "(US-AD-08): tests/stories/no-such.test.sh does not exist" "$T/last.log.prev" ;;
+    missing-name) expect pass "stories: names the story, file and missing test" \
+      grep -q "01-adding.md:6 (US-AD-09): tests/stories/area.test.sh has no \"subtracts two numbers\"" "$T/last.log.prev" ;;
+    missing-file) expect pass "stories: names the missing file" grep -q "(US-AD-05): tests/stories/no-such.test.sh does not exist" "$T/last.log.prev" ;;
+    no-test) expect pass "stories: a line with no file and no 'manual only'" grep -q "(US-AD-07): Covered by names no test file" "$T/last.log.prev" ;;
+  esac
+done
+cp "$SKILL/templates/user-stories/README.md" docs/user-stories/README.md; srm "${R:?}/docs/user-stories/01-adding.md"
+expect pass "stories: the installed README template passes" .standards/checks/stories.sh
+srm "${R:?}/docs/user-stories" "${R:?}/tests/stories"
 
 echo "pre-push"
 head="$(git rev-parse HEAD)"; z=0000000000000000000000000000000000000000
@@ -770,6 +892,28 @@ expect pass "ship: no gate change → comment says so, no rules-changed label" \
 ship_run GH_FAIL="pr merge"
 expect pass "ship: merge fails → no comment" test "$(writes)" = "merge;"
 expect pass "ship: no gate change, comment fails after merge → warns, run succeeds" ship_run GH_FAIL="pr comment"
+expect pass "ship: MERGE_MODE default → --squash" grep -q -- "^pr merge 12 --squash " "$T/gh.log"
+# MERGE_MODE and the coverage ratchet, set on the base like any config.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main
+sed -e 's/^MERGE_MODE=.*/MERGE_MODE="merge"/' -e 's/^COVERAGE_TOTAL_CMD=.*/COVERAGE_TOTAL_CMD="echo $FAKE_COV"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+echo 80 > .standards/coverage-baseline; git add .standards; git commit -qm "main: merge commits, coverage" && git push -q origin main
+git checkout -q feat/1-x; git rebase -q main
+ship_run FAKE_COV=81.5
+expect pass "ship: MERGE_MODE=merge → gh pr merge --merge" bash -c "test '$(writes)' = 'merge;comment;' && grep -q -- '^pr merge 12 --merge ' '$T/gh.log'"
+ship_run FAKE_COV=98.8
+expect pass "ship: coverage 98.8 vs baseline 80 → nothing written" test "$(writes)" = ""
+expect pass "ship: coverage ratchet prints the edit" grep -q "set .standards/coverage-baseline to 97 " "$T/ship.out"
+echo 97 > .standards/coverage-baseline; git commit -qam "raise baseline"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "re-review"
+ship_run FAKE_COV=98.8
+expect pass "ship: baseline raised → agent approves and merges" test "$(writes)" = "merge;comment;"
+sed 's/^MERGE_MODE=.*/MERGE_MODE="fast"/' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh; git commit -qam "bad mode"
+ship_run FAKE_COV=98.8
+expect pass "ship: unknown MERGE_MODE → nothing written, says which values" \
+  bash -c "test -z '$(writes)' && grep -q 'MERGE_MODE=\"fast\" — use squash, merge or rebase' '$T/ship.out'"
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
 echo "owner-review: required — taste" >> "$dec"; git commit -qam "flag"
 ship_run
 expect pass "ship: agent refused, no owner label → nothing written" test "$(writes)" = ""
@@ -804,6 +948,89 @@ git reset -q --hard HEAD~1
 ship_run STANDARDS_SHIP_FROM_BASE=bin/ship
 ship_run STANDARDS_SHIP_FROM_BASE="$PWD/bin/ship"
 expect pass "ship: spoofed STANDARDS_SHIP_FROM_BASE never deletes bin/ship" test -f bin/ship
+
+# UI evidence: with UI_GLOBS set (on the base), a PR touching a UI file needs an image in its
+# body, or "Screenshots: N/A — <reason>". Screenshots live on the PR, never in git.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; sed 's|^UI_GLOBS=.*|UI_GLOBS="src/*"|' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "main: UI_GLOBS" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+body() { printf '%s\n' "Closes #1" "" "$@" > "$T/body"; }   # body <line>...: the PR body for ship_run
+body "## Evidence" "| AC1 | e2e | ok | ok | test | PASS |"
+ship_run GH_BODY="$T/body"
+expect pass "ship: UI file changed, no image in the PR body → nothing written" test "$(writes)" = ""
+expect pass "ship: ... names the UI file and the --attach fix" \
+  bash -c "grep -q 'UI files changed (src/a.txt)' '$T/ship.out' && grep -q 'gh pr edit 12 .*--attach' '$T/ship.out'"
+body "![after, 375 px](https://github.com/user-attachments/assets/0f0f)"
+ship_run GH_BODY="$T/body"
+expect pass "ship: markdown image in the PR body → merge" test "$(writes)" = "merge;comment;"
+body '<img width="375" alt="after" src="https://github.com/user-attachments/assets/0f0f">'
+ship_run GH_BODY="$T/body"
+expect pass "ship: <img> in the PR body → merge" test "$(writes)" = "merge;comment;"
+body "<!-- template hint:" "![after](https://github.com/user-attachments/assets/0f0f)" "-->"
+ship_run GH_BODY="$T/body"
+expect pass "ship: image only inside an HTML comment → nothing written" test "$(writes)" = ""
+body "Screenshots: N/A — <reason>"
+ship_run GH_BODY="$T/body"
+expect pass "ship: 'Screenshots: N/A' with a placeholder → nothing written" test "$(writes)" = ""
+body "Screenshots: N/A — a renamed constant; no pixel moves"
+ship_run GH_BODY="$T/body"
+expect pass "ship: 'Screenshots: N/A — reason' → merge" test "$(writes)" = "merge;comment;"
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
+ship_run
+expect pass "ship: UI_GLOBS empty → no image needed" test "$(writes)" = "merge;comment;"
+
+# Deploy: with DEPLOY_CMD set (on the base), bin/ship deploys after the merge from a fresh
+# detached checkout of origin/main in a temp dir, runs LIVE_CHECK_CMD there, then removes it.
+# The deploy script is committed on main and named through $ROOT, which bin/ship points at the
+# fresh checkout: an unmerged edit of the script or of config.sh must never run.
+git checkout -q main; cp "$SKILL/tests/ship-fixtures/deploy-probe.sh" deploy-probe.sh
+sed -e "s|^DEPLOY_CMD=.*|DEPLOY_CMD='bash \$ROOT/deploy-probe.sh deploy'|" -e "s|^LIVE_CHECK_CMD=.*|LIVE_CHECK_CMD='bash \$ROOT/deploy-probe.sh live'|" .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git add deploy-probe.sh .standards; git commit -qm "main: deploy" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+dep() { : > "$T/probe.log"; ship_run PROBE_LOG="$T/probe.log" "$@"; }   # dep [VAR=value ...]
+probe_dir() { awk -v s="$1" '$1 == s { print $2 }' "$T/probe.log"; }   # probe_dir <step>: where it ran
+dep
+expect pass "ship: DEPLOY_CMD set → merge, comment, then deploy and live check" \
+  bash -c "test '$(writes)' = 'merge;comment;' && test \"\$(awk '{ print \$1 }' '$T/probe.log' | tr '\n' ' ')\" = 'deploy live '"
+expect pass "ship: deploy ran at origin/main, outside the working copy" \
+  bash -c "test \"\$(awk '{ print \$3 }' '$T/probe.log' | sort -u)\" = '$(git rev-parse origin/main)' && test '$(probe_dir deploy)' != '$(pwd -P)'"
+expect pass "ship: deploy checkout removed (dirty with build output)" \
+  bash -c "test -n '$(probe_dir deploy)' && test ! -e '$(probe_dir deploy)' && test \"\$(git worktree list | wc -l | tr -d ' ')\" = 1"
+expect fail "ship: live check fails after the merge → run fails" dep PROBE_LIVE_RC=1
+expect pass "ship: ... says it is merged and deployed, and how to re-check" \
+  bash -c "grep -q 'FAIL live-check: #12 is merged and deployed' '$T/ship.out' && grep -q 'bin/ship --deploy' '$T/ship.out'"
+expect pass "ship: ... checkout removed after a failed live check" bash -c "test -n '$(probe_dir live)' && test ! -e '$(probe_dir live)'"
+expect fail "ship: deploy fails → run fails" dep PROBE_DEPLOY_RC=1
+expect pass "ship: ... no live check after a failed deploy, says production runs the old build" \
+  bash -c "test \"\$(awk '{ print \$1 }' '$T/probe.log')\" = deploy && grep -q 'production still runs the previous build' '$T/ship.out'"
+: > "$T/probe.log"; : > "$T/gh.log"
+expect pass "ship --deploy: deploys origin/main only, no merge" \
+  env PROBE_LOG="$T/probe.log" GH_LOG="$T/gh.log" PATH="$T/fakebin:$PATH" bash bin/ship --deploy
+expect pass "ship --deploy: ... ran deploy and live, wrote nothing to GitHub" \
+  bash -c "test \"\$(awk '{ print \$1 }' '$T/probe.log' | tr '\n' ' ')\" = 'deploy live ' && test -z \"\$(grep -E '^pr (merge|comment)' '$T/gh.log')\""
+# Uncommitted edits to config.sh and to the deploy script in the working copy: the base's run.
+sed "s|^DEPLOY_CMD=.*|DEPLOY_CMD='bash \$ROOT/deploy-probe.sh rogue'|" .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+cp "$SKILL/tests/ship-fixtures/deploy-probe-branch.sh" deploy-probe.sh
+: > "$T/probe.log"
+env PROBE_LOG="$T/probe.log" GH_LOG="$T/gh.log" PATH="$T/fakebin:$PATH" bash bin/ship --deploy > "$T/ship.out" 2>&1
+expect pass "ship --deploy: unmerged config.sh and script edits never run (base's DEPLOY_CMD, base's script)" \
+  test "$(awk '{ print $1 }' "$T/probe.log" | tr '\n' ' ')" = "deploy live "
+git checkout -q -- .standards/config.sh deploy-probe.sh
+# Merged? A merge queue or auto-merge leaves the PR open: no deploy, and say how to deploy later.
+dep GH_STATE=OPEN
+expect pass "ship: PR still OPEN after the merge call → no deploy, says so" \
+  bash -c "test '$(writes)' = 'merge;comment;' && test ! -s '$T/probe.log' && grep -q 'SKIP deploy: #12 is not merged into origin/main yet (state OPEN)' '$T/ship.out'"
+dep GH_MERGE_OID="$(git rev-parse HEAD)"
+expect pass "ship: merge commit not on origin/main → no deploy" \
+  bash -c "test ! -s '$T/probe.log' && grep -q 'SKIP deploy: #12 is not merged into origin/main yet' '$T/ship.out'"
+# A deploy needs a live check: DEPLOY_CMD without LIVE_CHECK_CMD fails at ship start, nothing written.
+git checkout -q main; sed 's|^LIVE_CHECK_CMD=.*|LIVE_CHECK_CMD=""|' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "main: no live check" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+dep
+expect pass "ship: DEPLOY_CMD without LIVE_CHECK_CMD → nothing written, says so" \
+  bash -c "test -z '$(writes)' && test ! -s '$T/probe.log' && grep -q 'DEPLOY_CMD is set but LIVE_CHECK_CMD is empty' '$T/ship.out'"
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
 
 # APPROVER modes: a blast-radius spec (no spec-approved label) plus a gate-file change.
 echo "owner-approval: required" > docs/work/1-x/spec.md; echo "agents: keep it short" > CLAUDE.md
@@ -898,6 +1125,11 @@ class_is docs "docs only"
 expect fail "coverage-baseline runs when the app is touched (self-proof)" bash -c "git checkout -q -B feat/9-probe main && echo y >> src/a.sh && git commit -qam probe && .standards/checks/coverage-baseline.sh"
 branch feat/9-docs2; echo more >> docs/notes.md; git commit -qam docs
 expect pass "coverage-baseline skipped on a docs branch" bash -c ".standards/checks/coverage-baseline.sh | grep -q 'SKIP coverage-baseline'"
+# The ratchet too: drift from earlier merges (total 90 vs baseline 5) must not block a docs PR.
+expect pass "coverage ratchet skipped on a docs branch, says so" \
+  bash -c "echo 'COVERAGE_TOTAL_CMD=\"echo 90\"' >> .standards/config.sh; out=\$(.standards/checks/coverage-baseline.sh --ratchet); rc=\$?; git checkout -q .standards/config.sh; [ \$rc -eq 0 ] && printf '%s' \"\$out\" | grep -q 'SKIP coverage-baseline (change class docs'"
+expect fail "coverage ratchet: same drift on an app branch fails (self-proof)" \
+  bash -c "git checkout -q -B feat/9-probe2 main && echo y >> src/a.sh && git commit -qam probe && echo 'COVERAGE_TOTAL_CMD=\"echo 90\"' >> .standards/config.sh; .standards/checks/coverage-baseline.sh --ratchet; rc=\$?; git checkout -q .standards/config.sh; exit \$rc"
 branch feat/9-site; echo 2 > site/data.txt; echo more >> docs/notes.md; git commit -qam site
 class_is site "site files and docs"
 branch feat/9-app; echo y >> src/a.sh; git commit -qam app
@@ -950,6 +1182,53 @@ echo 'SRC_GLOBS=""' >> .standards/config.sh
 tdd pass "SRC_GLOBS explicitly empty → N/A"
 expect pass "tdd: empty SRC_GLOBS prints an N/A line" grep -q "N/A: SRC_GLOBS empty" "$T/last.log.prev"
 git checkout -q .standards/config.sh
+# Each changed test file must be red on its own: a red file in the same run must not hide one
+# that already passes on the base (same kind, unlike feat/9-t4).
+branch feat/9-t5
+echo 'a() { echo 3; }' > src/a.sh; echo '. src/a.sh; [ "$(a)" = 3 ]' > tests/a.test.sh; echo 'true' > tests/b.test.sh
+git add -A . && git commit -qm "two app tests, one green on base"
+tdd fail "app test green on base is not hidden by a red app test"
+expect pass "tdd: names the test that passes on base" grep -q "tests/b.test.sh passes on the base code" "$T/last.log.prev"
+git rm -q tests/b.test.sh; git commit -qm "drop the green test"
+tdd pass "each changed test red on its own"
+expect pass "tdd: prints each file's red time" grep -q "tests/a.test.sh red on base ([0-9][0-9]*s)" "$T/last.log.prev"
+# Compile-red: the base fails only because the test names what does not exist there yet. With
+# TDD_COMPILE_FAIL_RE matching that output, it is labelled and needs a decisions.md line.
+branch feat/9-t6; mkdir -p docs/work/9-t6
+echo 'a() { echo 1; }; a3() { echo 3; }' > src/a.sh; echo '. src/a.sh; [ "$(a3)" = 3 ]' > tests/a3.test.sh
+echo "# Decisions — #9" > docs/work/9-t6/decisions.md
+git add -A . && git commit -qm "new function, test names it"
+tdd pass "missing function on base, TDD_COMPILE_FAIL_RE unset → red"
+echo 'TDD_COMPILE_FAIL_RE="command not found|not found"' >> .standards/config.sh
+tdd fail "compile-only red without a TDD: compile-red line"
+cp "$T/last.log" "$T/compile.log"
+expect pass "tdd: labels it compile only" grep -q "tests/a3.test.sh red (compile only — assertion not proven)" "$T/compile.log"
+expect pass "tdd: prints the exact compile-red line to add" grep -q "TDD: compile-red — tests/a3.test.sh — <reason>" "$T/compile.log"
+echo "TDD: compile-red — tests/a3.test.sh — <reason>" >> docs/work/9-t6/decisions.md
+tdd fail "compile-red line with a placeholder reason"
+echo "TDD: compile-red — a3 is new; the test asserts its value once it exists" >> docs/work/9-t6/decisions.md
+tdd fail "compile-red line naming no file covers nothing"
+echo "TDD: compile-red — tests/other.test.sh — a3 is new" >> docs/work/9-t6/decisions.md
+tdd fail "compile-red line naming another file"
+echo "TDD: compile-red — tests/x.test.sh, tests/a3.test.sh — a3 is new; the test asserts its value once it exists" >> docs/work/9-t6/decisions.md
+tdd pass "compile-only red, its file in a compile-red comma list"
+git checkout -q .standards/config.sh docs
+# A refactored test file that still passes on base: blocked until decisions.md names it in
+# "TDD: refactor — <file> — <reason>"; the fail message prints that line. Another changed test
+# must still be red: a refactor alone proves nothing about the source change.
+branch feat/9-t7; mkdir -p docs/work/9-t7; echo "# Decisions — #9" > docs/work/9-t7/decisions.md
+echo 'a() { echo 1; }; b() { echo 2; }' > src/a.sh; echo '. src/a.sh; [ "$(b)" = 2 ]' > tests/b.test.sh
+echo '. src/a.sh; test "$(a)" = 1' > tests/a.test.sh
+git add -A . && git commit -qm "new b with a red test, a.test.sh refactored"
+tdd fail "refactored test green on base, no TDD: refactor line"
+expect pass "tdd: prints the exact refactor line to add" grep -q "TDD: refactor — tests/a.test.sh — <reason>" "$T/last.log.prev"
+echo "TDD: refactor — tests/a.test.sh — <reason>" >> docs/work/9-t7/decisions.md
+tdd fail "refactor line with a placeholder reason"
+echo "TDD: refactor — tests/a.test.sh — same assertion, test instead of [ ]" >> docs/work/9-t7/decisions.md
+tdd pass "refactored test named in a TDD: refactor line, another test red"
+git rm -q tests/b.test.sh; git commit -qm "only the refactor left"
+tdd fail "source change whose only test change is a declared refactor"
+git checkout -q docs
 
 echo "docs-only lane"
 # A branch touching only docs needs no spec or plan gate; the pre-merge gate still applies.
@@ -1027,6 +1306,189 @@ echo "const p = '../docs/notes.md'" > site/tests/n.test.sh; git add site/tests/n
 cr fail "site test reads a docs file not in SHARED_GLOBS"
 git rm -q site/tests/n.test.sh site/tests/keep.test.sh; git commit -qm "drop site tests"
 cr fail "configured side with no file to scan fails closed"
+
+echo "guards"
+# GUARDS_CMD runs in pre-push by change class: GUARDS_PART "app" (default) skips it on a docs
+# or site branch; "always" runs it on every branch. The probe guard exits $GUARD_RC.
+pp() { # pp <GUARD_RC>: pre-push of HEAD; output in $T/pp.out
+  printf 'refs/heads/x %s refs/heads/x %s\n' "$(git rev-parse HEAD)" "$z" > "$T/pp-refs"
+  GUARD_RC="$1" .standards/hooks/pre-push < "$T/pp-refs" > "$T/pp.out" 2>&1
+}
+git checkout -q main
+printf '#!/bin/sh\necho "guard-probe: scanned src/"\nexit ${GUARD_RC:-0}\n' > guard-probe.sh; chmod +x guard-probe.sh
+echo 'GUARDS_CMD="./guard-probe.sh"' >> .standards/config.sh; git add guard-probe.sh .standards; git commit -qm "main: a guard"
+branch feat/9-gd; echo more >> docs/notes.md; git commit -qam docs
+pp 1
+expect pass "guards: docs branch → SKIP guards" grep -q "SKIP guards (change class docs" "$T/pp.out"
+branch feat/9-ga; echo y >> src/a.sh; git commit -qam app
+pp 1
+expect pass "guards: app branch, guard fails → FAIL guards, push blocked" \
+  bash -c "grep -q 'FAIL guards' '$T/pp.out' && grep -q 'pre-push BLOCKED' '$T/pp.out'"
+pp 0
+expect pass "guards: app branch, guard passes → PASS guards, its output shown" \
+  bash -c "grep -q 'PASS guards' '$T/pp.out' && grep -q 'guard-probe: scanned src/' '$T/pp.out'"
+git checkout -q main; echo 'GUARDS_PART="always"' >> .standards/config.sh; git commit -qam "main: guards always"
+branch feat/9-gd2; echo more >> docs/notes.md; git commit -qam docs
+pp 1
+expect pass "guards: GUARDS_PART=always → runs on a docs branch" grep -q "FAIL guards" "$T/pp.out"
+git checkout -q main; git reset -q --hard HEAD~2
+
+echo "local checks"
+# .standards/local/pre-push.d/*: the repo's own checks, run after the standard ones on every
+# class; upgrades never touch them. The probe exits $LOCAL_RC.
+git checkout -q main; mkdir -p .standards/local/pre-push.d
+cp "$SKILL/tests/local-fixtures/probe.sh" .standards/local/pre-push.d/10-probe; chmod +x .standards/local/pre-push.d/10-probe
+git add .standards; git commit -qm "main: a local check"
+branch feat/9-lc; echo more >> docs/notes.md; git commit -qam docs
+LOCAL_RC=1 pp 0
+expect pass "local: failing local check → FAIL local 10-probe, push blocked" \
+  bash -c "grep -q 'FAIL local 10-probe' '$T/pp.out' && grep -q 'pre-push BLOCKED' '$T/pp.out'"
+LOCAL_RC=0 pp 0
+expect pass "local: passing local check → PASS, its output shown" \
+  bash -c "grep -q 'PASS local 10-probe' '$T/pp.out' && grep -q 'local-probe: scanned src/' '$T/pp.out' && ! grep -q 'FAIL local' '$T/pp.out'"
+cp "$SKILL/tests/local-fixtures/probe.sh" .standards/local/pre-push.d/20-noexec; chmod -x .standards/local/pre-push.d/20-noexec
+git add .standards; git commit -qm "not executable"
+LOCAL_RC=0 pp 0
+expect pass "local: a file that is not executable → blocked, says chmod +x" \
+  bash -c "grep -q 'chmod +x .standards/local/pre-push.d/20-noexec' '$T/pp.out' && grep -q 'pre-push BLOCKED' '$T/pp.out'"
+git checkout -q main; git reset -q --hard HEAD~1
+
+# --- safe_rm: the only way .standards/ scripts delete ---
+echo "safe-rm"
+# rm_lint <dir or file>...: prints file:line of every deletion command but `git rm`, and
+# fails if there is one. The program (tests/saferm-fixtures/rm-lint.awk) and its allow list
+# (rm-allow.txt: the exact safe_rm line and the exact EXIT trap line, by path) live outside
+# the scanned files, so their patterns are no hits here. A lint, not a sandbox.
+rm_lint() {
+  local fx="$SKILL/tests/saferm-fixtures"
+  find "$@" -type f -exec awk -v allow="$fx/rm-allow.txt" -f "$fx/rm-lint.awk" "$fx/rm-allow.txt" {} +
+}
+expect pass "lint-rm: scripts/ and tests/run.sh are clean" rm_lint "$SKILL/scripts" "$SKILL/tests/run.sh"
+# Planted in a copy, never in the real scripts/.
+cp -R "$SKILL/scripts" "$T/lint-probe"
+expect pass "lint-rm: the unplanted copy passes" rm_lint "$T/lint-probe"
+cat "$SKILL/tests/saferm-fixtures/bare-rm.sh" >> "$T/lint-probe/checks/tdd.sh"
+expect fail "lint-rm: planted copy of scripts/ fails" rm_lint "$T/lint-probe"
+expect pass "lint-rm: names the planted file:line" grep -q "lint-probe/checks/tdd.sh:[0-9][0-9]*: rm[ ]-f" "$T/last.log.prev"
+cp "$SKILL/scripts/checks/tdd.sh" "$T/lint-probe/checks/tdd.sh"
+cat "$SKILL/tests/saferm-fixtures/marked-rm.sh" >> "$T/lint-probe/checks/doc-map.sh"
+expect fail "lint-rm: the marker outside common.sh excuses nothing" rm_lint "$T/lint-probe"
+# Disguised forms, one per line, planted in a copy: every one must be flagged.
+cp "$SKILL/scripts/checks/doc-map.sh" "$T/lint-probe/checks/doc-map.sh"
+cp "$SKILL/tests/saferm-fixtures/evade.sh" "$T/lint-probe/checks/evade.sh"
+rm_lint "$T/lint-probe" > "$T/evade.out" 2>&1
+expect pass "lint-rm: flags every disguised form ($(grep -c '/evade.sh:[0-9]*: L' "$T/evade.out") of $(grep -c '^L' "$SKILL/tests/saferm-fixtures/evade.sh"))" \
+  test "$(grep -c '/evade.sh:[0-9]*: L' "$T/evade.out")" = "$(grep -c '^L' "$SKILL/tests/saferm-fixtures/evade.sh")"
+# The marker is honoured by exact line and path, not by file name: a new checks/run.sh gets none.
+cp -R "$SKILL/scripts" "$T/lint-probe2"
+cp "$SKILL/tests/saferm-fixtures/marked-rm.sh" "$T/lint-probe2/checks/run.sh"
+expect fail "lint-rm: a new file named run.sh gets no free marker" rm_lint "$T/lint-probe2"
+
+# saferm_box <dir> <common.sh>: a fake HOME (<dir>/home) and fake TMPDIR (<dir>/tmp) holding
+# sentinel files, and a git repo inside the fake HOME (like ~/www/repo) with .standards/
+# installed and <common.sh> as its lib. Nothing here touches the real HOME.
+saferm_box() {
+  local B="$1"
+  mkdir -p "$B/home/secret" "$B/home/docs" "$B/home/tmp/x" "$B/home/www/repo" "$B/tmp" || return 1
+  : > "$B/sentinel"; : > "$B/home/sentinel"; : > "$B/home/secret/sentinel"; : > "$B/home/docs/sentinel"
+  : > "$B/home/www/outside.txt"; : > "$B/tmp/sentinel"
+  # Two repos holding their $HOME: one is $HOME (dotfiles), one is its parent.
+  mkdir -p "$B/dot/home/docs" "$B/par/home/docs" || return 1
+  : > "$B/dot/home/docs/sentinel"; : > "$B/par/home/docs/sentinel"
+  (cd "$B/home/www/repo" && git init -q -b main && mkdir -p .standards && cp -R "$SKILL/scripts/." .standards/ \
+    && cp "$2" .standards/lib/common.sh && : > .git/sentinel && mkdir -p junk1 junk2/sub && : > junk2/sub/f \
+    && ln -s "$B/home/secret" link-to-secret && ln -s "$B/home" home-link) || return 1
+  for d in "$B/dot/home" "$B/par"; do
+    (cd "$d" && git init -q -b main && cp -R "$B/home/www/repo/.standards" .standards) || return 1
+  done
+}
+# sr_run <box> <arg>...: safe_rm in the box's repo, as the box's HOME and TMPDIR.
+sr_run() { local B="$1"; shift; sr_tmp "$B" "$B/tmp" "$@"; }
+# sr_tmp <box> <tmpdir> <arg>...: the same with another TMPDIR.
+sr_tmp() { local B="$1" tmp="$2"; shift 2; sr_at "$B/home/www/repo" "$B/home" "$tmp" "$@"; }
+# sr_at <cwd> <HOME> <TMPDIR> <arg>...: safe_rm run from <cwd> as that HOME and TMPDIR.
+sr_at() {
+  local cwd="$1" home="$2" tmp="$3"; shift 3
+  (cd "$cwd" && HOME="$home" TMPDIR="$tmp" bash "$SKILL/tests/saferm-fixtures/safe-rm.sh" "$@")
+}
+# saferm_cases <box>: every refusal, then the sentinels, then what it must delete.
+saferm_cases() {
+  local B="$1" R2="$1/home/www/repo" d
+  expect fail "safe_rm: no path" sr_run "$B"
+  expect fail "safe_rm: empty path" sr_run "$B" ""
+  expect fail "safe_rm: \$HOME" sr_run "$B" "$B/home"
+  expect fail "safe_rm: \$HOME with a trailing slash" sr_run "$B" "$B/home/"
+  expect fail "safe_rm: parent of \$HOME" sr_run "$B" "$B"
+  expect fail "safe_rm: ../ out of the repo (relative)" sr_run "$B" "../outside.txt"
+  expect fail "safe_rm: ../ out of the repo (absolute)" sr_run "$B" "$R2/../outside.txt"
+  expect fail "safe_rm: symlinked parent pointing into \$HOME" sr_run "$B" "$R2/link-to-secret/sentinel"
+  expect fail "safe_rm: file in \$HOME outside the repo" sr_run "$B" "$B/home/secret/sentinel"
+  expect fail "safe_rm: the repo root" sr_run "$B" "$R2"
+  expect fail "safe_rm: the repo root as ." sr_run "$B" "."
+  expect fail "safe_rm: a file inside .git/" sr_run "$B" "$R2/.git/sentinel"
+  expect fail "safe_rm: .git itself" sr_run "$B" ".git"
+  expect fail "safe_rm: the temp root itself" sr_run "$B" "$B/tmp"
+  expect fail "safe_rm: parent directory missing" sr_run "$B" "$R2/no-such-dir/x"
+  expect fail "safe_rm --check /" sr_run "$B" --check /
+  expect pass "safe_rm: refusal says refused: <path> — <reason>" grep -q "^refused: / — " "$T/last.log.prev"
+  # A TMPDIR that is /, $HOME or holds $HOME is no temp root: it would make all of $HOME
+  # deletable. One strictly inside $HOME (~/tmp) still counts, for what is inside it only.
+  expect fail "safe_rm: TMPDIR=\$HOME → \$HOME/docs refused" sr_tmp "$B" "$B/home" "$B/home/docs"
+  expect fail "safe_rm: TMPDIR=\$HOME → file in \$HOME refused" sr_tmp "$B" "$B/home" "$B/home/secret/sentinel"
+  expect fail "safe_rm: TMPDIR=parent of \$HOME → \$HOME/docs refused" sr_tmp "$B" "$B" "$B/home/docs"
+  expect fail "safe_rm: TMPDIR=/ → --check \$HOME/docs refused" sr_tmp "$B" / --check "$B/home/docs"
+  expect fail "safe_rm: TMPDIR=\$HOME/tmp → \$HOME/docs refused" sr_tmp "$B" "$B/home/tmp" "$B/home/docs"
+  # A leading // (pwd -P keeps it) must not slip past the prefix checks.
+  expect fail "safe_rm: TMPDIR=//<holds \$HOME> → //\$HOME/docs refused" sr_tmp "$B" "/$B" "/$B/home/docs"
+  expect fail "safe_rm: HOME=//\$HOME → \$HOME/docs refused" sr_at "$R2" "/$B/home" "$B/tmp" "$B/home/docs"
+  expect fail "safe_rm: HOME=/ → --check \$HOME/docs refused" sr_at "$R2" / "$B/tmp" --check "$B/home/docs"
+  # A relative TMPDIR would resolve against the cwd: ignored.
+  expect fail "safe_rm: TMPDIR=.. → a file beside the repo refused" sr_tmp "$B" .. "$B/home/www/outside.txt"
+  expect fail "safe_rm: TMPDIR=../../secret → a file in it refused" sr_tmp "$B" ../../secret "$B/home/secret/sentinel"
+  # A repo that is $HOME or holds it (dotfiles) is no allowed root.
+  expect fail "safe_rm: repo = \$HOME → \$HOME/docs refused" sr_at "$B/dot/home" "$B/dot/home" "$B/tmp" "$B/dot/home/docs"
+  expect pass "safe_rm: ... and says the repo holds \$HOME" grep -q 'repo holds \$HOME' "$T/last.log.prev"
+  expect fail "safe_rm: repo holds \$HOME → \$HOME/docs refused" sr_at "$B/par" "$B/par/home" "$B/tmp" "$B/par/home/docs"
+  expect fail "safe_rm: one good and one bad path → refused" sr_run "$B" "$R2/junk1" "$B/home/secret/sentinel"
+  expect pass "safe_rm: ... and the good one is not deleted either" test -d "$R2/junk1"
+  for d in "$B/sentinel" "$B/home/sentinel" "$B/home/secret/sentinel" "$B/home/docs/sentinel" "$B/home/www/outside.txt" \
+           "$B/dot/home/docs/sentinel" "$B/par/home/docs/sentinel" \
+           "$B/tmp/sentinel" "$R2/.git/sentinel" "$R2/.git/HEAD" "$R2/.standards/lib/common.sh"; do
+    expect pass "safe_rm: still there after every refusal: ${d#"$B"/}" test -e "$d"
+  done
+  expect pass "safe_rm --check: a good path passes" sr_run "$B" --check "$R2/junk1"
+  expect pass "safe_rm --check: ... and deletes nothing" test -d "$R2/junk1"
+  expect pass "safe_rm: a dir inside the repo" sr_run "$B" "$R2/junk2"
+  expect pass "safe_rm: ... is gone" test ! -e "$R2/junk2"
+  d="$(mktemp -d "$B/tmp/del.XXXXXX")" && : > "$d/f"
+  expect pass "safe_rm: a mktemp -d dir in TMPDIR" sr_run "$B" "$d"
+  expect pass "safe_rm: ... is gone" test ! -e "$d"
+  expect pass "safe_rm: TMPDIR=\$HOME/tmp → a dir inside it" sr_tmp "$B" "$B/home/tmp" "$B/home/tmp/x"
+  expect pass "safe_rm: ... is gone" test ! -e "$B/home/tmp/x"
+  d="$(mktemp -d "$B/tmp/dot.XXXXXX")"
+  expect pass "safe_rm: repo = \$HOME → a mktemp -d dir is still deletable" sr_at "$B/dot/home" "$B/dot/home" "$B/tmp" "$d"
+  expect pass "safe_rm: ... is gone" test ! -e "$d"
+  expect pass "safe_rm: missing path, parent passes → no-op" sr_run "$B" "$R2/never-existed"
+  expect pass "safe_rm: a symlink to \$HOME" sr_run "$B" "$R2/home-link"
+  expect pass "safe_rm: ... removes the link" test ! -L "$R2/home-link"
+  expect pass "safe_rm: ... and keeps its target" test -f "$B/home/sentinel"
+}
+saferm_box "$T/box" "$SKILL/scripts/lib/common.sh"
+saferm_cases "$T/box"
+# The cases bite: drop one check (its line tagged "# safe_rm: <name>") from a copy of
+# common.sh, run every case in a fresh box against it, and some must go wrong. The other
+# checks (/, $HOME itself, the repo root, the home rule) are layered behind these: dropping
+# one alone is caught by another, so it is no bite test. (The home rule only bites when a
+# temp root holds $HOME, and tmp-root now ignores such a root.)
+for weak in git-dir tmp-root slashes home-root abs-tmpdir repo-home; do
+  sed "/# safe_rm: $weak\$/d" "$SKILL/scripts/lib/common.sh" > "$T/common-$weak.sh"
+  expect pass "safe_rm bite: copy without '$weak' lost exactly one line" \
+    test "$(( $(wc -l < "$SKILL/scripts/lib/common.sh") - $(wc -l < "$T/common-$weak.sh") ))" = 1
+  saferm_box "$T/weak-$weak" "$T/common-$weak.sh"
+  (pass=0; fail=0; saferm_cases "$T/weak-$weak" > "$T/bite-$weak.log" 2>&1; [ "$fail" -gt 0 ])
+  bit=$?
+  expect pass "safe_rm bite: cases go wrong without '$weak' ($(grep -c '^  WRONG' "$T/bite-$weak.log") wrong)" test "$bit" = 0
+done
 
 echo
 echo "$pass passed, $fail wrong"

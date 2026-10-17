@@ -281,3 +281,94 @@ run_cmd() {
   if [ $rc -ne 0 ]; then red "FAIL $label (exit $rc)"; return 1; fi
   green "PASS $label ($(( $(date +%s) - start ))s)"
 }
+
+# --- deletion: every .standards/ script deletes through safe_rm, never a bare rm. A variable
+# that comes out empty or relative must not turn a cleanup into rm -rf of $HOME or /.
+
+# _srm_phys <dir>: sets _srm_phys to the dir's physical absolute path (../ and symlinks
+# resolved), or fails when it does not exist. CDPATH off so a relative dir means ./dir; the
+# trailing x keeps a name that ends in a newline intact through $( ). pwd -P keeps a leading
+# "//" (POSIX leaves it implementation-defined): folded to one "/", or //home would not
+# match the /home prefix checks.
+_srm_phys() {
+  _srm_phys="$(CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P && echo x)" || return 1
+  _srm_phys="${_srm_phys%?x}"
+  while :; do case "$_srm_phys" in //*) _srm_phys="${_srm_phys#/}" ;; *) break ;; esac; done  # safe_rm: slashes
+}
+
+# _srm_target <path>: sets _srm_target to the physical path safe_rm would remove, or sets
+# _srm_why and fails. Only the parent is resolved: a symlink argument names the link, never
+# what it points to. Each check is one line tagged "# safe_rm: <name>" so tests/run.sh can
+# drop one from a copy and prove its cases notice.
+_srm_target() {
+  local p="$1" dir base t home top root tmpdir="" holds_home="" roots=()
+  [ -n "$p" ] || { _srm_why="empty path"; return 1; }
+  while :; do case "$p" in ?*/) p="${p%/}" ;; *) break ;; esac; done
+  [ "$p" != / ] || { _srm_why="is /"; return 1; }
+  base="${p##*/}"
+  case "$p" in */*) dir="${p%/*}"; dir="${dir:-/}" ;; *) dir=. ;; esac
+  case "$base" in .|..) _srm_why="ends in . or .. — name the path itself"; return 1 ;; esac
+  _srm_phys "$dir" || { _srm_why="parent directory does not exist"; return 1; }
+  t="${_srm_phys%/}/$base"
+  # $HOME, and anything holding it. No $HOME to compare with: refuse, never guess.
+  [ -n "${HOME:-}" ] && _srm_phys "$HOME" || { _srm_why="HOME unset or missing — cannot check"; return 1; }
+  home="$_srm_phys"
+  [ "$home" != / ] || { _srm_why="HOME is / — cannot check"; return 1; }  # safe_rm: home-root
+  case "$home/" in "$t"/*) _srm_why="is \$HOME or holds it"; return 1 ;; esac  # safe_rm: home
+  # Temp roots. One that is /, $HOME or holds $HOME is ignored: TMPDIR=$HOME would make all
+  # of $HOME deletable. ~/tmp stays a root, for what is strictly inside it. A root holding
+  # the repo is kept: /var/folders holds the repos tests build, and the repo root and .git/
+  # are refused below either way. A relative TMPDIR would resolve against the cwd: ignored.
+  for root in "${TMPDIR:-}" /tmp /private/tmp /var/folders; do
+    case "$root" in /*) ;; *) continue ;; esac  # safe_rm: abs-tmpdir
+    _srm_phys "$root" || continue
+    case "$home/" in "${_srm_phys%/}"/*) continue ;; esac  # safe_rm: tmp-root
+    case "$_srm_phys/" in "$t"/*) _srm_why="is a temp root or holds one"; return 1 ;; esac
+    [ "$root" != "${TMPDIR:-}" ] || tmpdir="$_srm_phys"
+    roots+=("$_srm_phys")
+  done
+  # The repo: strictly inside, never the root, anything holding it, or .git/. A repo that is
+  # $HOME or holds it (dotfiles) is no allowed root: it would make all of $HOME deletable.
+  if top="$(git rev-parse --show-toplevel 2>/dev/null)" && _srm_phys "$top"; then
+    top="$_srm_phys"
+    case "$top/" in "$t"/*) _srm_why="is the repo root or holds it"; return 1 ;; esac
+    case "$t/" in "$top/.git/"*) _srm_why="inside .git/"; return 1 ;; esac  # safe_rm: git-dir
+    case "$home/" in "$top"/*) holds_home=1 ;; esac  # safe_rm: repo-home
+    [ -n "$holds_home" ] || case "$t" in "$top"/*) _srm_target="$t"; return 0 ;; esac
+  fi
+  # $TMPDIR first: it is the caller's own choice of temp dir, even when it sits under $HOME.
+  [ -z "$tmpdir" ] || case "$t" in "$tmpdir"/*) _srm_target="$t"; return 0 ;; esac
+  case "$t" in "$home"/*) _srm_why="under \$HOME, outside the repo${holds_home:+ (the repo holds \$HOME, so it is no allowed root)}"; return 1 ;; esac  # safe_rm: home-rule
+  for root in "${roots[@]}"; do
+    case "$t" in "$root"/*) _srm_target="$t"; return 0 ;; esac
+  done
+  _srm_why="outside the repo and the temp dirs"; return 1
+}
+
+# safe_rm [--check] <path>...: rm -rf each path, but only strictly inside the repo (not .git/)
+# or a temp dir ($TMPDIR, /tmp, /var/folders), never $HOME, /, or anything holding them. All
+# paths are checked first: one refusal deletes nothing ("refused: <path> — <reason>" on
+# stderr, exit 1). A missing path whose parent passes is a no-op. --check: validate only.
+safe_rm() {
+  local check="" p t bad=0 targets=()
+  if [ "${1:-}" = "--check" ]; then check=1; shift; fi
+  [ $# -gt 0 ] || { printf 'refused: (no path) — nothing named\n' >&2; return 1; }
+  for p in "$@"; do
+    if _srm_target "$p"; then targets+=("$_srm_target")
+    else printf 'refused: %s — %s\n' "$p" "$_srm_why" >&2; bad=1; fi
+  done
+  [ $bad -eq 0 ] || return 1
+  [ -z "$check" ] || return 0
+  for t in "${targets[@]}"; do
+    rm -rf -- "$t" || bad=1  # rm-lint: allow (the one rm in .standards/)
+  done
+  return $bad
+}
+
+# drop_worktree <dir>: removes a scratch checkout made with `git worktree add`. The files go
+# through safe_rm (a test or deploy run leaves untracked files, which plain `git worktree
+# remove` refuses and --force would delete unchecked); then git forgets the missing checkout.
+drop_worktree() {
+  safe_rm "$1" || return 1
+  git worktree remove "$1" >/dev/null 2>&1 || git worktree prune
+}

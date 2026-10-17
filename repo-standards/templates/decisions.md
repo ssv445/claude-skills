@@ -30,6 +30,7 @@ Verdict: PENDING
 One line each, starting at column 0, accepted at the pre-merge gate. Format (indented here so it is not itself an exception):
 
     TDD: N/A — <reason>        (only for a source change with no test)
+    TDD: compile-red — <reason>   (only when pre-push labels a test "red (compile only)")
     docs-unchanged: <doc path> — <reason>
 
 ## Pre-merge gate

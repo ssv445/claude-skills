@@ -23,18 +23,22 @@ is_pass() { case "$1" in PASS|PASS\ *|PASS—*) return 0 ;; *) return 1 ;; esac;
 # The list is NUL-separated in a file: -z and quotePath=false keep git from C-quoting
 # non-ASCII names, which would match no glob and resolve to no blob.
 base="$(base_commit)"
-changed="$(mktemp)"; trap 'rm -f "$changed" "$changed".*' EXIT; diff_ok=0
+changed="$(mktemp)"; trap '[ -z "$changed" ] || safe_rm "$changed" "$changed".*' EXIT; diff_ok=0
 if [ -z "$base" ]; then miss "no base commit (origin/$BASE_BRANCH or $BASE_BRANCH) — the owner decides"
 elif git -c core.quotePath=false diff -z --name-only --no-renames "$base" HEAD > "$changed"; then diff_ok=1
 else miss "git diff $base HEAD failed"
 fi
 
 # raises_baseline: the branch only raises .standards/coverage-baseline — one number on
-# base and HEAD, HEAD's >= base's. coverage-baseline.sh asks for exactly that edit; any
-# other change to it (lower, extra text, new, deleted) stays a gate change.
+# base and HEAD, HEAD's >= base's. No file on the base counts as 0, as coverage-baseline.sh
+# reads it, so creating it with one number is a raise (the ratchet asks for it on a fresh
+# install). coverage-baseline.sh asks for exactly that edit; any other change to it (lower,
+# extra text, deleted) stays a gate change.
 raises_baseline() {
   local old new num='^[0-9]+(\.[0-9]+)?$'
-  old="$(git show "$base:.standards/coverage-baseline" 2>/dev/null)" || return 1
+  if git cat-file -e "$base:.standards/coverage-baseline" 2>/dev/null; then
+    old="$(git show "$base:.standards/coverage-baseline")" || return 1
+  else old=0; fi
   new="$(git show "HEAD:.standards/coverage-baseline" 2>/dev/null)" || return 1
   printf '%s\n' "$old" | grep -qE "$num" && [ "$(printf '%s\n' "$old" | wc -l)" -eq 1 ] || return 1
   printf '%s\n' "$new" | grep -qE "$num" && [ "$(printf '%s\n' "$new" | wc -l)" -eq 1 ] || return 1
@@ -225,7 +229,7 @@ if [ -n "$base" ]; then
         | owner_reason | grep '[[:alnum:]]' | sort > "$changed.answered"
       noreason="$(grep -vc '[[:alnum:]]' "$changed.gone")"
       unpaired="$(grep '[[:alnum:]]' "$changed.gone" | comm -23 - "$changed.answered")"
-      rm -f "$changed.gone" "$changed.answered"
+      safe_rm "$changed.gone" "$changed.answered"
       [ "$noreason" -eq 0 ] || miss "$noreason owner-review flag(s) with no reason removed on this branch — no answered line can pair with it; only the owner can close it (bin/approve <pr>)"
       if [ -z "$unpaired" ]; then [ "$noreason" -ne 0 ] || info "ok   $(printf '%s\n' "$gone_review" | wc -l | tr -d ' ') owner-review flag(s) closed as answered"
       else miss "owner-review flag removed on this branch without its own answered line (reasons: $(printf '%s' "$unpaired" | tr '\n' ';')) — replace each flag with 'owner-review: answered — <reason as in the flag> — <link to the owner's answer> — <the answer, quoted>'"
