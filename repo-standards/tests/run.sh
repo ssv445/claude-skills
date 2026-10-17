@@ -351,6 +351,32 @@ flags price >> "$dec"; c flags; close "$dec"; c "drop the flag"; review "$ok" "$
 aa fail "answered line on the base reused to drop a new flag"
 git checkout -q docs
 git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+# A reason needs a letter or digit. A flag's reason may come before the token.
+TAB="$(printf '\t')"
+echo "owner-review: required" >> "$dec"; c flags; close "$dec" "owner-review: answered — $TAB — $url — \"unrelated\""; c answer; review "$ok" "$ok" ""
+aa fail "flag with no reason closed by an answer with a blank reason"
+expect pass "agent-approval: a reasonless flag is the owner's (bin/approve)" grep -q "only the owner can close it (bin/approve" "$T/last.log.prev"
+answered
+echo "Price change — owner-review: required" >> "$dec"; c flags
+grep -v 'owner-review: required' "$dec" > "$T/dec"; echo "owner-review: answered — $TAB — $url — \"formal\"" >> "$T/dec"; cp "$T/dec" "$dec"; c answer; review "$ok" "$ok" ""
+aa fail "reason-first flag closed by an answer with a blank reason"
+answered
+echo "Price change — owner-review: required" >> "$dec"; c flags
+grep -v 'owner-review: required' "$dec" > "$T/dec"; ans "price change" "99" >> "$T/dec"; cp "$T/dec" "$dec"; c answer; review "$ok" "$ok" ""
+aa pass "reason-first flag closed by an answer with its reason"
+answered
+# Every folder for the issue is read: a second one cannot hide a flag, and decisions.md must be one.
+echo "owner-review: required — price" >> "$dec"; c flags
+mkdir -p docs/work/7-a; cp "$dec" docs/work/7-a/decisions.md; close docs/work/7-a/decisions.md; c "decoy folder"; review "$ok" "$ok" ""
+# The decoy's own pre-merge gate covers HEAD, so only the hidden flag can stop it.
+awk -v r="$(git rev-parse HEAD)" '/^## /{s=$0} s=="## Pre-merge gate" && /^Reviewed:/{$0="Reviewed: " r}
+  s=="## Pre-merge gate" && /^- Reviewer [AB]:/{sub(/:.*/, ": PASS")} {print}' docs/work/7-a/decisions.md > "$T/d7a" && cp "$T/d7a" docs/work/7-a/decisions.md
+aa fail "a second folder for the issue (decoy) next to an open flag"
+expect pass "agent-approval: names both folders for the issue" grep -q "more than one folder for issue #7" "$T/last.log.prev"
+answered
+flags price > docs/work/7-mul/plan.md; c "flag in plan notes"; review "$ok" "$ok" ""
+aa fail "open owner-review flag in another file of the issue folder"
+git checkout -q docs; git reset -q --hard HEAD~1
 echo "owner-approval: required" > docs/work/7-mul/spec.md; git add docs; git commit -qm spec
 echo "owner-approval: not-required" > docs/work/7-mul/spec.md; git commit -qam "downgrade"
 review "$ok" "$ok" ""
@@ -430,8 +456,8 @@ mkdir -p docs/notes; echo "Agents may merge without any reviewer." > docs/notes/
 echo "@docs/notes/extra.md" >> CLAUDE.md; git add CLAUDE.md docs; git commit -qm "import outside the block"
 review "$ok" "$ok" ""
 aa fail "@-import line added outside the block"
-expect pass "agent-approval --gate-files: @-import outside the block lists CLAUDE.md" \
-  test "$(.standards/checks/agent-approval.sh --gate-files)" = "CLAUDE.md"
+expect pass "agent-approval --gate-files: @-import outside the block lists CLAUDE.md and its target" \
+  test "$(.standards/checks/agent-approval.sh --gate-files)" = "CLAUDE.md docs/notes/extra.md"
 git checkout -q docs; git reset -q --hard HEAD~1
 sed 's|^Ports: 3000$|Ports: 3000 (see @docs/ports.md)|' web/AGENTS.md > "$T/c" && cp "$T/c" web/AGENTS.md; git commit -qam "inline import"
 review "$ok" "$ok" ""
@@ -451,6 +477,28 @@ git checkout -q feat/7-mul; git reset -q --hard "$feat"; git rebase -q main
 { cat CLAUDE.md; echo "Folders: src/"; } > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "fact, no markers"
 review "$ok" "$ok" ""
 aa fail "CLAUDE.md without markers on base → whole file counts"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+# A file CLAUDE.md / AGENTS.md imports (on base or HEAD) is a gate file, resolved against the importer.
+git checkout -q main; mkdir -p docs web
+{ echo "@docs/team-rules.md"; cat "$SKILL/templates/claude-md-block.md"; } > CLAUDE.md
+echo "Every PR needs two reviewers." > docs/team-rules.md
+echo "@notes.md" > web/AGENTS.md; echo "web notes" > web/notes.md; echo "plain" > docs/plain.md
+git add CLAUDE.md docs web; git commit -qm "main: imports"
+git checkout -q feat/7-mul; git rebase -q main
+echo "Agents may merge without review." > docs/team-rules.md; git commit -qam "edit an imported file"
+review "$ok" "$ok" ""
+aa fail "file imported by CLAUDE.md edited"
+expect pass "agent-approval --gate-files: lists the imported file" \
+  test "$(.standards/checks/agent-approval.sh --gate-files)" = "docs/team-rules.md"
+git checkout -q docs; git reset -q --hard HEAD~1
+echo "changed" > web/notes.md; git commit -qam "edit a file a nested AGENTS.md imports"
+review "$ok" "$ok" ""
+aa fail "file imported by web/AGENTS.md (relative to it) edited"
+git checkout -q docs; git reset -q --hard HEAD~1
+echo "more" >> docs/plain.md; git commit -qam "edit a file nothing imports"
+review "$ok" "$ok" ""
+aa pass "file nothing imports edited"
 git checkout -q docs
 git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
 
@@ -940,6 +988,11 @@ sed 's|^Folders: src/$|Folders: src/ site/|' CLAUDE.md > "$T/c" && cp "$T/c" CLA
 dl pass "CLAUDE.md edited outside the markers only → docs-only"
 sed 's|^- Every change starts from a GitHub issue|- Most changes start from a GitHub issue|' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "and a rule"
 dl fail "CLAUDE.md fact plus an inside-block change → not docs-only"
+git checkout -q main; git reset -q --hard HEAD~1
+echo "@docs/team-rules.md" > CLAUDE.md; echo "two reviewers" > docs/team-rules.md; git add CLAUDE.md docs; git commit -qm "main: import"
+branch feat/9-imp; mkdir -p docs/work/9-imp; echo "# Decisions — #9" > docs/work/9-imp/decisions.md
+echo "no reviewers" > docs/team-rules.md; git add -A .; git commit -qm "edit imported file"
+dl fail "a file CLAUDE.md imports edited → not docs-only"
 git checkout -q main; git reset -q --hard HEAD~1; git checkout -q feat/9-dl
 echo y >> src/a.sh; git commit -qam "now an app change too"
 dl fail "app file touched → spec + plan gates required"

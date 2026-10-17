@@ -128,13 +128,29 @@ issue_number() {
 }
 
 # docs/work/<issue>-<slug>/ for the current branch, or empty.
-issue_dir() {
+# issue_dirs: every docs/work/<issue>-*/ for the current branch, one per line. Flags are read
+# across all of them, so a second folder for the same issue cannot hide one.
+issue_dirs() {
   local n d
   n="$(issue_number)"
   [ -n "$n" ] || return 0
   for d in docs/work/"$n"-*/; do
-    [ -d "$d" ] && { printf '%s\n' "${d%/}"; return 0; }
+    [ -d "$d" ] && printf '%s\n' "${d%/}"
   done
+}
+
+# issue_dir: the one docs/work/<issue>-<slug>/ for the current branch, or empty. Fails closed
+# when more than one folder matches the issue: which decisions.md counts would be a guess,
+# so none does, and the folders are named on stderr.
+issue_dir() {
+  local ds
+  ds="$(issue_dirs)"
+  [ -n "$ds" ] || return 0
+  if [ "$(printf '%s\n' "$ds" | wc -l)" -gt 1 ]; then
+    red "  miss more than one folder for issue #$(issue_number): $(printf '%s' "$ds" | tr '\n' ' ')— keep one" >&2
+    return 1
+  fi
+  printf '%s\n' "$ds"
 }
 
 decisions_file() {
@@ -192,18 +208,23 @@ owner_answered_lines() {
 }
 
 # owner_reason: stdin flag or answered lines → each one's reason, lower-cased and trimmed,
-# one per line, so a flag and its answer compare equal. Flag: the text after "required"
-# and any markdown or dash. Answered: the text between "answered —" and "— <link>".
+# one per line, so a flag and its answer compare equal. Flag: the line without its
+# "owner-review: required" token and the separators around it. Answered: the text between
+# "answered —" and "— <link>". A reason with no letter or digit is no reason: callers drop it.
 owner_reason() {
   awk '{
     l = tolower($0)
     if (match(l, /owner-review: answered (—|-) /)) {
       r = substr(l, RSTART + RLENGTH)
       if (match(r, / (—|-) https?:\/\//)) r = substr(r, 1, RSTART - 1)
-    } else {
-      r = substr(l, index(l, "required") + 8)
-      sub(/^[*_: \t]*/, "", r); sub(/^(—|-)/, "", r)
-    }
+    } else if (match(l, /[*_]*owner-review[*_]*:?[*_ \t]*required[*_]*/)) {
+      # The text on either side of the flag token, separators dropped: "Price — owner-review:
+      # required" and "owner-review: required — price" both give "price".
+      a = substr(l, 1, RSTART - 1); b = substr(l, RSTART + RLENGTH)
+      sub(/^[ \t]*([-*][ \t]+)?/, "", a); sub(/[ \t]*(—|-|:)?[ \t]*$/, "", a)
+      sub(/^[ \t:]*(—|-)?[ \t]*/, "", b)
+      r = (a != "" && b != "") ? a " " b : a b
+    } else r = l
     sub(/^[ \t]+/, "", r); sub(/[ \t]+$/, "", r)
     print r
   }'

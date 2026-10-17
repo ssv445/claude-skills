@@ -75,18 +75,50 @@ imports_changed() {
     | sed 's/^[-+]//' | grep -qE '(^|[[:space:]])@[^[:space:]]'
 }
 
+# import_targets: every file a CLAUDE.md / AGENTS.md imports with "@path", on base or HEAD,
+# resolved against the importing file's folder, one repo path per line. An imported file is
+# read as instructions, so it is a gate file like the block itself. Paths leaving the repo
+# (~/..., /abs, too many ..) are skipped: nothing in the repo to gate.
+import_targets() {
+  local rev f
+  for rev in "$base" HEAD; do
+    git -c core.quotePath=false ls-tree -r --name-only "$rev" | grep -iE '(^|/)(CLAUDE|AGENTS)\.md$' \
+      | while IFS= read -r f; do
+          git show "$rev:$f" 2>/dev/null | grep -oE '(^|[[:space:]])@[^[:space:]]+' \
+            | sed -E 's/^[[:space:]]*@//; s/[).,;:]+$//' \
+            | awk -v dir="$(dirname "$f")" '
+                /^[~\/]/ { next }
+                {
+                  p = (dir == "." ? "" : dir "/") $0; n = split(p, seg, "/"); k = 0
+                  for (i = 1; i <= n; i++) {
+                    if (seg[i] == "" || seg[i] == ".") continue
+                    if (seg[i] == "..") { if (k == 0) { bad = 1; break }; k--; continue }
+                    out[++k] = seg[i]
+                  }
+                  if (!bad && k > 0) { r = out[1]; for (i = 2; i <= k; i++) r = r "/" out[i]; print r }
+                  bad = 0
+                }'
+        done
+  done | sort -u
+}
+
 # gate_files_touched: sets $touched to the gate files the branch changes (space-led, "" =
 # none) and $baseline_raised when the only baseline edit is a raise, which is no gate change.
 # A CLAUDE.md / AGENTS.md counts only when its repo-standards block changed (block_unchanged)
-# or an @-import line changed anywhere in it (imports_changed).
+# or an @-import line changed anywhere in it (imports_changed); a file either side imports
+# counts whole (import_targets).
 # --no-renames (in $changed): a moved file shows both paths.
 # nocasematch: ".Claude/" is ".claude/" on a case-insensitive filesystem.
 gate_files_touched() {
-  local f
+  local f t imports imported
   touched=""; baseline_raised=""
+  imports="$(import_targets)"
   shopt -s nocasematch
   while IFS= read -r -d '' f; do
     if [ "$f" = ".standards/coverage-baseline" ] && raises_baseline; then baseline_raised=1; continue; fi
+    imported=""
+    while IFS= read -r t; do [ -n "$t" ] && [[ "$f" == "$t" ]] && imported=1; done <<<"$imports"
+    [ -z "$imported" ] || { touched="$touched $f"; continue; }
     matches_any "$f" "$GATE_FILES" || continue
     case "${f##*/}" in CLAUDE.md|AGENTS.md) block_unchanged "$f" && ! imports_changed "$f" && continue ;; esac
     touched="$touched $f"
@@ -149,18 +181,23 @@ gate_review() {
 
 dec="$(decisions_file)"
 if [ -z "$dec" ] || [ ! -f "$dec" ]; then
-  miss "no decisions.md for this branch (docs/work/<issue>-<slug>/)"
+  miss "no single decisions.md for this branch (docs/work/<issue>-<slug>/)"
 else
   # a. Pre-merge gate passed: both reviewers PASS, or they split and the arbiter ruled PASS.
   gate_review "Pre-merge gate"
-
-  # b. No big call is waiting on the owner, in decisions.md or the spec. An answered flag
-  # (owner_answered_re) is closed.
-  spec="$(issue_dir)/spec.md"
-  flags="$(owner_flags "$dec")"; sflags="$(owner_flags "$spec")"
-  [ -z "$flags$sflags" ] && info "ok   no open owner-review flag" \
-    || miss "owner review requested:${flags:+ $dec: $flags}${sflags:+ $spec: $sflags}"
 fi
+
+# b. No big call is waiting on the owner, in any file of any folder for this issue
+# (decisions.md, spec.md, plan notes — and a second folder cannot hide one). An answered
+# flag (owner_answered_re) is closed.
+flags=""
+while IFS= read -r d; do
+  [ -n "$d" ] || continue
+  while IFS= read -r f; do
+    o="$(owner_flags "$f")"; [ -z "$o" ] || flags="$flags $f: $o;"
+  done < <(find "$d" -type f)
+done <<<"$(issue_dirs)"
+[ -z "$flags" ] && info "ok   no open owner-review flag" || miss "owner review requested:$flags"
 
 # Owner-only flags removed by any commit on the branch (added then deleted counts too).
 # -m: a merge commit's diff against each parent, so a flag dropped while merging shows.
@@ -182,12 +219,15 @@ if [ -n "$base" ]; then
     if [ -z "$gone_review" ]; then info "ok   no owner-review flag removed"
     else
       # Answered lines the branch adds (vs base), as reasons; comm pairs equal lines one to one.
+      # A reason needs a letter or digit: an empty one would pair with any empty answer.
       printf '%s\n' "$gone_review" | owner_reason | sort > "$changed.gone"
       printf '%s\n' "$now" | grep -E '^\+' | grep -vE '^\+\+\+ ' | sed 's/^+//' | owner_answered_lines - \
-        | owner_reason | sort > "$changed.answered"
-      unpaired="$(comm -23 "$changed.gone" "$changed.answered")"
+        | owner_reason | grep '[[:alnum:]]' | sort > "$changed.answered"
+      noreason="$(grep -vc '[[:alnum:]]' "$changed.gone")"
+      unpaired="$(grep '[[:alnum:]]' "$changed.gone" | comm -23 - "$changed.answered")"
       rm -f "$changed.gone" "$changed.answered"
-      if [ -z "$unpaired" ]; then info "ok   $(printf '%s\n' "$gone_review" | wc -l | tr -d ' ') owner-review flag(s) closed as answered"
+      [ "$noreason" -eq 0 ] || miss "$noreason owner-review flag(s) with no reason removed on this branch — no answered line can pair with it; only the owner can close it (bin/approve <pr>)"
+      if [ -z "$unpaired" ]; then [ "$noreason" -ne 0 ] || info "ok   $(printf '%s\n' "$gone_review" | wc -l | tr -d ' ') owner-review flag(s) closed as answered"
       else miss "owner-review flag removed on this branch without its own answered line (reasons: $(printf '%s' "$unpaired" | tr '\n' ';')) — replace each flag with 'owner-review: answered — <reason as in the flag> — <link to the owner's answer> — <the answer, quoted>'"
       fi
     fi
