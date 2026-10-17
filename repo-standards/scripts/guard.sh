@@ -6,11 +6,14 @@
 # It judges only commands aimed at this repo (the one holding .standards/guard.sh): a
 # command that starts with `cd <dir>` or uses `git -C <dir>` outside it, runs from a
 # session cwd outside it, or names another GitHub repo with -R/--repo, is not its business.
+block() { printf 'repo-standards guard: %s\n' "$1" >&2; exit 2; }
+
+# Without jq the command reads as empty and every check below passes: fail closed instead.
+command -v jq >/dev/null 2>&1 || block "guard needs jq — install it (brew install jq / apt-get install jq); every command is blocked until then."
+
 json="$(cat)"
 cmd="$(printf '%s' "$json" | jq -r '.tool_input.command // ""')"
 cwd="$(printf '%s' "$json" | jq -r '.cwd // ""')"
-
-block() { printf 'repo-standards guard: %s\n' "$1" >&2; exit 2; }
 
 root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)" || exit 0
 root="$(cd "$root" && pwd -P)"
@@ -52,9 +55,15 @@ printf '%s' "$cmd" | grep -Eq 'gh[[:space:]]+pr[[:space:]]+merge' \
   && block "merge only through bin/ship, which runs the pre-merge gates."
 printf '%s' "$cmd" | grep -Eq -- '--no-verify|HUSKY=0|LEFTHOOK=0|SKIP_HOOKS' \
   && block "hooks are the gates; fix what they report instead of bypassing them."
-# Setting or unsetting core.hooksPath, not reading it.
-if printf '%s' "$cmd" | grep -Eq -- 'core\.hooksPath[[:space:]]*=|--unset(-all)?[[:space:]]+core\.hooksPath|core\.hooksPath[[:space:]]+[^;&|[:space:]]' \
-   && ! printf '%s' "$cmd" | grep -Eq -- '--get(-all|-regexp)?[[:space:]]+core\.hooksPath'; then
+# Setting or unsetting core.hooksPath, not reading it. The install's own setup line
+# (`git config [--local] core.hooksPath .standards/hooks`, exactly, ending the command) points
+# hooks AT the gates, so it is dropped first; anything else chained to it is still judged.
+# A read (`git config --get[-all|-regexp] core.hooksPath`) is dropped the same way — only that
+# segment, so a read cannot excuse a write chained after it.
+hp="$(printf '%s\n' "$cmd" | sed -E \
+  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?core\.hooksPath[[:space:]]+\.standards/hooks([[:space:]]*([;&|]|$))#\2#g' \
+  -e 's#git[[:space:]]+config[[:space:]]+(--local[[:space:]]+)?--get(-all|-regexp)?[[:space:]]+core\.hooksPath([[:space:]]*([;&|]|$))#\3#g')"
+if printf '%s' "$hp" | grep -Eq -- 'core\.hooksPath[[:space:]]*=|--unset(-all)?[[:space:]]+core\.hooksPath|core\.hooksPath[[:space:]]+[^;&|[:space:]]'; then
   block "hooks are the gates; fix what they report instead of bypassing them."
 fi
 printf '%s' "$cmd" | grep -Eq "${at_cmd}([^;&|[:space:]]*/)?bin/approve([[:space:]]|$)" \

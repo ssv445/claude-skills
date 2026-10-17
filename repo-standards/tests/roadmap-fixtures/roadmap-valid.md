@@ -24,3 +24,8 @@
 - requires: cap:native-app
 - provides: cap:reminders
 - assumptions: A-1
+
+### R-4 Desktop widget
+- goal: G-1
+- status: dropped — no demand in the review
+- requires: -

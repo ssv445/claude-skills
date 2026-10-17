@@ -28,6 +28,44 @@ if [ -z "$base" ]; then miss "no base commit (origin/$BASE_BRANCH or $BASE_BRANC
 elif git -c core.quotePath=false diff -z --name-only --no-renames "$base" HEAD > "$changed"; then diff_ok=1
 else miss "git diff $base HEAD failed"
 fi
+
+# raises_baseline: the branch only raises .standards/coverage-baseline — one number on
+# base and HEAD, HEAD's >= base's. coverage-baseline.sh asks for exactly that edit; any
+# other change to it (lower, extra text, new, deleted) stays a gate change.
+raises_baseline() {
+  local old new num='^[0-9]+(\.[0-9]+)?$'
+  old="$(git show "$base:.standards/coverage-baseline" 2>/dev/null)" || return 1
+  new="$(git show "HEAD:.standards/coverage-baseline" 2>/dev/null)" || return 1
+  printf '%s\n' "$old" | grep -qE "$num" && [ "$(printf '%s\n' "$old" | wc -l)" -eq 1 ] || return 1
+  printf '%s\n' "$new" | grep -qE "$num" && [ "$(printf '%s\n' "$new" | wc -l)" -eq 1 ] || return 1
+  awk -v o="$old" -v n="$new" 'BEGIN { exit !(n + 0 >= o + 0) }'
+}
+
+# gate_files_touched: sets $touched to the gate files the branch changes (space-led, "" =
+# none) and $baseline_raised when the only baseline edit is a raise, which is no gate change.
+# --no-renames (in $changed): a moved file shows both paths.
+# nocasematch: ".Claude/" is ".claude/" on a case-insensitive filesystem.
+gate_files_touched() {
+  local f
+  touched=""; baseline_raised=""
+  shopt -s nocasematch
+  while IFS= read -r -d '' f; do
+    if [ "$f" = ".standards/coverage-baseline" ] && raises_baseline; then baseline_raised=1; continue; fi
+    matches_any "$f" "$GATE_FILES" && touched="$touched $f"
+  done < "$changed"
+  shopt -u nocasematch
+}
+
+# --gate-files: print only the changed gate files (empty line = none) and stop. bin/ship
+# labels and records every gate change with it, whoever approved — one detection, not two.
+# Fails closed: no base or no diff → exit 1.
+if [ "${1:-}" = "--gate-files" ]; then
+  [ $diff_ok -eq 1 ] || exit 1
+  gate_files_touched
+  printf '%s\n' "${touched# }"
+  exit 0
+fi
+
 # gate_review <section>: the section in decisions.md passed review — one copy of it and of
 # each reviewer line, Verdict PASS, both reviewers PASS (or split with the arbiter PASS),
 # and a Reviewed sha that still covers HEAD. Each miss is printed.
@@ -95,38 +133,16 @@ if [ -n "$base" ]; then
   fi
 fi
 
-# raises_baseline: the branch only raises .standards/coverage-baseline — one number on
-# base and HEAD, HEAD's >= base's. coverage-baseline.sh asks for exactly that edit; any
-# other change to it (lower, extra text, new, deleted) stays a gate change.
-raises_baseline() {
-  local old new num='^[0-9]+(\.[0-9]+)?$'
-  old="$(git show "$base:.standards/coverage-baseline" 2>/dev/null)" || return 1
-  new="$(git show "HEAD:.standards/coverage-baseline" 2>/dev/null)" || return 1
-  printf '%s\n' "$old" | grep -qE "$num" && [ "$(printf '%s\n' "$old" | wc -l)" -eq 1 ] || return 1
-  printf '%s\n' "$new" | grep -qE "$num" && [ "$(printf '%s\n' "$new" | wc -l)" -eq 1 ] || return 1
-  awk -v o="$old" -v n="$new" 'BEGIN { exit !(n + 0 >= o + 0) }'
-}
-
 # c. A gate-file change passed its own review: two more independent reviewers asked only
 # whether it weakens, skips or bypasses a check, or widens what agents do without the
 # owner, and whether its new RULE_LOG entry says so plainly. The entry is a changed file,
 # so the review must cover it like any other. A change that does loosen a check carries
 # owner-review: required, caught in b.
-# --no-renames: a moved file shows both paths.
-# nocasematch: ".Claude/" is ".claude/" on a case-insensitive filesystem.
 if [ $diff_ok -eq 1 ]; then
-  touched=""
-  shopt -s nocasematch
-  while IFS= read -r -d '' f; do
-    if [ "$f" = ".standards/coverage-baseline" ] && raises_baseline; then
-      info "ok   coverage baseline only raised"; continue
-    fi
-    matches_any "$f" "$GATE_FILES" && touched="$touched $f"
-  done < "$changed"
-  shopt -u nocasematch
+  gate_files_touched
+  [ -z "$baseline_raised" ] || info "ok   coverage baseline only raised"
   # APPROVER (base config) decides who approves a gate change. Owner mode: the owner.
-  # Agent mode: the agent, after the gate-change review and a RULE_LOG line. bin/ship
-  # reads the "ok" line below to record and label the change; keep its wording.
+  # Agent mode: the agent, after the gate-change review and a RULE_LOG line.
   if [ -z "$touched" ]; then info "ok   no gate files changed"
   elif [ "$(approver_mode)" != agent ]; then miss "gate files changed:$touched (APPROVER=owner: the owner approves gate changes)"
   elif [ -z "$dec" ] || [ ! -f "$dec" ]; then miss "gate files changed:$touched"

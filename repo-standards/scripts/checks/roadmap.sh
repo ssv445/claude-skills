@@ -36,7 +36,8 @@ END {
   }
   for (i = 1; i <= n; i++) {
     id = ids[i]; st = f[id, "status"]
-    if (st !~ /^(planned|ready|in-progress|shipped|dropped)/) err(id ": status \"" st "\" not one of planned|ready|in-progress|shipped|dropped")
+    # The word must end there ("plannedX" is no status); a reason may follow ("dropped — why").
+    if (st !~ /^(planned|ready|in-progress|shipped|dropped)([ \t]|$)/) err(id ": status \"" st "\" not one of planned|ready|in-progress|shipped|dropped")
     if (f[id, "goal"] == "" || f[id, "goal"] == "-") err(id ": serves no goal")
     m = split(f[id, "goal"], gs, ",")
     for (j = 1; j <= m; j++) { g = trim(gs[j]); if (g != "-" && !(g in goal)) err(id ": goal " g " not in goals.md") }

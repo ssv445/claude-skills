@@ -96,6 +96,8 @@ run_part perf app "$PERF_CMD" || fail=1
 # Without it, the agent approves when agent-approval.sh (the base's copy, if this branch
 # changes it) finds nothing that needs the owner.
 # The owner-label misses are printed only if the agent cannot approve either.
+check="$(base_copy .standards/checks/agent-approval.sh)"
+checker="${check:-$ROOT/.standards/checks/agent-approval.sh}"
 approval=""
 if approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
   cat "$owner_log"
@@ -104,15 +106,9 @@ if approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
   else approval=owner; fi
 fi
 if [ -z "$approval" ]; then
-  check="$(base_copy .standards/checks/agent-approval.sh)"
-  checker="${check:-$ROOT/.standards/checks/agent-approval.sh}"
   if out="$("$checker" 2>&1)"; then
     printf '%s\n' "$out"
     approval=agent
-    # Gate files changed: agent-approval.sh passed them on a gate-change review. Read the
-    # record's inputs now — the merge deletes the branch.
-    changed_gates="$(printf '%s\n' "$out" | sed -n 's/^ *ok   gate files changed, approved under APPROVER=agent (gate-change review PASS): *//p')"
-    [ -z "$changed_gates" ] || entries="$(git diff -U0 --no-renames "$(base_commit)" HEAD -- docs/rule-changes.md | sed -n 's/^+\(- [0-9]\{4\}-.*\)/\1/p')"
   else
     cat "$owner_log"
     printf '%s\n' "$out"
@@ -121,31 +117,53 @@ if [ -z "$approval" ]; then
   fi
 fi
 
+# Gate files the branch changes, whoever approved: the owner finds every rule change under
+# the rules-changed label, owner-approved ones too. Same detection as agent-approval.sh (the
+# check that ran). Read now — the merge deletes the branch. No list, no merge: a gate change
+# must never ship unrecorded.
+changed_gates="$("$checker" --gate-files)" || { red "FAIL ship: could not list the gate files this branch changes"; exit 1; }
+[ -z "$changed_gates" ] || entries="$(git diff -U0 --no-renames "$(base_commit)" HEAD -- docs/rule-changes.md | sed -n 's/^+\(- [0-9]\{4\}-.*\)/\1/p')"
+
 # --match-head-commit: refuse if the PR moved after these gates ran.
 gh pr merge "$pr" --squash --delete-branch --match-head-commit "$head_oid" || { red "FAIL ship: merge refused"; exit 1; }
 green "shipped #$pr ($approval-approved)"
 # The record is posted only once the merge happened, so it never claims an unmerged PR.
+# A gate change, whoever approved: the owner reads it in docs/rule-changes.md (merged with
+# it, when a line was added) and finds the PRs under the rules-changed label. Agents post as
+# the owner, so a mention would notify nobody. A missing record fails the run, never lost
+# silently.
+notice=""
+if [ -n "$changed_gates" ]; then
+  if [ -n "$entries" ]; then logged="Logged in \`docs/rule-changes.md\`:
+$entries"
+  else logged="No line was added to \`docs/rule-changes.md\`."; fi
+  notice="
+
+**The rules agents work under changed in this PR** (\`$changed_gates\`). $logged"
+  gh label create rules-changed --color D93F0B --description "Changed the rules agents work under (repo standards)" >/dev/null 2>&1
+  gh pr edit "$pr" --add-label rules-changed >/dev/null \
+    || { red "FAIL ship: merged, but the rules-changed label failed — run: gh pr edit $pr --add-label rules-changed"; record_fail=1; }
+fi
+# Owner-approved: the owner already knows why; a comment only when the rules changed.
+if [ "$approval" = owner ] && [ -n "$changed_gates" ]; then
+  gh pr comment "$pr" --body "Approved by the owner (\`approved\` label) and merged through \`bin/ship\`.
+
+- Gate files changed (\`$changed_gates\`), approved by the owner's \`approved\` label
+
+Head: $head_oid$notice" || { red "  warn merged, but the rule-change comment failed — post it by hand"; record_fail=1; }
+fi
 if [ "$approval" = agent ]; then
-  # The gate list and any changed gate files come from the check that ran, so the record
-  # cannot drift from it.
+  # The gate list comes from the check that ran, so the record cannot drift from it.
   gates="$(sed -n 's/^GATE_FILES="\(.*\)"$/\1/p' "$checker")"
   if [ -z "$blast" ]; then spec_line="Spec not marked \`owner-approval: required\`"
   elif [ "$mode" = agent ]; then spec_line="Blast-radius spec: spec gate PASS stands in for \`spec-approved\` (APPROVER=agent)"
   else spec_line="Blast-radius spec: owner's \`spec-approved\` label present"; fi
-  # A gate change (agent mode only): the owner reads it in docs/rule-changes.md (merged
-  # with it) and finds the PRs under the rules-changed label. Agents post as the owner, so
-  # a mention would notify nobody. A missing record fails the run, never lost silently.
+  # Agent-approved gate files passed agent-approval.sh, so APPROVER=agent and the
+  # gate-change review passed.
   if [ -n "$changed_gates" ]; then
     gate_line="Gate files changed, approved under APPROVER=agent (\`$changed_gates\`): the gate-change review passed — no check weakened, skipped or bypassed (both reviewers, or the arbiter on a split)"
-    notice="
-
-**The rules agents work under changed in this PR.** Logged in \`docs/rule-changes.md\`:
-$entries"
-    gh label create rules-changed --color D93F0B --description "Changed the rules agents work under (repo standards)" >/dev/null 2>&1
-    gh pr edit "$pr" --add-label rules-changed >/dev/null \
-      || { red "FAIL ship: merged, but the rules-changed label failed — run: gh pr edit $pr --add-label rules-changed"; record_fail=1; }
   else
-    gate_line="No gate file changed (\`$gates\`)"; notice=""
+    gate_line="No gate file changed (\`$gates\`)"
   fi
   gh pr comment "$pr" --body "Approved by the agent through \`bin/ship\`: every pre-merge gate passed and \`.standards/checks/agent-approval.sh\` found nothing that needs the owner.
 
@@ -159,5 +177,5 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 - Spec gate, plan gate, e2e and perf passed
 
 Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
-  [ -z "${record_fail:-}" ] || exit 1
 fi
+[ -z "$record_fail" ] || exit 1
