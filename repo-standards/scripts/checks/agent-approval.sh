@@ -225,7 +225,7 @@ if [ -n "$base" ]; then
         | owner_reason | grep '[[:alnum:]]' | sort > "$changed.answered"
       noreason="$(grep -vc '[[:alnum:]]' "$changed.gone")"
       unpaired="$(grep '[[:alnum:]]' "$changed.gone" | comm -23 - "$changed.answered")"
-      rm -f "$changed.gone" "$changed.answered"
+      safe_rm "$changed.gone" "$changed.answered"
       [ "$noreason" -eq 0 ] || miss "$noreason owner-review flag(s) with no reason removed on this branch — no answered line can pair with it; only the owner can close it (bin/approve <pr>)"
       if [ -z "$unpaired" ]; then [ "$noreason" -ne 0 ] || info "ok   $(printf '%s\n' "$gone_review" | wc -l | tr -d ' ') owner-review flag(s) closed as answered"
       else miss "owner-review flag removed on this branch without its own answered line (reasons: $(printf '%s' "$unpaired" | tr '\n' ';')) — replace each flag with 'owner-review: answered — <reason as in the flag> — <link to the owner's answer> — <the answer, quoted>'"
