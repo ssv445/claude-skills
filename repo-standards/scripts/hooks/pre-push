@@ -20,42 +20,77 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   red "FAIL push: uncommitted changes — the gates must test exactly what is pushed"; exit 1
 fi
 
+# Fails closed: without the runner nothing would run, so the push is blocked.
+. "$ROOT/.standards/lib/parallel.sh" || { red "FAIL push: cannot load .standards/lib/parallel.sh"; exit 1; }
+
 start=$(date +%s); failed=""
-step() { "$@" || failed="$failed\n  - $1 ${2:-}"; }
+step() { local label="$1"; shift; "$@" || failed="$failed\n  - $label"; }
+
+# lane_for <check> <default lane>: the lane PREPUSH_LANES gives the check ("<check>=<lane>", or
+# "*=<lane>" for every check it does not name), else the default. set -f: "*=…" is no glob.
+lane_for() {
+  local e lane="" star=""
+  set -f
+  for e in ${PREPUSH_LANES:-}; do
+    case "$e" in "$1="*) lane="${e#*=}" ;; "*="*) star="${e#*=}" ;; esac
+  done
+  set +f
+  printf '%s\n' "${lane:-${star:-$2}}"
+}
+job() { par_job "$(lane_for "$1" "$2")" "$1" "$3"; }   # job <check> <default lane> <command>
 
 echo "repo-standards pre-push on $(git rev-parse --abbrev-ref HEAD) vs $BASE_BRANCH ($(changed_files | wc -l | tr -d ' ') changed file(s))"
 class_report
-# The app's and the site's commands run by change class; the rest run on every class.
-step run_part lint app "$LINT_CMD"
-step run_part site-lint site "$SITE_LINT_CMD"
-step run_part typecheck app "$TYPECHECK_CMD"
-step run_part site-typecheck site "$SITE_TYPECHECK_CMD"
-step run_part unit app "$UNIT_CMD"
-step run_part site-unit site "$SITE_UNIT_CMD"
-step run_cmd diff-coverage "$DIFF_COVERAGE_CMD"   # picks its reports by change class
-step "$ROOT/.standards/checks/coverage-baseline.sh"
-step "$ROOT/.standards/checks/cross-reads.sh"
-step "$ROOT/.standards/checks/tdd.sh"
-step "$ROOT/.standards/checks/doc-map.sh"
-step "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate"
-step run_cmd seeds "$SEED_CHECK_CMD"
+# Busy on this machine from the first check to the last, tdd included: another worktree's timed
+# checks (bin/ship's PERF_CMD) wait for it, and it waits for theirs first (parallel.sh).
+gate_busy_on || { red "FAIL push: cannot mark this gate busy in $(_gate_dir) (another gate's timed checks would run under its load; set STANDARDS_LOCK_DIR to a writable temp dir)"; exit 1; }
+# The independent checks run at the same time, in lanes; a lane's checks run in turn. Default
+# lanes: lint, typecheck, unit (then seeds, which may share the test database), site (the site's
+# three, which share its build state), repo (the repo-standards checks, seconds each). Checks
+# that write the same files belong in one lane: PREPUSH_LANES in config.sh. Every check runs
+# whatever the others do; any failure blocks. The app's and the site's commands run by change
+# class; the rest run on every class.
+par_reset
+job lint lint 'run_part lint app "$LINT_CMD"'
+job typecheck typecheck 'run_part typecheck app "$TYPECHECK_CMD"'
+job unit unit 'run_part unit app "$UNIT_CMD"'
+job seeds unit 'run_cmd seeds "$SEED_CHECK_CMD"'
+job site-lint site 'run_part site-lint site "$SITE_LINT_CMD"'
+job site-typecheck site 'run_part site-typecheck site "$SITE_TYPECHECK_CMD"'
+job site-unit site 'run_part site-unit site "$SITE_UNIT_CMD"'
+job cross-reads repo '"$ROOT/.standards/checks/cross-reads.sh"'
+job doc-map repo '"$ROOT/.standards/checks/doc-map.sh"'
+job decision-log repo '"$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate"'
 # GUARDS_PART "always" is no part checks_for knows, so it runs on every class (fails closed).
-step run_part guards "${GUARDS_PART:-app}" "$GUARDS_CMD"
-step "$ROOT/.standards/checks/file-size.sh"
-step "$ROOT/.standards/checks/roadmap.sh"
-step "$ROOT/.standards/checks/stories.sh"
-# The repo's own checks, after the standard ones, on every class, in name order. They live in
-# .standards/local/pre-push.d/ so an upgrade of the standard files never overwrites them. A
-# file there that is not executable fails: a check that silently never runs proves nothing.
+job guards repo 'run_part guards "${GUARDS_PART:-app}" "$GUARDS_CMD"'
+job file-size repo '"$ROOT/.standards/checks/file-size.sh"'
+job roadmap repo '"$ROOT/.standards/checks/roadmap.sh"'
+job stories repo '"$ROOT/.standards/checks/stories.sh"'
+if ! par_run pre-push; then
+  for l in $(par_failed); do failed="$failed\n  - $l"; done
+  [ -n "$(par_failed)" ] || failed="$failed\n  - the parallel runner itself"
+fi
+# Then in turn, after the set: the coverage checks read the reports the unit tests left; tdd
+# runs the changed tests again in a scratch checkout, so it runs after them.
+step diff-coverage run_cmd diff-coverage "$DIFF_COVERAGE_CMD"   # picks its reports by change class
+step coverage-baseline "$ROOT/.standards/checks/coverage-baseline.sh"
+step tdd "$ROOT/.standards/checks/tdd.sh"
+# The repo's own checks, after the standard ones, on every class, in name order (one may read
+# what a standard check left). They live in .standards/local/pre-push.d/ so an upgrade of the
+# standard files never overwrites them. A file there that is not executable fails: a check
+# that silently never runs proves nothing.
 local_check() {
   if [ -x "$1" ]; then run_cmd "local ${1##*/}" "$(printf '%q' "$1")"
   else red "FAIL local ${1##*/}: not executable — chmod +x .standards/local/pre-push.d/${1##*/} (or move it out of pre-push.d)"; return 1; fi
 }
 for c in "$ROOT"/.standards/local/pre-push.d/*; do
-  [ -f "$c" ] && step local_check "$c"
+  [ -f "$c" ] && step "local ${c##*/}" local_check "$c"
 done
+gate_busy_off
 
-elapsed=$(( $(date +%s) - start ))
+# Time spent waiting for another gate's timed checks is printed, not counted in the budget.
+elapsed=$(( $(date +%s) - start - GATE_WAITED ))
+[ "$GATE_WAITED" -eq 0 ] || info "waited ${GATE_WAITED}s for another gate's timed checks (not counted below)"
 [ $elapsed -le 120 ] || red "WARN pre-push took ${elapsed}s (budget 120s) — move the slowest check to bin/ship"
 if [ -n "$failed" ]; then
   red "pre-push BLOCKED (${elapsed}s). Failed:"; printf "$failed\n"; exit 1

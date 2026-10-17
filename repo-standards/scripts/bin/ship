@@ -148,11 +148,14 @@ if [ -f "$spec" ] && grep -qiE "$(owner_flag_re approval)" "$spec"; then
   fi
 fi
 
-# By change class: the app's e2e and perf skip on a site or docs branch, the site's e2e runs only
-# when the site changed. With no classes configured the class is "all" and everything runs.
-run_part e2e app "$E2E_CMD" || fail=1
-run_part site-e2e site-change "$SITE_E2E_CMD" || fail=1
-run_part perf app "$PERF_CMD" || fail=1
+# e2e and perf (.standards/lib/ship-checks.sh): e2e beside perf's untimed half (PERF_PREP_CMD),
+# then the timed half (PERF_CMD) alone on the machine; with VERDICT_REUSE=1 a passing run on the
+# same input is reused on a re-run. By change class: the app's e2e and perf skip on a site or docs
+# branch, the site's e2e runs only when the site changed. Loaded here, after the "branch current"
+# check, so a branch that gets this far has both files from the base.
+. "$ROOT/.standards/lib/parallel.sh" && . "$ROOT/.standards/lib/ship-checks.sh" \
+  || { red "FAIL ship: cannot load .standards/lib/parallel.sh or ship-checks.sh"; exit 1; }
+ship_checks || fail=1
 # The baseline must follow coverage up: pre-push only stops it falling.
 "$ROOT/.standards/checks/coverage-baseline.sh" --ratchet || fail=1
 
@@ -260,7 +263,7 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 - No open \`owner-review: required\` line in decisions.md, every removed one closed as answered, and no \`owner-approval: required\` removed
 - $gate_line
 - $spec_line
-- Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed
+- Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed${SHIP_REUSED:+ ($SHIP_REUSED)}
 
 Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
 fi

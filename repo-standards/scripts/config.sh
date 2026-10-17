@@ -38,6 +38,12 @@ GUARDS_PART="app"        # which change class runs GUARDS_CMD: "app" (skipped on
 TDD_COMPILE_FAIL_RE=""   # optional ERE over a test's failing output on the base that means "did not compile", e.g.
                          # "Cannot find module|cannot find .* in scope|error TS2305". A match is labelled
                          # compile-only red and needs "TDD: compile-red — <reason>" in decisions.md
+PREPUSH_LANES=""         # optional: pre-push runs its independent checks at the same time, in lanes; a lane's
+                         # checks run in turn. Default lanes: lint, typecheck, unit (then seeds), site (site-lint,
+                         # site-typecheck, site-unit), repo (cross-reads, doc-map, decision-log, guards, file-size,
+                         # roadmap, stories). Put checks that write the same files in one lane, e.g.
+                         # "typecheck=build unit=build"; "*=serial" runs every check in one lane, one at a time.
+                         # diff-coverage, coverage-baseline, tdd and local checks always run after, in turn
 
 # Space-separated globs; * also matches "/".
 SRC_GLOBS="src/* app/* apps/* packages/* lib/*"
@@ -76,7 +82,21 @@ CROSS_READS_SITE_FILES=""  # e.g. "site/*.ts site/*.mjs"
 # --- bin/ship (pre-merge) ---
 E2E_CMD=""
 SITE_E2E_CMD=""          # optional; with change classes on, runs only when the site changed
-PERF_CMD=""              # must exit non-zero when a budget from a spec's Expectations is exceeded
+PERF_CMD=""              # must exit non-zero when a budget from a spec's Expectations is exceeded. Runs alone: after
+                         # e2e, holding a machine-wide "timed" lock, once no other gate (any worktree's pre-push
+                         # or bin/ship) is running checks; gates that start meanwhile wait for it
+PERF_PREP_CMD=""         # optional: perf's untimed half (builds, fixture generation, accuracy), run beside E2E_CMD.
+                         # Must measure no time and be safe beside e2e. Set, PERF_CMD holds only the timed half
+                         # and runs only when this passed
+E2E_EXCLUSIVE=""         # "1": e2e cannot run twice at once on this machine (a fixed port, one simulator):
+                         # bin/ship holds this repo's e2e lock while it runs, across worktrees
+VERDICT_REUSE=""         # "1": a bin/ship re-run on exactly the same input (every tracked file but the issue's
+                         # decisions.md, untracked files, the base, the commands, OS, VERDICT_KEY_CMD's output;
+                         # under a day) reuses the last e2e + perf PASS; any failure on that input voids it.
+                         # STANDARDS_RERUN=1 bin/ship runs them anyway. Records live in .git/standards-verdicts/
+VERDICT_KEY_CMD=""       # with VERDICT_REUSE: prints the versions of the tools e2e and perf use, so a tool
+                         # change re-runs them, e.g. "node -v && pnpm -v && pnpm exec playwright --version".
+                         # Exits non-zero → nothing is reused or recorded
 MERGE_MODE="squash"      # how bin/ship merges: squash | merge (keeps step-split commits) | rebase
 COVERAGE_RATCHET_SLACK=2 # bin/ship fails when total coverage is more than this many points above
                          # .standards/coverage-baseline, and prints the one-line raise

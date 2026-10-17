@@ -1363,7 +1363,8 @@ rm_lint() {
   local fx="$SKILL/tests/saferm-fixtures"
   find "$@" -type f -exec awk -v allow="$fx/rm-allow.txt" -f "$fx/rm-lint.awk" "$fx/rm-allow.txt" {} +
 }
-expect pass "lint-rm: scripts/ and tests/run.sh are clean" rm_lint "$SKILL/scripts" "$SKILL/tests/run.sh"
+expect pass "lint-rm: scripts/, tests/run.sh and the speed cases are clean" \
+  rm_lint "$SKILL/scripts" "$SKILL/tests/run.sh" "$SKILL/tests/speed-cases.sh" "$SKILL/tests/parallel-fixtures"
 # Planted in a copy, never in the real scripts/.
 cp -R "$SKILL/scripts" "$T/lint-probe"
 expect pass "lint-rm: the unplanted copy passes" rm_lint "$T/lint-probe"
@@ -1489,6 +1490,9 @@ for weak in git-dir tmp-root slashes home-root abs-tmpdir repo-home; do
   bit=$?
   expect pass "safe_rm bite: cases go wrong without '$weak' ($(grep -c '^  WRONG' "$T/bite-$weak.log") wrong)" test "$bit" = 0
 done
+
+# --- speed, same gates: the parallel runner, gate locks, pre-push lanes, bin/ship's e2e + perf ---
+. "$SKILL/tests/speed-cases.sh"
 
 echo
 echo "$pass passed, $fail wrong"
