@@ -13,7 +13,7 @@ As a <user>, I want <capability>, so that <outcome>.
 - [ ] AC2: ...
 
 ## Expectations
-Tag every line `[sourced: <where>]` or `[inferred]`. A field that does not apply: `N/A — reason`.
+Tag every line `[sourced: <where>]` or `[inferred]`; at the spec gate each `[inferred]` becomes `[sourced: <where>]` or `[decided: <reason>]` (logged in `decisions.md`). A field that does not apply: `N/A — reason`.
 
 - **User:** who (link `docs/product/icp.md` persona), technical skill, device, language, how often.
 - **Interaction:** entry points; step-by-step journey.

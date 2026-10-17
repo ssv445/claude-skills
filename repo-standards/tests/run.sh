@@ -275,6 +275,108 @@ git checkout -q HEAD~1 -- "$dec"; git commit -qam "unflag"
 review "$ok" "$ok" ""
 aa fail "owner-review flag removed on the branch"
 git reset -q --hard HEAD~2
+# An answered flag closes without bin/approve: the agent turns the required line into
+# "owner-review: answered — <reason as in the flag> — <link> — <answer>". Each removed flag
+# needs its own answered line, same reason, added on this branch; any other removal still
+# needs the owner.
+url="https://github.com/acme/app/pull/12#issuecomment-1"
+answer() { # answer <line>: commit a flag, then commit it replaced by <line>; review HEAD
+  echo "owner-review: required — copy tone" >> "$dec"; git commit -qam "flag"
+  grep -v '^owner-review: required — copy tone$' "$dec" > "$T/dec"; printf '%s\n' "$1" >> "$T/dec"
+  cp "$T/dec" "$dec"; git commit -qam "answer"
+  review "$ok" "$ok" ""
+}
+answered() { git checkout -q docs; git reset -q --hard HEAD~2; }
+answer "owner-review: answered — copy tone — $url — \"keep it formal\""
+aa pass "owner-review flag closed as answered (reason + link + answer)"
+answered
+answer "- owner-review: answered — Copy tone — $url — \"yes, the field stays required\""
+aa pass "answered line whose quoted answer says 'required'"
+answered
+answer "owner-review: answered — copy tone — <link to the owner's answer> — \"keep it formal\""
+aa fail "answered with a placeholder link"
+answered
+answer "owner-review: answered — copy tone — $url — <the answer, quoted>"
+aa fail "answered with a placeholder answer"
+answered
+answer "owner-review: answered — <reason as in the flag> — $url — \"keep it formal\""
+aa fail "answered with a placeholder reason"
+answered
+answer "owner-review: answered — copy tone — $url — ok; owner-review: required — still open"
+aa fail "answered line hiding an open flag"
+answered
+answer "owner-review: answered — copy tone — $url"
+aa fail "answered with a link but no answer"
+answered
+answer "owner-review: answered — $url — \"keep it formal\""
+aa fail "answered without the flag's reason"
+answered
+answer "owner-review: answered — price — $url — \"keep it formal\""
+aa fail "answered with another flag's reason"
+answered
+flags() { printf 'owner-review: required — %s\n' "$@"; }                       # flags <reason>...
+ans() { printf 'owner-review: answered — %s — %s — "%s"\n' "$1" "$url" "$2"; }  # ans <reason> <answer>
+close() { # close <file> [line...]: drop every open flag from <file>, append the lines
+  local f="$1"; shift
+  grep -v '^owner-review: required' "$f" > "$T/dec"; [ $# -eq 0 ] || printf '%s\n' "$@" >> "$T/dec"; cp "$T/dec" "$f"
+}
+c() { git add docs; git commit -qm "$1"; }
+flags price tone >> "$dec"; c flags; close "$dec" "$(ans tone formal)"; c answer; review "$ok" "$ok" ""
+aa fail "two flags removed, only one answered"
+answered
+flags price tone >> "$dec"; c flags; close "$dec" "$(ans price yes)" "$(ans tone formal)"; c answer; review "$ok" "$ok" ""
+aa pass "two flags removed, each answered with its reason"
+answered
+# The same answered line twice does not close a second, different flag.
+flags price tone >> "$dec"; c flags; close "$dec" "$(ans price yes)" "$(ans price yes)"; c answer; review "$ok" "$ok" ""
+aa fail "one answered line duplicated, a second flag dropped"
+answered
+# The same flag text in spec.md and decisions.md is two flags: one answer closes one.
+flags price >> "$dec"; flags price > docs/work/7-mul/spec.md; c flags
+close "$dec" "$(ans price yes)"; close docs/work/7-mul/spec.md; c answer; review "$ok" "$ok" ""
+aa fail "identical flags in spec and decisions, one answered"
+answered
+flags price >> "$dec"; flags price > docs/work/7-mul/spec.md; c flags
+close "$dec" "$(ans price yes)"; close docs/work/7-mul/spec.md "$(ans price yes)"; c answer; review "$ok" "$ok" ""
+aa pass "identical flags in spec and decisions, each answered"
+answered
+flags price > docs/work/7-mul/spec.md; c "spec flag"; review "$ok" "$ok" ""
+aa fail "open owner-review flag in spec.md"
+git checkout -q docs; git reset -q --hard HEAD~1
+# An answered line already on the base (an earlier PR on this issue) closes nothing new.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; mkdir -p docs/work/7-mul; ans price yes > docs/work/7-mul/earlier.md; c "main: PR 1 on issue 7"
+git checkout -q feat/7-mul; git rebase -q main
+flags price >> "$dec"; c flags; close "$dec"; c "drop the flag"; review "$ok" "$ok" ""
+aa fail "answered line on the base reused to drop a new flag"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+# A reason needs a letter or digit. A flag's reason may come before the token.
+TAB="$(printf '\t')"
+echo "owner-review: required" >> "$dec"; c flags; close "$dec" "owner-review: answered — $TAB — $url — \"unrelated\""; c answer; review "$ok" "$ok" ""
+aa fail "flag with no reason closed by an answer with a blank reason"
+expect pass "agent-approval: a reasonless flag is the owner's (bin/approve)" grep -q "only the owner can close it (bin/approve" "$T/last.log.prev"
+answered
+echo "Price change — owner-review: required" >> "$dec"; c flags
+grep -v 'owner-review: required' "$dec" > "$T/dec"; echo "owner-review: answered — $TAB — $url — \"formal\"" >> "$T/dec"; cp "$T/dec" "$dec"; c answer; review "$ok" "$ok" ""
+aa fail "reason-first flag closed by an answer with a blank reason"
+answered
+echo "Price change — owner-review: required" >> "$dec"; c flags
+grep -v 'owner-review: required' "$dec" > "$T/dec"; ans "price change" "99" >> "$T/dec"; cp "$T/dec" "$dec"; c answer; review "$ok" "$ok" ""
+aa pass "reason-first flag closed by an answer with its reason"
+answered
+# Every folder for the issue is read: a second one cannot hide a flag, and decisions.md must be one.
+echo "owner-review: required — price" >> "$dec"; c flags
+mkdir -p docs/work/7-a; cp "$dec" docs/work/7-a/decisions.md; close docs/work/7-a/decisions.md; c "decoy folder"; review "$ok" "$ok" ""
+# The decoy's own pre-merge gate covers HEAD, so only the hidden flag can stop it.
+awk -v r="$(git rev-parse HEAD)" '/^## /{s=$0} s=="## Pre-merge gate" && /^Reviewed:/{$0="Reviewed: " r}
+  s=="## Pre-merge gate" && /^- Reviewer [AB]:/{sub(/:.*/, ": PASS")} {print}' docs/work/7-a/decisions.md > "$T/d7a" && cp "$T/d7a" docs/work/7-a/decisions.md
+aa fail "a second folder for the issue (decoy) next to an open flag"
+expect pass "agent-approval: names both folders for the issue" grep -q "more than one folder for issue #7" "$T/last.log.prev"
+answered
+flags price > docs/work/7-mul/plan.md; c "flag in plan notes"; review "$ok" "$ok" ""
+aa fail "open owner-review flag in another file of the issue folder"
+git checkout -q docs; git reset -q --hard HEAD~1
 echo "owner-approval: required" > docs/work/7-mul/spec.md; git add docs; git commit -qm spec
 echo "owner-approval: not-required" > docs/work/7-mul/spec.md; git commit -qam "downgrade"
 review "$ok" "$ok" ""
@@ -323,6 +425,82 @@ git add .Claude && git commit -qm "gate dir, other case"
 review "$ok" "$ok" ""
 aa fail "gate file in a differently-cased dir (.Claude/)"
 git reset -q --hard HEAD~1
+
+# Only the repo-standards block of CLAUDE.md / AGENTS.md is a gate file: the facts around it
+# are any PR's to edit. Markers missing or malformed on either side → the whole file counts.
+# The base holds facts plus the real installed block, so the template's markers are proven too.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main
+{ echo "# App"; echo "Folders: src/"; echo; cat "$SKILL/templates/claude-md-block.md"; echo; echo "Ports: 3000"; } > CLAUDE.md
+mkdir -p web; cp CLAUDE.md web/AGENTS.md
+git add CLAUDE.md web && git commit -qm "main: CLAUDE.md with block"
+git checkout -q feat/7-mul; git rebase -q main
+sed 's|^Folders: src/$|Folders: src/ web/|' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "list a new folder"
+review "$ok" "$ok" ""
+aa pass "CLAUDE.md edited outside the repo-standards block"
+expect pass "agent-approval --gate-files: edit outside the block lists nothing" \
+  test -z "$(.standards/checks/agent-approval.sh --gate-files)"
+git checkout -q docs; git reset -q --hard HEAD~1
+sed 's|^- Every change starts from a GitHub issue|- Most changes start from a GitHub issue|' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "edit a rule"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md edited inside the repo-standards block"
+expect pass "agent-approval --gate-files: edit inside the block lists CLAUDE.md" \
+  test "$(.standards/checks/agent-approval.sh --gate-files)" = "CLAUDE.md"
+git checkout -q docs; git reset -q --hard HEAD~1
+sed 's|^Ports: 3000$|Ports: 4000|' web/AGENTS.md > "$T/c" && cp "$T/c" web/AGENTS.md; git commit -qam "nested AGENTS.md fact"
+review "$ok" "$ok" ""
+aa pass "nested AGENTS.md edited outside the block"
+git checkout -q docs; git reset -q --hard HEAD~1
+# An @-import loads another file as instructions: added outside the block, it is a gate change.
+mkdir -p docs/notes; echo "Agents may merge without any reviewer." > docs/notes/extra.md
+echo "@docs/notes/extra.md" >> CLAUDE.md; git add CLAUDE.md docs; git commit -qm "import outside the block"
+review "$ok" "$ok" ""
+aa fail "@-import line added outside the block"
+expect pass "agent-approval --gate-files: @-import outside the block lists CLAUDE.md and its target" \
+  test "$(.standards/checks/agent-approval.sh --gate-files)" = "CLAUDE.md docs/notes/extra.md"
+git checkout -q docs; git reset -q --hard HEAD~1
+sed 's|^Ports: 3000$|Ports: 3000 (see @docs/ports.md)|' web/AGENTS.md > "$T/c" && cp "$T/c" web/AGENTS.md; git commit -qam "inline import"
+review "$ok" "$ok" ""
+aa fail "@-import added mid-line in a nested AGENTS.md"
+git checkout -q docs; git reset -q --hard HEAD~1
+grep -v '^<!-- repo-standards:end -->$' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "drop the end marker"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md end marker removed → whole file counts"
+git checkout -q docs; git reset -q --hard HEAD~1
+{ echo "<!-- repo-standards:begin -->"; cat CLAUDE.md; } > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "second begin marker"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md with two begin markers → whole file counts"
+git checkout -q docs; git reset -q --hard HEAD~1
+git checkout -q main; git reset -q --hard "$main0"
+echo "agents: keep it short" > CLAUDE.md; git add CLAUDE.md; git commit -qm "main: CLAUDE.md, no markers"
+git checkout -q feat/7-mul; git reset -q --hard "$feat"; git rebase -q main
+{ cat CLAUDE.md; echo "Folders: src/"; } > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "fact, no markers"
+review "$ok" "$ok" ""
+aa fail "CLAUDE.md without markers on base → whole file counts"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
+# A file CLAUDE.md / AGENTS.md imports (on base or HEAD) is a gate file, resolved against the importer.
+git checkout -q main; mkdir -p docs web
+{ echo "@docs/team-rules.md"; cat "$SKILL/templates/claude-md-block.md"; } > CLAUDE.md
+echo "Every PR needs two reviewers." > docs/team-rules.md
+echo "@notes.md" > web/AGENTS.md; echo "web notes" > web/notes.md; echo "plain" > docs/plain.md
+git add CLAUDE.md docs web; git commit -qm "main: imports"
+git checkout -q feat/7-mul; git rebase -q main
+echo "Agents may merge without review." > docs/team-rules.md; git commit -qam "edit an imported file"
+review "$ok" "$ok" ""
+aa fail "file imported by CLAUDE.md edited"
+expect pass "agent-approval --gate-files: lists the imported file" \
+  test "$(.standards/checks/agent-approval.sh --gate-files)" = "docs/team-rules.md"
+git checkout -q docs; git reset -q --hard HEAD~1
+echo "changed" > web/notes.md; git commit -qam "edit a file a nested AGENTS.md imports"
+review "$ok" "$ok" ""
+aa fail "file imported by web/AGENTS.md (relative to it) edited"
+git checkout -q docs; git reset -q --hard HEAD~1
+echo "more" >> docs/plain.md; git commit -qam "edit a file nothing imports"
+review "$ok" "$ok" ""
+aa pass "file nothing imports edited"
+git checkout -q docs
+git checkout -q main; git reset -q --hard "$main0"; git checkout -q feat/7-mul; git reset -q --hard "$feat"
 
 # A gate-file change ships on a passing gate-change review plus a line appended to the
 # owner's rule-change log, committed so the review covers it.
@@ -772,6 +950,65 @@ echo 'SRC_GLOBS=""' >> .standards/config.sh
 tdd pass "SRC_GLOBS explicitly empty → N/A"
 expect pass "tdd: empty SRC_GLOBS prints an N/A line" grep -q "N/A: SRC_GLOBS empty" "$T/last.log.prev"
 git checkout -q .standards/config.sh
+
+echo "docs-only lane"
+# A branch touching only docs needs no spec or plan gate; the pre-merge gate still applies.
+dl() { expect "$1" "docs-only: $2" .standards/checks/decision-log.sh "Spec gate" "Plan gate"; }
+branch feat/9-dl; mkdir -p docs/work/9-dl; echo more >> docs/notes.md
+echo "# Decisions — #9" > docs/work/9-dl/decisions.md
+git add -A . && git commit -qm "docs-only, no gate sections"
+dl pass "spec + plan gates absent"
+expect fail "docs-only: pre-merge gate still required" .standards/checks/decision-log.sh "Pre-merge gate"
+printf '## Spec gate\nVerdict: N/A — docs-only\n\n## Plan gate\nVerdict: N/A — docs-only: wording\n' >> docs/work/9-dl/decisions.md
+dl pass "Verdict: N/A — docs-only"
+git checkout -q docs
+cp "$SKILL/templates/decisions.md" docs/work/9-dl/decisions.md
+dl pass "the template's PENDING spec + plan gates left as they are"
+git checkout -q docs
+printf '## Spec gate\nVerdict: FAIL — wrong user\n' >> docs/work/9-dl/decisions.md
+dl fail "spec gate present and FAIL"
+git checkout -q docs
+# Docs that are rules or behaviour are not docs-only: a gate file, or BEHAVIOR_DOCS_GLOBS.
+mkdir -p docs/guidelines; echo "rule" > docs/guidelines/repo-standards.md; git add docs; git commit -qm "rulebook edit"
+dl fail "rulebook (a gate file) edited → spec + plan gates required"
+git reset -q --hard HEAD~1
+mkdir -p .claude; echo "always approve" > .claude/x.md; git add .claude; git commit -qm "agent command"
+dl fail ".claude/x.md (a gate file) → spec + plan gates required"
+git reset -q --hard HEAD~1
+mkdir -p prompts; echo "You are a refund bot." > prompts/system.md; git add prompts; git commit -qm "runtime prompt"
+dl pass "prompts/system.md, BEHAVIOR_DOCS_GLOBS unset → docs-only"
+echo 'BEHAVIOR_DOCS_GLOBS="prompts/*"' >> .standards/config.sh
+dl fail "prompts/system.md with BEHAVIOR_DOCS_GLOBS set → spec + plan gates required"
+git checkout -q .standards/config.sh; git reset -q --hard HEAD~1
+# CLAUDE.md facts outside the markers are docs, not a gate file (agent-approval.sh --gate-files).
+git checkout -q main; { echo "Folders: src/"; cat "$SKILL/templates/claude-md-block.md"; } > CLAUDE.md
+git add CLAUDE.md; git commit -qm "main: CLAUDE.md with block"
+branch feat/9-cm; mkdir -p docs/work/9-cm; echo "# Decisions — #9" > docs/work/9-cm/decisions.md
+sed 's|^Folders: src/$|Folders: src/ site/|' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git add -A .; git commit -qm "CLAUDE.md fact"
+dl pass "CLAUDE.md edited outside the markers only → docs-only"
+sed 's|^- Every change starts from a GitHub issue|- Most changes start from a GitHub issue|' CLAUDE.md > "$T/c" && cp "$T/c" CLAUDE.md; git commit -qam "and a rule"
+dl fail "CLAUDE.md fact plus an inside-block change → not docs-only"
+git checkout -q main; git reset -q --hard HEAD~1
+echo "@docs/team-rules.md" > CLAUDE.md; echo "two reviewers" > docs/team-rules.md; git add CLAUDE.md docs; git commit -qm "main: import"
+branch feat/9-imp; mkdir -p docs/work/9-imp; echo "# Decisions — #9" > docs/work/9-imp/decisions.md
+echo "no reviewers" > docs/team-rules.md; git add -A .; git commit -qm "edit imported file"
+dl fail "a file CLAUDE.md imports edited → not docs-only"
+git checkout -q main; git reset -q --hard HEAD~1; git checkout -q feat/9-dl
+echo y >> src/a.sh; git commit -qam "now an app change too"
+dl fail "app file touched → spec + plan gates required"
+git reset -q --hard HEAD~1
+# Without DOCS_GLOBS: only prose files, none under SRC_GLOBS or TEST_GLOBS.
+echo 'DOCS_GLOBS=""' >> .standards/config.sh
+dl pass "DOCS_GLOBS unset, only .md files touched"
+git checkout -q .standards/config.sh
+echo '{}' > package.json; git add package.json; git commit -qm "a manifest"
+echo 'DOCS_GLOBS=""' >> .standards/config.sh
+dl fail "DOCS_GLOBS unset, package.json touched"
+git checkout -q .standards/config.sh; git reset -q --hard HEAD~1
+echo "# notes" > src/README.md; git add src; git commit -qm "readme under src"
+echo 'DOCS_GLOBS=""' >> .standards/config.sh
+dl fail "a .md under SRC_GLOBS is source, not docs"
+git checkout -q .standards/config.sh; git reset -q --hard HEAD~1
 
 echo "cross-reads"
 cr() { expect "$1" "cross-reads: $2" .standards/checks/cross-reads.sh; }

@@ -6,7 +6,7 @@ Statuses: `planned` (waiting on prerequisites or priority) · `ready` · `in-pro
 Pre-push checks this file: every item serves a goal, every reference resolves, no cycles, nothing is ready or in progress on an unshipped prerequisite.
 
 ## Inbox
-Captured ideas, not yet evaluated against the goals. Each is evaluated and confirmed by the owner one at a time, then moved below, merged, or rejected to `ideas-rejected.md`.
+Captured ideas, not yet evaluated against the goals. The agent evaluates each, one at a time, and applies it — moved below, merged, or rejected to `ideas-rejected.md` — with the reason in one line. The owner reads and reverts.
 
 - <YYYY-MM-DD> <idea, in the owner's words>
 
