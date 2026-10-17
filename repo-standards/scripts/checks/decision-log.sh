@@ -2,8 +2,9 @@
 # decision-log.sh "<section>" ["<section>" ...]: each section of the issue's decisions.md
 # must end in "Verdict: PASS".
 # Docs-only lane: on a branch that touches docs and nothing else (docs_only in common.sh),
-# "Spec gate" and "Plan gate" may be absent or say "Verdict: N/A — docs-only": there is no
-# behaviour to specify or plan, and filling them with "N/A — same reason" is ceremony. Every
+# "Spec gate" and "Plan gate" may be absent, left as the template has them (PENDING), or say
+# "Verdict: N/A — docs-only": there is no behaviour to specify or plan, and filling or
+# deleting them is ceremony. A FAIL still fails. Every
 # other section, the pre-merge gate included, is still required.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
 
@@ -21,8 +22,8 @@ for s in "$@"; do
     if ! grep -qx "## $s" "$dec"; then info "ok   $s: not needed (docs-only branch)"
     else
       case "$v" in
-        "N/A — docs-only"*) info "ok   $s: $v" ;;
-        *) red "  miss $s: ${v:-no verdict} — docs-only branch: delete the section or set 'Verdict: N/A — docs-only'"; fail=1 ;;
+        PENDING|"N/A — docs-only"*) info "ok   $s: not needed (docs-only branch; verdict $v)" ;;
+        *) red "  miss $s: ${v:-no verdict} — docs-only branch: leave it PENDING or set 'Verdict: N/A — docs-only'"; fail=1 ;;
       esac
     fi
   else red "  miss $s: ${v:-no verdict}"; fail=1

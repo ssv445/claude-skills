@@ -1,9 +1,9 @@
 <!-- repo-standards:begin -->
 ## Repo standards (installed — enforced by hooks)
 
-This repo follows `docs/guidelines/repo-standards.md`. **Read it before starting any issue**; it defines the pipeline every change goes through: issue → spec (with Expectations) → spec gate → plan → plan gate → tests red → code → verify → doc sync → pre-merge gate → `bin/ship`. A docs-only branch skips spec, plan and TDD: issue → edit → pre-merge gate → `bin/ship`.
+This repo follows `docs/guidelines/repo-standards.md`. **Read it before starting any issue**; it defines the pipeline every change goes through: issue → spec (with Expectations) → spec gate → plan → plan gate → tests red → code → verify → doc sync → pre-merge gate → `bin/ship`. A docs-only branch (no gate file, nothing in `BEHAVIOR_DOCS_GLOBS`) skips spec, plan and TDD: issue → edit → pre-merge gate → `bin/ship`.
 
-Only the text between the `repo-standards` markers is a gate file; the rest of this file is facts any PR may edit.
+Only the text between the `repo-standards` markers is a gate file; the rest of this file is facts any PR may edit. Rules belong inside the markers: an `@path` import line anywhere in this file counts as a gate change, and reviewers flag rule-like text added outside the block.
 
 Hard rules (the hooks back these up; treat a red hook as a stop, not an obstacle):
 - Every change starts from a GitHub issue; branch `<type>/<issue>-<slug>`.
@@ -14,7 +14,7 @@ Hard rules (the hooks back these up; treat a red hook as a stop, not an obstacle
 - `approved` / `spec-approved` labels are the owner's alone, added via `bin/approve` at a terminal. Never edit gate files, or rephrase commands, to get past `bin/ship` or the guard.
 - **Decide and log; the owner reads and reverts.** Every taste, product, idea, roadmap or inferred-Expectations call you can make: pick your recommended option, record it (and the alternative you rejected) in `decisions.md` — or `docs/product/` for ideas and roadmap — and keep going. Mechanical calls: decide, record. Never wait for the owner on these.
 - **Big calls — the one list, every rule points here:** a price, a public claim or pitch, a new screen or visual design, anything that costs money, or a change that loosens a check. Only these go to the owner: add this exact line, at column 0, to `decisions.md`: `owner-review: required — <reason>`, and ask in the PR or issue.
-- Once the owner answers, replace that line with `owner-review: answered — <link to the owner's answer> — <the answer, quoted>` and write the answer into the doc it belongs in. That closes it; no `bin/approve`. Never delete a flag any other way, and never write an answer the owner did not give.
+- Once the owner answers, replace that line with `owner-review: answered — <reason as in the flag> — <link to the owner's answer> — <the answer, quoted>` (one per flag, in `decisions.md` or `spec.md`) and write the answer into the doc it belongs in. That closes it; no `bin/approve`. Never delete a flag any other way, and never write an answer the owner did not give.
 - Asking the owner: name the exact rule that requires them, and give the one command or question. Then keep working on everything that does not depend on the answer — prep, plans, other issues. Stop only when the next step needs their input.
 - An idea that is not today's work goes into the Inbox of `docs/product/roadmap.md` at once; then you weigh it against `docs/product/goals.md`, apply add, merge or reject, and log why.
 - An issue you file at the owner's explicit instruction counts as owner-filed.

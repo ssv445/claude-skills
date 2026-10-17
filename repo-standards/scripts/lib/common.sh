@@ -175,43 +175,66 @@ owner_flag_re() {
 }
 
 # owner_answered_re: anchored ERE (use with grep -i) for a closed owner-review flag:
-#   owner-review: answered — <link to the owner's answer> — <the answer, quoted>
-# The link must be a real URL and the answer real text: a "<placeholder>" does not count.
-# An agent writes it in place of the flag once the owner has answered, so an answered
-# question needs no bin/approve. It checks the shape only: agents post as the owner, so who
-# wrote the answer cannot be proven here (the gates are a speed bump for honest agents).
+#   owner-review: answered — <reason as in the flag> — <link to the owner's answer> — <the answer, quoted>
+# The reason pairs the answer with the flag it closes; the link must be a real URL and the
+# answer real text: a "<placeholder>" in any field does not count. An agent writes it in
+# place of the flag once the owner has answered, so an answered question needs no
+# bin/approve. It checks the shape only: agents post as the owner, so who wrote the answer
+# cannot be proven here (the gates are a speed bump for honest agents).
 owner_answered_re() {
-  printf '^ {0,3}([-*] +)?owner-review: answered (—|-) https?://[^ <>]+ (—|-) [^ <]'
+  printf '^ {0,3}([-*] +)?owner-review: answered (—|-) [^ <].* (—|-) https?://[^ <>]+ (—|-) [^ <]'
 }
 
-# owner_answered_lines <file>: the file's answered flags. A line naming owner-review twice is
-# not one (it could hide an open flag behind a closed one).
+# owner_answered_lines <file|->: the answered flags in it. A line naming owner-review twice
+# is not one (it could hide an open flag behind a closed one).
 owner_answered_lines() {
   grep -iE "$(owner_answered_re)" "$1" | grep -viE 'owner-review.*owner-review'
+}
+
+# owner_reason: stdin flag or answered lines → each one's reason, lower-cased and trimmed,
+# one per line, so a flag and its answer compare equal. Flag: the text after "required"
+# and any markdown or dash. Answered: the text between "answered —" and "— <link>".
+owner_reason() {
+  awk '{
+    l = tolower($0)
+    if (match(l, /owner-review: answered (—|-) /)) {
+      r = substr(l, RSTART + RLENGTH)
+      if (match(r, / (—|-) https?:\/\//)) r = substr(r, 1, RSTART - 1)
+    } else {
+      r = substr(l, index(l, "required") + 8)
+      sub(/^[*_: \t]*/, "", r); sub(/^(—|-)/, "", r)
+    }
+    sub(/^[ \t]+/, "", r); sub(/[ \t]+$/, "", r)
+    print r
+  }'
 }
 
 # owner_flags <file>: the file's open owner-review flags, "<line>:<text>", or nothing. An
 # answered flag is closed even when the quoted answer says "required".
 owner_flags() {
   local l
+  [ -f "$1" ] || return 0
   grep -inE "$(owner_flag_re review)" "$1" | while IFS= read -r l; do
     [ -n "$(printf '%s\n' "${l#*:}" | owner_answered_lines -)" ] || printf '%s\n' "$l"
   done
 }
 
 # docs_only: the branch touches docs and nothing else, so it needs no spec or plan gate.
-# No touched file may match SRC_GLOBS or TEST_GLOBS. With DOCS_GLOBS set, the change class
-# must be docs (no app, site or shared file). Without it, every touched file must be prose
-# (DOCS_ONLY_DEFAULT_GLOBS): a package.json or requirements.txt is not docs. Fails closed:
-# no file, or a list git cannot produce, is not docs-only.
+# No touched file may match SRC_GLOBS, TEST_GLOBS or BEHAVIOR_DOCS_GLOBS (markdown that
+# drives behaviour: prompts, agent commands), and no gate file may change — asked of
+# agent-approval.sh --gate-files, the one gate-file detection. With DOCS_GLOBS set, the
+# change class must be docs (no app, site or shared file). Without it, every touched file
+# must be prose (DOCS_ONLY_DEFAULT_GLOBS): a package.json or requirements.txt is not docs.
+# Fails closed: no file, a list git cannot produce, or a failed gate-file list is not docs-only.
 DOCS_ONLY_DEFAULT_GLOBS="*.md *.mdx *.markdown *.rst *.adoc"
 docs_only() {
-  local files f
+  local files f gates
   files="$(set -o pipefail; touched_files)" && [ -n "$files" ] || return 1
   while IFS= read -r f; do
-    matches_any "$f" "$SRC_GLOBS $TEST_GLOBS" && return 1
+    matches_any "$f" "$SRC_GLOBS $TEST_GLOBS ${BEHAVIOR_DOCS_GLOBS:-}" && return 1
     [ -n "$DOCS_GLOBS" ] || matches_any "$f" "$DOCS_ONLY_DEFAULT_GLOBS" || return 1
   done <<<"$files"
+  gates="$("$ROOT/.standards/checks/agent-approval.sh" --gate-files 2>/dev/null)" && [ -z "$gates" ] || return 1
   [ -z "$DOCS_GLOBS" ] || [ "$(change_class)" = docs ]
 }
 

@@ -23,7 +23,7 @@ is_pass() { case "$1" in PASS|PASS\ *|PASS—*) return 0 ;; *) return 1 ;; esac;
 # The list is NUL-separated in a file: -z and quotePath=false keep git from C-quoting
 # non-ASCII names, which would match no glob and resolve to no blob.
 base="$(base_commit)"
-changed="$(mktemp)"; trap 'rm -f "$changed"' EXIT; diff_ok=0
+changed="$(mktemp)"; trap 'rm -f "$changed" "$changed".*' EXIT; diff_ok=0
 if [ -z "$base" ]; then miss "no base commit (origin/$BASE_BRANCH or $BASE_BRANCH) — the owner decides"
 elif git -c core.quotePath=false diff -z --name-only --no-renames "$base" HEAD > "$changed"; then diff_ok=1
 else miss "git diff $base HEAD failed"
@@ -66,9 +66,19 @@ block_unchanged() {
   [ "$old" = "$new" ]
 }
 
+# imports_changed <path>: the branch adds, removes or edits an "@path" import line anywhere
+# in a CLAUDE.md / AGENTS.md. An import loads another file's text as instructions, so one
+# added outside the markers would bring in rules ungated. Any word starting with "@" after
+# the start of a line or a space counts (an @-mention too): fail closed.
+imports_changed() {
+  git diff -U0 --no-renames "$base" HEAD -- "$1" | grep -E '^[-+]' | grep -vE '^(\+\+\+|---) ' \
+    | sed 's/^[-+]//' | grep -qE '(^|[[:space:]])@[^[:space:]]'
+}
+
 # gate_files_touched: sets $touched to the gate files the branch changes (space-led, "" =
 # none) and $baseline_raised when the only baseline edit is a raise, which is no gate change.
-# A CLAUDE.md / AGENTS.md counts only when its repo-standards block changed (block_unchanged).
+# A CLAUDE.md / AGENTS.md counts only when its repo-standards block changed (block_unchanged)
+# or an @-import line changed anywhere in it (imports_changed).
 # --no-renames (in $changed): a moved file shows both paths.
 # nocasematch: ".Claude/" is ".claude/" on a case-insensitive filesystem.
 gate_files_touched() {
@@ -78,7 +88,7 @@ gate_files_touched() {
   while IFS= read -r -d '' f; do
     if [ "$f" = ".standards/coverage-baseline" ] && raises_baseline; then baseline_raised=1; continue; fi
     matches_any "$f" "$GATE_FILES" || continue
-    case "${f##*/}" in CLAUDE.md|AGENTS.md) block_unchanged "$f" && continue ;; esac
+    case "${f##*/}" in CLAUDE.md|AGENTS.md) block_unchanged "$f" && ! imports_changed "$f" && continue ;; esac
     touched="$touched $f"
   done < "$changed"
   shopt -u nocasematch
@@ -144,33 +154,44 @@ else
   # a. Pre-merge gate passed: both reviewers PASS, or they split and the arbiter ruled PASS.
   gate_review "Pre-merge gate"
 
-  # b. No big call is waiting on the owner. An answered flag (owner_answered_re) is closed.
-  flags="$(owner_flags "$dec")"
-  [ -z "$flags" ] && info "ok   no open owner-review flag" || miss "owner review requested in $dec: $flags"
+  # b. No big call is waiting on the owner, in decisions.md or the spec. An answered flag
+  # (owner_answered_re) is closed.
+  spec="$(issue_dir)/spec.md"
+  flags="$(owner_flags "$dec")"; sflags="$(owner_flags "$spec")"
+  [ -z "$flags$sflags" ] && info "ok   no open owner-review flag" \
+    || miss "owner review requested:${flags:+ $dec: $flags}${sflags:+ $spec: $sflags}"
 fi
 
 # Owner-only flags removed by any commit on the branch (added then deleted counts too).
 # -m: a merge commit's diff against each parent, so a flag dropped while merging shows.
-# An owner-review flag may go only by turning into an answered line: each distinct removed
-# flag needs one answered line in decisions.md now. owner-approval: required has no answered
-# form — removing it always needs the owner.
+# An owner-review flag may go only by turning into an answered line: each removed flag,
+# counted by occurrence, is paired with its own answered line carrying the same reason and
+# added on this branch (one already on the base closed an earlier flag). owner-approval:
+# required has no answered form — removing it always needs the owner.
 if [ -n "$base" ]; then
-  if log="$(git log -m -p --format= "$base..HEAD" -- "docs/work/$(issue_number)-*")"; then
+  work="docs/work/$(issue_number)-*"
+  if log="$(git log -m -p --format= "$base..HEAD" -- "$work")" \
+     && now="$(git diff --no-renames "$base" HEAD -- "$work")"; then
     # Removed lines, minus the diff's "-" marker, judged by the same flag patterns.
     removed="$(printf '%s\n' "$log" | grep -E '^-' | grep -vE '^--- (a/|/dev/null)' | sed 's/^-//')"
     gone_approval="$(printf '%s\n' "$removed" | grep -iE "$(owner_flag_re approval)")"
     # An edited answered line is no removed flag, even if its answer says "required".
     gone_review="$(printf '%s\n' "$removed" | grep -iE "$(owner_flag_re review)" \
-      | while IFS= read -r l; do [ -n "$(printf '%s\n' "$l" | owner_answered_lines -)" ] || printf '%s\n' "$l"; done | sort -u)"
-    answered=0
-    [ -z "$dec" ] || [ ! -f "$dec" ] || answered="$(owner_answered_lines "$dec" | wc -l | tr -d ' ')"
-    gone=0; [ -z "$gone_review" ] || gone="$(printf '%s\n' "$gone_review" | wc -l | tr -d ' ')"
+      | while IFS= read -r l; do [ -n "$(printf '%s\n' "$l" | owner_answered_lines -)" ] || printf '%s\n' "$l"; done)"
     [ -z "$gone_approval" ] || miss "owner-approval flag removed on this branch: $gone_approval"
-    if [ "$gone" -eq 0 ]; then info "ok   no owner-review flag removed"
-    elif [ "$gone" -le "$answered" ]; then info "ok   $gone owner-review flag(s) closed as answered"
-    else miss "owner-review flag removed on this branch without an answer ($gone removed, $answered answered): $gone_review — replace it with 'owner-review: answered — <link to the owner's answer> — <the answer, quoted>'"
+    if [ -z "$gone_review" ]; then info "ok   no owner-review flag removed"
+    else
+      # Answered lines the branch adds (vs base), as reasons; comm pairs equal lines one to one.
+      printf '%s\n' "$gone_review" | owner_reason | sort > "$changed.gone"
+      printf '%s\n' "$now" | grep -E '^\+' | grep -vE '^\+\+\+ ' | sed 's/^+//' | owner_answered_lines - \
+        | owner_reason | sort > "$changed.answered"
+      unpaired="$(comm -23 "$changed.gone" "$changed.answered")"
+      rm -f "$changed.gone" "$changed.answered"
+      if [ -z "$unpaired" ]; then info "ok   $(printf '%s\n' "$gone_review" | wc -l | tr -d ' ') owner-review flag(s) closed as answered"
+      else miss "owner-review flag removed on this branch without its own answered line (reasons: $(printf '%s' "$unpaired" | tr '\n' ';')) — replace each flag with 'owner-review: answered — <reason as in the flag> — <link to the owner's answer> — <the answer, quoted>'"
+      fi
     fi
-  else miss "git log $base..HEAD failed"
+  else miss "git log/diff $base..HEAD failed"
   fi
 fi
 

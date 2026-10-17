@@ -1,16 +1,14 @@
 # Decisions — #<issue> <title>
 
-The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`, and `## Gate-change review` too when a gate file changed under `APPROVER="agent"`. When `bin/ship` approves on its own, and when it needs the owner: "Approval and shipping" in `docs/guidelines/repo-standards.md`.
-
-**Docs-only branch** (touches docs and nothing else): delete `## Spec gate` and `## Plan gate` (or set their `Verdict: N/A — docs-only`) and write no `TDD: N/A` line; the pre-merge gate still applies.
+The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS` — except on a docs-only branch (touches docs and nothing else; not a gate file, not `BEHAVIOR_DOCS_GLOBS`), where they may stay as this template has them and no `TDD: N/A` line is needed. `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS` on every branch, and `## Gate-change review` too when a gate file changed under `APPROVER="agent"`. When `bin/ship` approves on its own, and when it needs the owner: "Approval and shipping" in `docs/guidelines/repo-standards.md`.
 
 Taste and product calls: pick the recommended option and log it under `## Decisions`. Only a big call (the list in the repo-standards block of `CLAUDE.md`) goes to the owner: add a line at column 0 anywhere in this file (indented here so it is not itself a flag); `bin/ship` refuses while it is open:
 
     owner-review: required — <reason>
 
-Once the owner answers in the PR or issue, replace that line with this one, with the real link and their words. It closes the flag — no `bin/approve`:
+Once the owner answers in the PR or issue, replace that line with this one: the flag's reason as written, the real link, their words. It closes that one flag — no `bin/approve`. Each flag needs its own answered line:
 
-    owner-review: answered — <link to the owner's answer> — <the answer, quoted>
+    owner-review: answered — <reason as in the flag> — <link to the owner's answer> — <the answer, quoted>
 
 ## Spec gate
 - Reviewer A: <PASS | FAIL> — <key points>

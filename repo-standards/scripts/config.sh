@@ -53,6 +53,8 @@ SHARED_GLOBS=""
 APP_GLOBS=""
 SITE_GLOBS=""            # e.g. "site/* scripts/deploy-site.sh"
 DOCS_GLOBS=""            # e.g. "docs/* *.md"
+BEHAVIOR_DOCS_GLOBS=""   # optional: markdown that drives behaviour (runtime prompts, agent commands), e.g.
+                         # "prompts/*". Never docs-only: a branch touching it needs the spec and plan gates
 # cross-reads.sh: a skipped check must not read a changed file. Tracked files (git pathspecs)
 # whose quoted path literals are classed: the app side's tests must not read site or docs files,
 # the site side's must not read docs files, unless those paths are in SHARED_GLOBS. Empty = unchecked.
