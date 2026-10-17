@@ -23,8 +23,9 @@ if ! command -v jq >/dev/null 2>&1; then
     case "$t/" in "$root"/*) ;; *) exit 0 ;; esac
   fi
   # The way out: a command that is only a package-manager install of jq, nothing chained.
-  raw_field command | grep -Eqx '[[:space:]]*(sudo[[:space:]]+)?(brew|apt-get|apt|dnf|yum|apk|pacman|port)[[:space:]]+(install|add|-S)([[:space:]]+-[^[:space:];&|]+)*[[:space:]]+jq[[:space:]]*' && exit 0
-  block "guard needs jq to read commands aimed at this repo — install it (macOS: brew install jq; Debian/Ubuntu: sudo apt-get install jq). That install command is allowed; everything else here is blocked until then."
+  # Exact allowlist, no options: a package-manager option can run commands (apt-get -o …).
+  raw_field command | grep -Eqx '[[:space:]]*(brew install jq|(sudo )?apt-get install -y jq)[[:space:]]*' && exit 0
+  block "guard needs jq to read commands aimed at this repo — install it (macOS: brew install jq; Debian/Ubuntu: sudo apt-get install -y jq). Exactly those commands are allowed; everything else here is blocked until then."
 fi
 # jq failing (malformed hook JSON) would leave the command empty and pass every check below.
 cmd="$(printf '%s' "$json" | jq -r '.tool_input.command // ""')" \

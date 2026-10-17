@@ -30,10 +30,11 @@ for t in cat git dirname awk sed grep head tr; do ln -s "$(command -v "$t")" "$T
 expect fail "guard: no jq on PATH → blocks (fail closed)" \
   env PATH="$T/nojq" /bin/bash "$SKILL/scripts/guard.sh" < "$SKILL/tests/guard-fixtures/allow-push.json"
 expect pass "guard: no jq → says it needs jq, and how to install it" grep -q "guard needs jq.*brew install jq" "$T/last.log.prev"
-# Without jq: still out of scope from a cwd outside this repo, and installing jq (alone) is the way out.
+# Without jq: still out of scope from a cwd outside this repo, and installing jq (exactly, no
+# options) is the way out. nojq-block-* fixtures are harmless with jq (above: pass), blocked without.
 for f in "$SKILL"/tests/guard-fixtures/*nojq*.json; do
   n="$(basename "$f" .json)"
-  case "$n" in block-*) want=fail ;; *) want=pass ;; esac
+  case "$n" in block-*|nojq-block-*) want=fail ;; *) want=pass ;; esac
   expect "$want" "guard (no jq) $n" env PATH="$T/nojq" /bin/bash "$SKILL/scripts/guard.sh" < "$f"
 done
 
