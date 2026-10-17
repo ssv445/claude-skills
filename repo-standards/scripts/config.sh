@@ -56,6 +56,12 @@ MAX_FILE_LINES=400
 # without one. EVIDENCE_MAX_KB: a new image under docs/work/ larger than this fails pre-push.
 UI_GLOBS=""
 EVIDENCE_MAX_KB=300
+# EVIDENCE_CMD (with UI_GLOBS): the repo's one script that captures the standard evidence set — each
+# supported viewport in each theme — from a running app into a new temp dir, and prints the files,
+# one per line, last; non-zero on any failure. Agents run it for stage 8 instead of improvising
+# captures; bin/ship's screenshot miss names it. Start from the skill's
+# templates/evidence-capture.example.sh, or wrap the repo's own (e.g. an e2e layout script).
+EVIDENCE_CMD=""
 
 # --- Change class (optional): which checks a branch needs, from every path it touches ---
 # Off while SITE_GLOBS and DOCS_GLOBS are both empty: every check runs on every branch. Set them
@@ -93,7 +99,8 @@ E2E_EXCLUSIVE=""         # "1": e2e cannot run twice at once on this machine (a 
 VERDICT_REUSE=""         # "1": a bin/ship re-run on exactly the same input (every tracked file but the issue's
                          # decisions.md, untracked files, the base, the commands, OS, VERDICT_KEY_CMD's output;
                          # under a day) reuses the last e2e + perf PASS; any failure on that input voids it.
-                         # STANDARDS_RERUN=1 bin/ship runs them anyway. Records live in .git/standards-verdicts/
+                         # STANDARDS_RERUN=1 bin/ship runs them anyway. Records live in .git/standards-verdicts/.
+                         # Off or on, bin/ship reuses a pass that `bin/ship --checks-only` recorded for the same input
 VERDICT_KEY_CMD=""       # with VERDICT_REUSE: prints the versions of the tools e2e and perf use, so a tool
                          # change re-runs them, e.g. "node -v && pnpm -v && pnpm exec playwright --version".
                          # Exits non-zero → nothing is reused or recorded

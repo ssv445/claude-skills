@@ -18,6 +18,14 @@
 # later bin/ship on the same input (ship_verdict_key) reuses it instead of running it again, for
 # up to SHIP_VERDICT_MAX_AGE. Any failure on that input voids the record. STANDARDS_RERUN=1
 # ignores a record and runs everything.
+#
+# bin/ship --checks-only (SHIP_CHECKS_ONLY=1): the same run, started by the agent in the
+# background while the pre-merge reviewers read, so e2e and perf are done by the time bin/ship
+# runs. It always records its pass, and bin/ship reuses a --checks-only pass even with
+# VERDICT_REUSE off: asking for that run is asking for it to be used, and the key and age rules
+# are the same ones. With VERDICT_REUSE off, bin/ship still records nothing of its own and
+# reuses no pass but a --checks-only one. While it runs, its record says "running" with its pid:
+# a bin/ship on the same input waits for it instead of running e2e and perf a second time.
 SHIP_VERDICT_MAX_AGE=86400 # seconds: a day. Tools, browsers and certificates drift in place
 SHIP_REUSED=""             # the reuse line, when ship_checks reused a verdict
 
@@ -73,23 +81,58 @@ ship_verdict_file() {
 }
 
 # ship_verdict_fresh <key>: a recorded pass for exactly this key, under SHIP_VERDICT_MAX_AGE old.
-# Prints "<minutes ago> <commit>".
+# Prints "<minutes ago> <commit> <by>", by = ship or checks-only (a record without one: ship).
 ship_verdict_fresh() {
-  local f w at head now
+  local f w at head by now
   f="$(ship_verdict_file "$1")" && [ -f "$f" ] || return 1
-  # The file holds the key itself, then "passed <epoch> <commit>"; anything else is no verdict.
+  # The file holds the key itself, then "passed <epoch> <commit> [by]"; anything else is no verdict.
   [ "$(sed '$d' "$f")" = "$1" ] || return 1
-  read -r w at head <<< "$(tail -1 "$f")"
+  read -r w at head by <<< "$(tail -1 "$f")"
   [ "$w" = passed ] && printf '%s' "$at" | grep -qE '^[0-9]+$' || return 1
   now=$(date +%s)
   [ $((now - at)) -ge 0 ] && [ $((now - at)) -le "$SHIP_VERDICT_MAX_AGE" ] || return 1
-  printf '%s %s\n' "$(((now - at) / 60))" "$head"
+  printf '%s %s %s\n' "$(((now - at) / 60))" "$head" "${by:-ship}"
 }
 
+# ship_verdict_save <key> [by]: records a pass, by bin/ship (default) or checks-only.
 ship_verdict_save() {
   local f
   f="$(ship_verdict_file "$1")" || return 1
-  mkdir -p "$(dirname "$f")" && printf '%s\npassed %s %s\n' "$1" "$(date +%s)" "$(git rev-parse HEAD)" > "$f"
+  mkdir -p "$(dirname "$f")" && printf '%s\npassed %s %s %s\n' "$1" "$(date +%s)" "$(git rev-parse HEAD)" "${2:-ship}" > "$f"
+}
+
+# ship_verdict_running <key>: --checks-only is running on this input: "running <epoch> <pid>
+# <start time>", so a bin/ship on the same input waits for it. Not a pass: a run that dies
+# leaves a record whose process is gone, which is no verdict.
+ship_verdict_running() {
+  local f
+  f="$(ship_verdict_file "$1")" || return 1
+  mkdir -p "$(dirname "$f")" && printf '%s\nrunning %s %s %s\n' "$1" "$(date +%s)" "$$" "$(_ship_start "$$")" > "$f"
+}
+# _ship_start <pid>: that process's start time, spaces trimmed (it is read back with `read`).
+_ship_start() { _gate_start "$1" | sed 's/^ *//; s/ *$//'; }
+
+# ship_verdict_wait <key>: while another live process (bin/ship --checks-only) is running e2e and
+# perf on exactly this input, wait for it; says so once. Returns at once when nothing runs.
+ship_verdict_wait() {
+  local f w at pid start said=""
+  f="$(ship_verdict_file "$1")" || return 0
+  while [ -f "$f" ] && [ "$(sed '$d' "$f")" = "$1" ]; do
+    read -r w at pid start <<< "$(tail -1 "$f")"
+    [ "$w" = running ] && [ "$pid" != "$$" ] && kill -0 "$pid" 2> /dev/null \
+      && [ "$(_ship_start "$pid")" = "$start" ] || return 0
+    [ -n "$said" ] || info "wait bin/ship --checks-only (pid $pid) is running e2e and perf on this input — using its verdict"
+    said=1
+    sleep 1
+  done
+}
+
+# ship_verdict_unfinished <key>: a --checks-only run that ends without a verdict (the input changed
+# under it) replaces its "running" record, so nothing waits on it.
+ship_verdict_unfinished() {
+  local f
+  f="$(ship_verdict_file "$1")" || return 1
+  [ ! -e "$f" ] || printf 'unfinished %s %s\n' "$(date +%s)" "$(git rev-parse HEAD)" > "$f"
 }
 
 # ship_verdict_void <key>: a failure on this input overwrites any pass recorded for it. Overwritten,
@@ -134,19 +177,29 @@ _ship_e2e() {
 }
 
 ship_checks() {
-  local key="" seen ok=1
+  local key="" seen ok=1 mins commit by rec=""
   SHIP_REUSED=""
-  if [ "${VERDICT_REUSE:-}" = 1 ]; then
-    if ! key="$(ship_verdict_key)"; then
-      key=""
-      info "verdict key could not be read (VERDICT_KEY_CMD failed?): e2e and perf run, nothing is reused or recorded"
-    elif [ -z "${STANDARDS_RERUN:-}" ] && seen="$(ship_verdict_fresh "$key")"; then
-      SHIP_REUSED="e2e and perf passed ${seen%% *} min ago on commit ${seen##* } with the same input (files but decisions.md, base, commands, OS, tools) — reused, not re-run (STANDARDS_RERUN=1 re-runs them)"
-      green "PASS e2e + perf: $SHIP_REUSED"
-      printf '%s\n' "$key" | sed 's/^/  key  /'
-      return 0
+  # rec: this run records its pass (VERDICT_REUSE=1, or --checks-only). Without it the key is
+  # still read, quietly, only to find a --checks-only pass for this input.
+  { [ "${VERDICT_REUSE:-}" = 1 ] || [ -n "${SHIP_CHECKS_ONLY:-}" ]; } && rec=1
+  if ! key="$(ship_verdict_key)"; then
+    key=""
+    [ -z "$rec" ] || info "verdict key could not be read (VERDICT_KEY_CMD failed?): e2e and perf run, nothing is reused or recorded"
+  elif [ -z "${STANDARDS_RERUN:-}" ]; then
+    ship_verdict_wait "$key"
+    if seen="$(ship_verdict_fresh "$key")"; then
+      read -r mins commit by <<< "$seen"
+      if [ "${VERDICT_REUSE:-}" = 1 ] || [ "$by" = checks-only ]; then
+        [ "$by" = checks-only ] && by=" by bin/ship --checks-only" || by=""
+        SHIP_REUSED="e2e and perf passed $mins min ago on commit $commit$by with the same input (files but decisions.md, base, commands, OS, tools) — reused, not re-run (STANDARDS_RERUN=1 re-runs them)"
+        green "PASS e2e + perf: $SHIP_REUSED"
+        printf '%s\n' "$key" | sed 's/^/  key  /'
+        return 0
+      fi
     fi
   fi
+  [ -z "$key" ] || [ -z "${SHIP_CHECKS_ONLY:-}" ] || ship_verdict_running "$key" \
+    || info "warn could not mark this --checks-only run in the verdict store; a bin/ship meanwhile runs its own"
 
   par_reset
   par_job e2e e2e _ship_e2e
@@ -167,11 +220,12 @@ ship_checks() {
     [ -z "$key" ] || ship_verdict_void "$key"
     return 1
   fi
-  [ -n "$key" ] || return 0
+  [ -n "$key" ] && [ -n "$rec" ] || return 0
   # Recorded only when the input is still the one the run started on (nothing edited meanwhile).
-  if [ "$(ship_verdict_key)" = "$key" ] && ship_verdict_save "$key"; then
+  if [ "$(ship_verdict_key)" = "$key" ] && ship_verdict_save "$key" "${SHIP_CHECKS_ONLY:+checks-only}"; then
     info "recorded: e2e and perf passed on this input (a re-run on the same input reuses it)"
   else
+    [ -z "${SHIP_CHECKS_ONLY:-}" ] || ship_verdict_unfinished "$key"
     info "warn verdict not recorded (the input changed during the run, or it could not be written); a re-run runs e2e and perf again"
   fi
   return 0

@@ -398,6 +398,66 @@ bs
 expect pass "ship: re-run on the same input → reused, and the approval comment says so" \
   all_of code_is 0 , nothing_called , grep -q 'e2e and perf passed (e2e and perf passed .* reused, not re-run' "$T/gh.log"
 
+# --- bin/ship's preflight: every cheap check first, all misses at once, before e2e and perf ----
+# T_REUSE= (verdict reuse off) and a new input in each case: e2e and perf would run if reached.
+echo "ship preflight"
+bsa() { # bsa [VAR=value ...] bash bin/ship <args>: like bs, any arguments
+  : > "$T/gh.log"
+  sp GH_LABELS="$T/nolabels" GH_PAGES="$T/nopages" GH_LOG="$T/gh.log" GH_BRANCH=feat/7-x GH_HEAD="$(head_of)" \
+    PATH="$T/fakebin:$PATH" "$@"
+}
+gh_wrote() { grep -qE '^pr (merge|comment|edit)' "$T/gh.log"; }
+rv() { (cd "$P" && dec=docs/work/7-x/decisions.md && review "$@" && git commit -qam "pre-merge gate") || echo "FATAL review"; }
+bump notes.txt; rv "$ok" "FAIL — misses the empty case" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
+bs T_REUSE=
+expect pass "preflight: an approval miss alone → BLOCKED before e2e and perf: neither ran, nothing written" \
+  all_of code_is 1 , not_called "e2e.sh " "perf.sh prep" "perf.sh measure" , said "ship BLOCKED before e2e and perf: missed: approval" , eval '! gh_wrote'
+bs T_REUSE= T_UI_GLOBS="notes.txt" GH_HEAD=0123456789abcdef0123456789abcdef01234567
+expect pass "preflight: three misses (approval, PR head, screenshot) → all listed in one run, e2e not run" \
+  all_of code_is 1 , nothing_called , said "local HEAD differs from the PR head" "miss ui-evidence: UI files changed (notes.txt)" \
+    "ship BLOCKED before e2e and perf: missed: approval branch ui-evidence"
+expect pass "preflight: ... the screenshot miss points at EVIDENCE_CMD" said "EVIDENCE_CMD is empty in .standards/config.sh"
+bsa T_REUSE= bash bin/ship --preflight 12
+expect pass "bin/ship --preflight with a miss → exit 1, lists it, runs nothing, writes nothing" \
+  all_of code_is 1 , nothing_called , said "ship BLOCKED (preflight): missed: approval" , eval '! gh_wrote'
+rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
+bsa T_REUSE= T_UI_GLOBS="notes.txt" T_EVIDENCE_CMD="scripts/shots.sh" bash bin/ship --preflight 12
+expect pass "bin/ship --preflight: screenshot missing → names the EVIDENCE_CMD to run" \
+  all_of code_is 1 , said "capture the set with: scripts/shots.sh"
+bsa T_REUSE= bash bin/ship --preflight 12
+expect pass "bin/ship --preflight, every cheap check green → PASS, runs nothing, writes nothing" \
+  all_of code_is 0 , said "PASS preflight" , nothing_called , eval '! gh_wrote'
+
+# --- bin/ship --checks-only: e2e + perf alone, recorded; bin/ship reuses it (even reuse off) ----
+echo "ship checks-only"
+bsa T_REUSE= bash bin/ship --checks-only
+expect pass "checks-only: runs e2e and perf, records the pass, writes nothing to GitHub" \
+  all_of code_is 0 , called "e2e.sh " "perf.sh measure" , said "PASS checks-only" "recorded: e2e and perf passed" , eval '! gh_wrote'
+bs T_REUSE=
+expect pass "checks-only: then bin/ship (VERDICT_REUSE off) on the same input → reused, merged, comment says by whom" \
+  all_of code_is 0 , nothing_called , grep -q 'on commit .* by bin/ship --checks-only with the same input' "$T/gh.log"
+bump notes.txt; rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
+bs T_REUSE=; bs T_REUSE=
+expect pass "checks-only: ... a bin/ship pass with VERDICT_REUSE off is still not recorded or reused" called "e2e.sh " "perf.sh measure"
+bsa T_REUSE= bash bin/ship --checks-only; bump notes.txt; rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
+bs T_REUSE=
+expect pass "checks-only: a fix after it (new input) → bin/ship runs e2e and perf again" called "e2e.sh " "perf.sh measure"
+bsa T_REUSE= FAKE_FAIL=e2e.sh bash bin/ship --checks-only
+expect pass "checks-only: e2e fails → exit 1, says so" all_of code_is 1 , said "FAIL checks-only"
+bs T_REUSE=
+expect pass "checks-only: ... then bin/ship runs everything" all_of code_is 0 , called "e2e.sh " "perf.sh measure"
+# Started in the background as the reviewers start: a bin/ship meanwhile waits for it, then reuses.
+bump notes.txt; rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
+(cd "$P" && exec env -u STANDARDS_GATE_BUSY -u STANDARDS_RERUN -u PAR_LOG_DIR -u STANDARDS_LIB STANDARDS_LOCK_DIR="$SL" \
+  FAKE_LOG="$T/bg.log" FAKE_SLEEP=3 T_REUSE= GH_LOG="$T/gh-bg.log" PATH="$T/fakebin:$PATH" bash bin/ship --checks-only) < /dev/null > "$T/bg.out" 2>&1 &
+bgp=$!
+for _ in $(seq 1 100); do grep -qs '^running ' "$vdir"/ship-* && break; sleep 0.1; done
+bs T_REUSE=
+wait "$bgp"; bgc=$?
+expect pass "checks-only in the background: bin/ship waits for it, says so, then reuses its pass (runs nothing itself)" \
+  all_of test "$bgc" -eq 0 , code_is 0 , said "wait bin/ship --checks-only (pid" "by bin/ship --checks-only" , nothing_called
+expect pass "checks-only in the background: ... which ran e2e and perf once" grep -qx "e2e.sh " "$T/bg.log.calls"
+
 # --- The cases bite: drop one tagged line ("# bite: <name>") from a copy of the lib, run the
 # cases that guard it against the copy, and some must go wrong.
 echo "speed bites"

@@ -9,7 +9,7 @@ Closes #<issue>
 Preview: <url>
 
 ## Screenshots (UI changes)
-Attach them here, never commit them (`gh pr edit <pr> --body-file <file> --attach ./after.png`). Each viewport the product supports (e.g. 360, 768, 1280 px) in each theme, before and after. No UI change: `Screenshots: N/A — <reason>`.
+Capture them with `EVIDENCE_CMD` (`.standards/config.sh`), attach them here, never commit them (`gh pr edit <pr> --body-file <file> --attach ./after.png`). Each viewport the product supports (e.g. 360, 768, 1280 px) in each theme, before and after. No UI change: `Screenshots: N/A — <reason>`.
 
 ## What changed (user-facing)
 -
