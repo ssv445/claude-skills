@@ -1,13 +1,13 @@
 <!-- repo-standards:begin -->
 ## Repo standards (installed — enforced by hooks)
 
-This repo follows `docs/guidelines/repo-standards.md`. **Read it before starting any issue**; it defines the pipeline every change goes through: issue → spec (with Expectations) → spec gate → plan → plan gate → tests red → code → verify → doc sync → pre-merge gate → `bin/ship`. A docs-only branch (no gate file, nothing in `BEHAVIOR_DOCS_GLOBS`) skips spec, plan and TDD: issue → edit → pre-merge gate → `bin/ship`.
+This repo follows `docs/guidelines/repo-standards.md`. **Read it before starting any issue**; it defines the pipeline every change goes through: issue → spec (with Expectations) → spec gate → plan → plan gate → tests red → code → verify → doc sync → pre-merge gate → `bin/ship` (→ deploy and live check, when `DEPLOY_CMD` is set). A docs-only branch (no gate file, nothing in `BEHAVIOR_DOCS_GLOBS`) skips spec, plan and TDD: issue → edit → pre-merge gate → `bin/ship`.
 
 Only the text between the `repo-standards` markers is a gate file; the rest of this file is facts any PR may edit. Rules belong inside the markers: an `@path` import line anywhere in this file counts as a gate change, and reviewers flag rule-like text added outside the block.
 
 Hard rules (the hooks back these up; treat a red hook as a stop, not an obstacle):
 - Every change starts from a GitHub issue; branch `<type>/<issue>-<slug>`.
-- Per-issue files live in `docs/work/<issue>-<slug>/`: `spec.md`, `decisions.md`.
+- Per-issue files live in `docs/work/<issue>-<slug>/`: `spec.md`, `decisions.md`. Screenshots and recordings go on the PR (`gh pr edit --attach`), never into git.
 - Merge only through `bin/ship`. Hooks run on every push; bypassing them (`--no-verify`, changing `core.hooksPath`, disabling the hook manager) is never an option — fix the cause.
 - The gates are how you decide for yourself whether to approve and ship. When every gate passes, run `bin/ship` — it approves and merges without the owner. Owner needed only when `bin/ship` says so: the cases listed under "Approval and shipping" in the rulebook. `APPROVER` in `.standards/config.sh` (read from the base branch) sets who approves gate-file changes and blast-radius specs: `"agent"` (default) or `"owner"` — in agent mode you approve those too, and only `owner-review` flags go to the owner. Never change `APPROVER` on your own branch; it is the owner's setting.
 - In agent mode a gate-file change also needs a line appended to `docs/rule-changes.md` and `## Gate-change review` in `decisions.md`.

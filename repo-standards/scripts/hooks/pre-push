@@ -43,6 +43,17 @@ step run_cmd seeds "$SEED_CHECK_CMD"
 step run_part guards "${GUARDS_PART:-app}" "$GUARDS_CMD"
 step "$ROOT/.standards/checks/file-size.sh"
 step "$ROOT/.standards/checks/roadmap.sh"
+step "$ROOT/.standards/checks/stories.sh"
+# The repo's own checks, after the standard ones, on every class, in name order. They live in
+# .standards/local/pre-push.d/ so an upgrade of the standard files never overwrites them. A
+# file there that is not executable fails: a check that silently never runs proves nothing.
+local_check() {
+  if [ -x "$1" ]; then run_cmd "local ${1##*/}" "$(printf '%q' "$1")"
+  else red "FAIL local ${1##*/}: not executable — chmod +x .standards/local/pre-push.d/${1##*/} (or move it out of pre-push.d)"; return 1; fi
+}
+for c in "$ROOT"/.standards/local/pre-push.d/*; do
+  [ -f "$c" ] && step local_check "$c"
+done
 
 elapsed=$(( $(date +%s) - start ))
 [ $elapsed -le 120 ] || red "WARN pre-push took ${elapsed}s (budget 120s) — move the slowest check to bin/ship"

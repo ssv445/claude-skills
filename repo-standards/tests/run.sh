@@ -59,6 +59,11 @@ sed -e 's|^TEST_FILES_CMD=.*|TEST_FILES_CMD="./run-tests.sh"|' \
     "$SKILL/scripts/config.sh" > .standards/config.sh
 # The shipped default is agent mode; fixtures start in owner mode and switch the base explicitly.
 expect pass "config: template default is APPROVER=agent" grep -qx 'APPROVER="agent"' "$SKILL/scripts/config.sh"
+# The install copies scripts/ to .standards/, so scripts/VERSION becomes .standards/VERSION: it
+# must be the version in SKILL.md's frontmatter, or an upgrade diffs against the wrong release.
+skill_version="$(sed -n '1,/^---$/{s/^version: *//p;}' "$SKILL/SKILL.md" | head -1)"
+expect pass "version: scripts/VERSION = SKILL.md version ($skill_version)" \
+  test -n "$skill_version" -a "$(cat "$SKILL/scripts/VERSION" 2>/dev/null)" = "$skill_version"
 cat > run-tests.sh <<'EOF'
 #!/bin/sh
 rc=0; for f in "$@"; do sh "$f" || { echo "test failed: $f"; rc=1; }; done; exit $rc
@@ -95,6 +100,7 @@ cat > tests/mul.test.sh <<'EOF'
 EOF
 git add tests && git commit -qm "real mul test"
 expect pass "tdd: red on base, green on HEAD" .standards/checks/tdd.sh
+expect pass "tdd: scratch checkout removed (drop_worktree)" test "$(git worktree list | wc -l | tr -d ' ')" = 1
 
 echo "doc-map"
 echo 'charge() { :; }' > src/billing/charge.sh
@@ -666,7 +672,8 @@ echo "$*" >> "$GH_LOG"
 if [ -n "${GH_FAIL:-}" ]; then case "$*" in *"$GH_FAIL"*) exit 1 ;; esac; fi
 case "$*" in
   "pr view --json number"*) echo 12 ;;
-  "pr view 12 --json headRefName"*) printf '{"headRefName":"%s","headRefOid":"%s"}\n' "$GH_BRANCH" "$GH_HEAD" ;;
+  "pr view 12 --json headRefName"*) # the PR body is the file $GH_BODY, when set
+    jq -cn --arg r "$GH_BRANCH" --arg o "$GH_HEAD" --rawfile b "${GH_BODY:-/dev/null}" '{headRefName:$r,headRefOid:$o,body:$b}' ;;
   "repo view"*) echo o/r ;;
   "api "*) # GH_PAGES holds a JSON array of pages. Like real gh: --slurp prints them all as
            # one array; -q applies its filter to each page separately.
@@ -746,6 +753,16 @@ echo 'x31() { :; }' >> src/legacy.sh; git commit -qam "grow it"
 expect fail "file-size: over-limit file on base, grown" .standards/checks/file-size.sh
 expect pass "file-size: names the base length to get back to" grep -q "src/legacy.sh: 31 lines, was 30 on base" "$T/last.log.prev"
 git checkout -q feat/7-mul; git branch -q -D feat/8-size; git branch -q -f main "$main0"
+# Evidence images belong on the PR: a new one under docs/work/ over EVIDENCE_MAX_KB (300) fails.
+head -c 409600 /dev/zero > docs/work/7-mul/after.PNG; git add docs; git commit -qm "big screenshot"
+expect fail "file-size: new 400 KB image under docs/work/" .standards/checks/file-size.sh
+expect pass "file-size: says attach it to the PR instead" grep -q "docs/work/7-mul/after.PNG: 400 KB.*attach it to the PR instead" "$T/last.log.prev"
+git reset -q --hard HEAD~1
+head -c 10240 /dev/zero > docs/work/7-mul/diagram.png; mkdir -p assets; head -c 409600 /dev/zero > assets/logo.png
+git add docs assets; git commit -qm "small diagram, big product asset"
+expect pass "file-size: 10 KB image under docs/work/, 400 KB asset elsewhere" .standards/checks/file-size.sh
+expect pass "file-size: counts the images it checked" grep -q "1 new image(s) under docs/work/ checked" "$T/last.log.prev"
+git reset -q --hard HEAD~1
 
 echo "roadmap"
 expect pass "roadmap: absent (product layer not used)" .standards/checks/roadmap.sh
@@ -760,6 +777,30 @@ done
 cp "$SKILL"/templates/product/goals.md "$SKILL"/templates/product/assumptions.md "$SKILL"/templates/product/roadmap.md docs/product/
 expect pass "roadmap: installed templates are valid" .standards/checks/roadmap.sh
 srm "${R:?}/docs/product"
+
+echo "stories"
+# Optional: only with docs/user-stories/. Every "Covered by" file exists and holds each quoted
+# test name; a line naming no file must say "manual only".
+expect pass "stories: no docs/user-stories/ → N/A" .standards/checks/stories.sh
+expect pass "stories: says N/A" grep -q "N/A: no docs/user-stories/" "$T/last.log.prev"
+mkdir -p docs/user-stories tests/stories
+cp "$SKILL/tests/stories-fixtures/area.test.sh" tests/stories/
+for f in "$SKILL"/tests/stories-fixtures/*.md; do
+  n="$(basename "$f" .md)"
+  cp "$f" docs/user-stories/01-adding.md
+  case "$n" in valid) want=pass ;; *) want=fail ;; esac
+  expect "$want" "stories: $n" .standards/checks/stories.sh
+  case "$n" in
+    valid) expect pass "stories: valid → prints what it checked" grep -q "4 Covered by line(s), 3 file reference(s), 5 test name(s)" "$T/last.log.prev" ;;
+    missing-name) expect pass "stories: names the story, file and missing test" \
+      grep -q "01-adding.md:6 (US-AD-09): tests/stories/area.test.sh has no \"subtracts two numbers\"" "$T/last.log.prev" ;;
+    missing-file) expect pass "stories: names the missing file" grep -q "(US-AD-05): tests/stories/no-such.test.sh does not exist" "$T/last.log.prev" ;;
+    no-test) expect pass "stories: a line with no file and no 'manual only'" grep -q "(US-AD-07): Covered by names no test file" "$T/last.log.prev" ;;
+  esac
+done
+cp "$SKILL/templates/user-stories/README.md" docs/user-stories/README.md; srm "${R:?}/docs/user-stories/01-adding.md"
+expect pass "stories: the installed README template passes" .standards/checks/stories.sh
+srm "${R:?}/docs/user-stories" "${R:?}/tests/stories"
 
 echo "pre-push"
 head="$(git rev-parse HEAD)"; z=0000000000000000000000000000000000000000
@@ -870,6 +911,64 @@ git reset -q --hard HEAD~1
 ship_run STANDARDS_SHIP_FROM_BASE=bin/ship
 ship_run STANDARDS_SHIP_FROM_BASE="$PWD/bin/ship"
 expect pass "ship: spoofed STANDARDS_SHIP_FROM_BASE never deletes bin/ship" test -f bin/ship
+
+# UI evidence: with UI_GLOBS set (on the base), a PR touching a UI file needs an image in its
+# body, or "Screenshots: N/A — <reason>". Screenshots live on the PR, never in git.
+feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+git checkout -q main; sed 's|^UI_GLOBS=.*|UI_GLOBS="src/*"|' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "main: UI_GLOBS" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+body() { printf '%s\n' "Closes #1" "" "$@" > "$T/body"; }   # body <line>...: the PR body for ship_run
+body "## Evidence" "| AC1 | e2e | ok | ok | test | PASS |"
+ship_run GH_BODY="$T/body"
+expect pass "ship: UI file changed, no image in the PR body → nothing written" test "$(writes)" = ""
+expect pass "ship: ... names the UI file and the --attach fix" \
+  bash -c "grep -q 'UI files changed (src/a.txt)' '$T/ship.out' && grep -q 'gh pr edit 12 .*--attach' '$T/ship.out'"
+body "![after, 375 px](https://github.com/user-attachments/assets/0f0f)"
+ship_run GH_BODY="$T/body"
+expect pass "ship: markdown image in the PR body → merge" test "$(writes)" = "merge;comment;"
+body '<img width="375" alt="after" src="https://github.com/user-attachments/assets/0f0f">'
+ship_run GH_BODY="$T/body"
+expect pass "ship: <img> in the PR body → merge" test "$(writes)" = "merge;comment;"
+body "Screenshots: N/A — <reason>"
+ship_run GH_BODY="$T/body"
+expect pass "ship: 'Screenshots: N/A' with a placeholder → nothing written" test "$(writes)" = ""
+body "Screenshots: N/A — a renamed constant; no pixel moves"
+ship_run GH_BODY="$T/body"
+expect pass "ship: 'Screenshots: N/A — reason' → merge" test "$(writes)" = "merge;comment;"
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
+ship_run
+expect pass "ship: UI_GLOBS empty → no image needed" test "$(writes)" = "merge;comment;"
+
+# Deploy: with DEPLOY_CMD set (on the base), bin/ship deploys after the merge from a fresh
+# detached checkout of origin/main in a temp dir, runs LIVE_CHECK_CMD there, then removes it.
+probe="$SKILL/tests/ship-fixtures/deploy-probe.sh"
+git checkout -q main
+sed -e "s|^DEPLOY_CMD=.*|DEPLOY_CMD=\"bash '$probe' deploy\"|" -e "s|^LIVE_CHECK_CMD=.*|LIVE_CHECK_CMD=\"bash '$probe' live\"|" .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "main: deploy" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+dep() { : > "$T/probe.log"; ship_run PROBE_LOG="$T/probe.log" "$@"; }   # dep [VAR=value ...]
+probe_dir() { awk -v s="$1" '$1 == s { print $2 }' "$T/probe.log"; }   # probe_dir <step>: where it ran
+dep
+expect pass "ship: DEPLOY_CMD set → merge, comment, then deploy and live check" \
+  bash -c "test '$(writes)' = 'merge;comment;' && test \"\$(awk '{ print \$1 }' '$T/probe.log' | tr '\n' ' ')\" = 'deploy live '"
+expect pass "ship: deploy ran at origin/main, outside the working copy" \
+  bash -c "test \"\$(awk '{ print \$3 }' '$T/probe.log' | sort -u)\" = '$(git rev-parse origin/main)' && test '$(probe_dir deploy)' != '$(pwd -P)'"
+expect pass "ship: deploy checkout removed (dirty with build output)" \
+  bash -c "test -n '$(probe_dir deploy)' && test ! -e '$(probe_dir deploy)' && test \"\$(git worktree list | wc -l | tr -d ' ')\" = 1"
+expect fail "ship: live check fails after the merge → run fails" dep PROBE_LIVE_RC=1
+expect pass "ship: ... says it is merged and deployed, and how to re-check" \
+  bash -c "grep -q 'FAIL live-check: #12 is merged and deployed' '$T/ship.out' && grep -q 'bin/ship --deploy' '$T/ship.out'"
+expect pass "ship: ... checkout removed after a failed live check" bash -c "test -n '$(probe_dir live)' && test ! -e '$(probe_dir live)'"
+expect fail "ship: deploy fails → run fails" dep PROBE_DEPLOY_RC=1
+expect pass "ship: ... no live check after a failed deploy, says production runs the old build" \
+  bash -c "test \"\$(awk '{ print \$1 }' '$T/probe.log')\" = deploy && grep -q 'production still runs the previous build' '$T/ship.out'"
+: > "$T/probe.log"; : > "$T/gh.log"
+expect pass "ship --deploy: deploys origin/main only, no merge" \
+  env PROBE_LOG="$T/probe.log" GH_LOG="$T/gh.log" PATH="$T/fakebin:$PATH" bash bin/ship --deploy
+expect pass "ship --deploy: ... ran deploy and live, wrote nothing to GitHub" \
+  bash -c "test \"\$(awk '{ print \$1 }' '$T/probe.log' | tr '\n' ' ')\" = 'deploy live ' && test -z \"\$(grep -E '^pr (merge|comment)' '$T/gh.log')\""
+git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2>/dev/null
+git checkout -q feat/1-x; git reset -q --hard "$feat"
 
 # APPROVER modes: a blast-radius spec (no spec-approved label) plus a gate-file change.
 echo "owner-approval: required" > docs/work/1-x/spec.md; echo "agents: keep it short" > CLAUDE.md
@@ -1144,6 +1243,26 @@ branch feat/9-gd2; echo more >> docs/notes.md; git commit -qam docs
 pp 1
 expect pass "guards: GUARDS_PART=always → runs on a docs branch" grep -q "FAIL guards" "$T/pp.out"
 git checkout -q main; git reset -q --hard HEAD~2
+
+echo "local checks"
+# .standards/local/pre-push.d/*: the repo's own checks, run after the standard ones on every
+# class; upgrades never touch them. The probe exits $LOCAL_RC.
+git checkout -q main; mkdir -p .standards/local/pre-push.d
+cp "$SKILL/tests/local-fixtures/probe.sh" .standards/local/pre-push.d/10-probe; chmod +x .standards/local/pre-push.d/10-probe
+git add .standards; git commit -qm "main: a local check"
+branch feat/9-lc; echo more >> docs/notes.md; git commit -qam docs
+LOCAL_RC=1 pp 0
+expect pass "local: failing local check → FAIL local 10-probe, push blocked" \
+  bash -c "grep -q 'FAIL local 10-probe' '$T/pp.out' && grep -q 'pre-push BLOCKED' '$T/pp.out'"
+LOCAL_RC=0 pp 0
+expect pass "local: passing local check → PASS, its output shown" \
+  bash -c "grep -q 'PASS local 10-probe' '$T/pp.out' && grep -q 'local-probe: scanned src/' '$T/pp.out' && ! grep -q 'FAIL local' '$T/pp.out'"
+cp "$SKILL/tests/local-fixtures/probe.sh" .standards/local/pre-push.d/20-noexec; chmod -x .standards/local/pre-push.d/20-noexec
+git add .standards; git commit -qm "not executable"
+LOCAL_RC=0 pp 0
+expect pass "local: a file that is not executable → blocked, says chmod +x" \
+  bash -c "grep -q 'chmod +x .standards/local/pre-push.d/20-noexec' '$T/pp.out' && grep -q 'pre-push BLOCKED' '$T/pp.out'"
+git checkout -q main; git reset -q --hard HEAD~1
 
 # --- safe_rm: the only way .standards/ scripts delete ---
 echo "safe-rm"

@@ -364,3 +364,11 @@ safe_rm() {
   done
   return $bad
 }
+
+# drop_worktree <dir>: removes a scratch checkout made with `git worktree add`. The files go
+# through safe_rm (a test or deploy run leaves untracked files, which plain `git worktree
+# remove` refuses and --force would delete unchecked); then git forgets the missing checkout.
+drop_worktree() {
+  safe_rm "$1" || return 1
+  git worktree remove "$1" >/dev/null 2>&1 || git worktree prune
+}

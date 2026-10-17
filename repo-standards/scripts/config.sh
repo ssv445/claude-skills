@@ -45,6 +45,11 @@ TEST_GLOBS="*.test.* *.spec.* *_test.* */__tests__/* tests/* test/* e2e/*"
 DEPS_LINKS="node_modules"        # paths symlinked into the TDD scratch checkout so tests can run there (nested ok: site/node_modules)
 FILE_SIZE_GLOBS="*.ts *.tsx *.js *.jsx *.mjs *.py *.go *.rb *.php"
 MAX_FILE_LINES=400
+# UI evidence lives on the PR, not in git. UI_GLOBS (empty = off): files whose change needs a
+# screenshot in the PR body, e.g. "web/* src/components/* *.css" — bin/ship refuses the PR
+# without one. EVIDENCE_MAX_KB: a new image under docs/work/ larger than this fails pre-push.
+UI_GLOBS=""
+EVIDENCE_MAX_KB=300
 
 # --- Change class (optional): which checks a branch needs, from every path it touches ---
 # Off while SITE_GLOBS and DOCS_GLOBS are both empty: every check runs on every branch. Set them
@@ -75,6 +80,11 @@ PERF_CMD=""              # must exit non-zero when a budget from a spec's Expect
 MERGE_MODE="squash"      # how bin/ship merges: squash | merge (keeps step-split commits) | rebase
 COVERAGE_RATCHET_SLACK=2 # bin/ship fails when total coverage is more than this many points above
                          # .standards/coverage-baseline, and prints the one-line raise
+# Deploy (optional; empty = bin/ship stops at the merge). After the merge bin/ship runs both from
+# a fresh detached checkout of origin/BASE_BRANCH in a temp dir, never from this working copy.
+DEPLOY_CMD=""            # e.g. "pnpm install --frozen-lockfile && pnpm run deploy"
+LIVE_CHECK_CMD=""        # must exit non-zero when production does not serve this build (e.g. the live
+                         # asset name differs from dist/index.html). Read-only, or a capped few requests
 
 # --- intake ---
 AGENT_ISSUES_PER_NIGHT=1

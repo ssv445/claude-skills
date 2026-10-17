@@ -20,3 +20,10 @@ L16=1; rm	-f /nonexistent-lint-probe/q
 L17=1; eval "r""m -f /nonexistent-lint-probe/r"
 L18=1; x=$(rm -f /nonexistent-lint-probe/s)
 L19=1; git rm -q x; rm -f /nonexistent-lint-probe/t
+L20=1; git -C /nonexistent-lint-probe clean -fdx
+L21=1; git -c core.quotePath=false clean -fd /nonexistent-lint-probe/u
+L22=1; rsync -a --delete /nonexistent-lint-probe/v/ /nonexistent-lint-probe/w/
+L23=1; rsync -a --delete-after --exclude x /nonexistent-lint-probe/v/ /nonexistent-lint-probe/w/
+L24=1; rsync -a --remove-source-files /nonexistent-lint-probe/v/ /nonexistent-lint-probe/w/
+L25=1; git worktree remove --force /nonexistent-lint-probe/x
+L26=1; git -C /nonexistent-lint-probe worktree remove -f /nonexistent-lint-probe/y

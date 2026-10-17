@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # bin/ship [pr]: the only merge path. Runs the pre-merge gates, then merges (MERGE_MODE in
-# config.sh: squash by default, merge or rebase).
+# config.sh: squash by default, merge or rebase), then deploys when DEPLOY_CMD is set.
+# bin/ship --deploy: the deploy stage alone (re-run after a failed deploy or live check).
 # Approval: the owner's `approved` label, or — when every gate passes and
 # .standards/checks/agent-approval.sh agrees — the agent's own.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
@@ -38,11 +39,38 @@ check=""; owner_log="$(mktemp)"; changed_gates=""; entries=""; record_fail=""
 cleanup() {
   [ -z "$check" ] || safe_rm "$check"
   [ -z "$owner_log" ] || safe_rm "$owner_log"
+  [ -z "$deploy_wt" ] || drop_worktree "$deploy_wt"
   case "$0" in "$ROOT"/*|bin/*|./*) return ;; esac
   case "$(basename "$0")" in standards-base.*) ;; *) return ;; esac
   [ "$0" = "$STANDARDS_SHIP_FROM_BASE" ] && safe_rm "$0"
 }
 trap cleanup EXIT
+
+# deploy_base: DEPLOY_CMD, then LIVE_CHECK_CMD, from a fresh detached checkout of
+# origin/BASE_BRANCH in a temp dir — never this working copy, which may hold unmerged or
+# uncommitted files. The checkout is removed whatever happens. Returns 0 deployed and confirmed
+# (or no LIVE_CHECK_CMD), 1 the deploy failed, 2 the live check failed.
+deploy_wt=""
+deploy_base() {
+  local rc=0
+  git fetch -q origin "$BASE_BRANCH" || { red "FAIL deploy: could not fetch origin/$BASE_BRANCH"; return 1; }
+  deploy_wt="$(mktemp -d "${TMPDIR:-/tmp}/standards-deploy.XXXXXX")" || return 1
+  if ! git worktree add --detach -q "$deploy_wt" "origin/$BASE_BRANCH"; then
+    red "FAIL deploy: could not check out origin/$BASE_BRANCH"; drop_worktree "$deploy_wt"; deploy_wt=""; return 1
+  fi
+  info "deploy: origin/$BASE_BRANCH at $(git -C "$deploy_wt" rev-parse --short HEAD), from a fresh checkout"
+  (cd "$deploy_wt" && run_cmd deploy "$DEPLOY_CMD") || rc=1
+  if [ $rc -eq 0 ] && [ -n "${LIVE_CHECK_CMD:-}" ]; then (cd "$deploy_wt" && run_cmd live-check "$LIVE_CHECK_CMD") || rc=2
+  elif [ $rc -eq 0 ]; then info "SKIP live-check (LIVE_CHECK_CMD empty: production not confirmed)"; fi
+  drop_worktree "$deploy_wt"; deploy_wt=""
+  return $rc
+}
+# bin/ship --deploy: only the deploy stage, for a re-run after a failed deploy or live check.
+if [ "${1:-}" = --deploy ]; then
+  [ -n "${DEPLOY_CMD:-}" ] || { red "FAIL ship --deploy: DEPLOY_CMD is empty in .standards/config.sh"; exit 1; }
+  deploy_base || { red "FAIL ship --deploy: fix the cause above, then re-run bin/ship --deploy"; exit 1; }
+  green "deployed origin/$BASE_BRANCH"; exit 0
+fi
 
 # Checked before any gate runs, so a typo never fails only at the last step.
 case "${MERGE_MODE:=squash}" in
@@ -51,7 +79,7 @@ case "${MERGE_MODE:=squash}" in
 esac
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
 [ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
-json="$(gh pr view "$pr" --json headRefName,headRefOid,labels,closingIssuesReferences)" || exit 1
+json="$(gh pr view "$pr" --json headRefName,headRefOid,labels,closingIssuesReferences,body)" || exit 1
 head_ref="$(printf '%s' "$json" | jq -r .headRefName)"
 head_oid="$(printf '%s' "$json" | jq -r .headRefOid)"
 
@@ -101,6 +129,21 @@ run_part site-e2e site-change "$SITE_E2E_CMD" || fail=1
 run_part perf app "$PERF_CMD" || fail=1
 # The baseline must follow coverage up: pre-push only stops it falling.
 "$ROOT/.standards/checks/coverage-baseline.sh" --ratchet || fail=1
+
+# UI evidence lives on the PR, not in git: a PR touching UI_GLOBS needs an image in its body
+# (markdown ![…], <img>, or a GitHub user-attachments link), or "Screenshots: N/A — <reason>"
+# for a change no screen shows (the pre-merge reviewers judge the reason).
+if [ -n "${UI_GLOBS:-}" ]; then
+  ui="$(touched_files | while IFS= read -r f; do matches_any "$f" "$UI_GLOBS" && printf '%s ' "$f"; done)"
+  body="$(printf '%s' "$json" | jq -r '.body // ""')"
+  if [ -z "$ui" ]; then info "ok   ui-evidence: no file in UI_GLOBS changed"
+  elif printf '%s\n' "$body" | grep -qiE '!\[|<img|https://github\.com/user-attachments/'; then info "ok   ui-evidence: screenshot in the PR body"
+  elif printf '%s\n' "$body" | grep -qE '^Screenshots: N/A — [^< ]'; then info "ok   ui-evidence: $(printf '%s\n' "$body" | grep -E '^Screenshots: N/A — ' | head -1)"
+  else
+    red "  miss ui-evidence: UI files changed (${ui% }) but the PR body has no screenshot — attach one: gh pr edit $pr --body-file <body with ![after](./after.png)> --attach ./after.png (or a line 'Screenshots: N/A — <reason>')"
+    fail=1
+  fi
+fi
 
 [ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
 
@@ -189,5 +232,15 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 - Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed
 
 Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
+fi
+# Deploy and confirm (optional): the merge already happened, so a failure here cannot undo it —
+# it fails the run loudly and says what to do next.
+if [ -n "${DEPLOY_CMD:-}" ]; then
+  deploy_base
+  case $? in
+    0) green "deployed origin/$BASE_BRANCH" ;;
+    1) red "FAIL deploy: #$pr is merged, but the deploy failed — production still runs the previous build. Fix the cause (a new issue + PR if it is in the repo), then: bin/ship --deploy"; record_fail=1 ;;
+    *) red "FAIL live-check: #$pr is merged and deployed, but production does not match the build. Roll back or fix forward now (a new issue + PR), then confirm: bin/ship --deploy"; record_fail=1 ;;
+  esac
 fi
 [ -z "$record_fail" ] || exit 1
