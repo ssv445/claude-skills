@@ -45,3 +45,4 @@ What gets installed (sources in this skill folder):
 - Lean: pre-push must stay ≤ 2 min on this repo. Measure it in step 8; if over, move the slowest check to `bin/ship` and say so.
 - The rulebook template is the single source of truth. Repo-specific additions go in the repo's own guidelines, not by editing the installed rulebook — so a later re-install can diff cleanly.
 - Self-test of the scripts lives in `tests/run.sh` in this skill folder; run it after changing any script.
+- The skill's own scripts delete only through `safe_rm` in `scripts/lib/common.sh`, never a bare `rm` with a variable or relative path; `tests/run.sh` lints `scripts/` for it.

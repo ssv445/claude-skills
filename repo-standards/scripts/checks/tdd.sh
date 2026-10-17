@@ -78,7 +78,8 @@ if [ -n "$app_src" ] && [ -z "$app_tests" ]; then red "FAIL tdd: app source chan
 if [ -n "$site_src" ] && [ -z "$site_tests" ]; then red "FAIL tdd: site source changed with no site test change:$site_src"; exit 1; fi
 
 scratch=""
-cleanup() { [ -n "$scratch" ] && { git worktree remove --force "$scratch" >/dev/null 2>&1; rm -rf "$scratch"; scratch=""; }; }
+# The scratch checkout is a mktemp -d dir, which safe_rm allows (a temp dir, not the temp root).
+cleanup() { [ -n "$scratch" ] && { git worktree remove --force "$scratch" >/dev/null 2>&1; safe_rm "$scratch"; scratch=""; }; }
 trap cleanup EXIT
 
 # red_green <label> <test command> <test files>

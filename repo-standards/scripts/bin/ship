@@ -14,7 +14,7 @@ base_copy() {
   git cat-file -e "origin/$BASE_BRANCH:$1" 2>/dev/null || return 0
   tmp="$(mktemp "${TMPDIR:-/tmp}/standards-base.XXXXXX")"
   git show "origin/$BASE_BRANCH:$1" > "$tmp"
-  if cmp -s "$tmp" "$1"; then rm -f "$tmp"; return 0; fi
+  if cmp -s "$tmp" "$1"; then safe_rm "$tmp"; return 0; fi
   chmod +x "$tmp"
   printf '%s\n' "$tmp"
 }
@@ -30,12 +30,16 @@ if [ -z "$STANDARDS_SHIP_FROM_BASE" ]; then
 fi
 check=""; owner_log="$(mktemp)"; changed_gates=""; entries=""; record_fail=""
 # The re-exec'd run is itself a temp copy ($0); remove it with the others — but only when
-# $0 is exactly the temp file base_copy made, never a script inside the repo.
+# $0 is exactly the temp file base_copy made, never a script inside the repo. safe_rm comes
+# from the working copy's common.sh, which the base copy sources too; it refuses an empty
+# name, so each variable is tested first ($check stays empty when agent-approval.sh is the
+# working copy's).
 cleanup() {
-  rm -f "$check" "$owner_log"
+  [ -z "$check" ] || safe_rm "$check"
+  [ -z "$owner_log" ] || safe_rm "$owner_log"
   case "$0" in "$ROOT"/*|bin/*|./*) return ;; esac
   case "$(basename "$0")" in standards-base.*) ;; *) return ;; esac
-  [ "$0" = "$STANDARDS_SHIP_FROM_BASE" ] && rm -f "$0"
+  [ "$0" = "$STANDARDS_SHIP_FROM_BASE" ] && safe_rm "$0"
 }
 trap cleanup EXIT
 

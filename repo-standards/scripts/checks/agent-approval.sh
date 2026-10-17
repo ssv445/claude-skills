@@ -23,7 +23,7 @@ is_pass() { case "$1" in PASS|PASS\ *|PASS—*) return 0 ;; *) return 1 ;; esac;
 # The list is NUL-separated in a file: -z and quotePath=false keep git from C-quoting
 # non-ASCII names, which would match no glob and resolve to no blob.
 base="$(base_commit)"
-changed="$(mktemp)"; trap 'rm -f "$changed" "$changed".*' EXIT; diff_ok=0
+changed="$(mktemp)"; trap '[ -z "$changed" ] || safe_rm "$changed" "$changed".*' EXIT; diff_ok=0
 if [ -z "$base" ]; then miss "no base commit (origin/$BASE_BRANCH or $BASE_BRANCH) — the owner decides"
 elif git -c core.quotePath=false diff -z --name-only --no-renames "$base" HEAD > "$changed"; then diff_ok=1
 else miss "git diff $base HEAD failed"

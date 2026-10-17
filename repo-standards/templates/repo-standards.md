@@ -136,6 +136,7 @@ Code is read by search. Optimise for that:
 - **Local.** Tests beside the code; small module surfaces; files stay under `MAX_FILE_LINES`.
 - **Typed and validated at every boundary** — API, DB, external input — so a wrong shape fails loudly where it enters.
 - **Rationale in comments**: the why, and the what when the code is opaque.
+- **Delete through `safe_rm`.** Scripts delete only with `safe_rm` from `.standards/lib/common.sh` (it refuses `/`, `$HOME` and anything outside the repo or the temp dirs), never a bare `rm` with a variable or relative path.
 
 ## Seeds
 
