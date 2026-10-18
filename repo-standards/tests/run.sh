@@ -220,11 +220,45 @@ git checkout -q docs; git branch -q -D abcdef0
 review "$ok" "$ok" "" "0123456789abcdef0123456789abcdef01234567"
 aa fail "Reviewed: sha not present locally"
 git checkout -q docs
+# Diff-only re-review after a fix round: "Reviewed: <new sha> (delta from <old sha>)". The new sha
+# must cover HEAD like a full review's. The old one must be an ancestor of the new one, not the
+# same commit, and recorded before in decisions.md's history as this gate's Reviewed sha under
+# Verdict: PASS — so the delta plus that full review cover the whole branch.
+pm_verdict() { awk -v v="$1" '/^## / { s = $0 } s == "## Pre-merge gate" && /^Verdict:/ { $0 = "Verdict: " v } { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"; }
+recorded() { review "$ok" "$ok" "" "$1"; pm_verdict "${2:-PASS}"; git commit -qam "pre-merge gate at $1 (${2:-PASS})"; }  # recorded <sha> [verdict]
+h="$(git rev-parse HEAD)"; h1="$(git rev-parse HEAD~1)"; h2="$(git rev-parse HEAD~2)"; h3="$(git rev-parse HEAD~3)"
+recorded "$h1"; recorded "$h2" FAIL; pm_verdict PASS
+review "$ok" "$ok" "" "$h (delta from $h1)"
+aa pass "Reviewed: <sha> (delta from <old sha>): old sha an ancestor, recorded PASS before; new sha covers HEAD"
+expect pass "agent-approval: ... says it reviewed the delta" grep -q "review covers HEAD (reviewed $h, delta from $h1)" "$T/last.log.prev"
+review "$ok" "$ok" "" "$(git rev-parse --short "$h") (delta from $(git rev-parse --short "$h1"))"
+aa pass "Reviewed: short shas in the delta form"
+review "$ok" "$ok" "" "$h1 (delta from $h2)"
+aa fail "delta form whose new sha predates a code commit"
+review "$ok" "$ok" "" "$h (delta from $h)"
+aa fail "delta from the reviewed sha itself (an empty delta)"
+review "$ok" "$ok" "" "$h (delta from $h3)"
+aa fail "delta from a parent never recorded as reviewed"
+review "$ok" "$ok" "" "$h (delta from $h2)"
+aa fail "delta from a sha recorded only under a non-PASS verdict"
+orphan="$(git commit-tree -m orphan "$(git rev-parse "$h^{tree}")")"; recorded "$orphan"
+review "$ok" "$ok" "" "$h (delta from $orphan)"
+aa fail "delta from an orphan commit (recorded PASS, but no ancestor)"
+review "$ok" "$ok" "" "$h (delta from 0123456789abcdef0123456789abcdef01234567)"
+aa fail "delta from a sha not present locally"
+review "$ok" "$ok" "" "$h (delta from HEAD~1)"
+aa fail "delta from a symbolic name"
+review "$ok" "$ok" "" "$h (looked again)"
+aa fail "Reviewed: sha with some other suffix"
+git checkout -q docs; git reset -q --hard "$h"
 
 # Rebasing onto a base that changed other files keeps the review; the same file does not.
 feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+recorded "$(git rev-parse HEAD~1)"; review "$ok" "$ok" "" "$feat (delta from $(git rev-parse "$feat~1"))"; git commit -qam "delta review"
 git checkout -q main; echo "unrelated" > notes.txt; git add notes.txt; git commit -qm "main: notes"
 git checkout -q feat/7-mul; git rebase -q main
+aa pass "rebased onto unrelated base change, delta review kept (no re-review; history rewritten)"
+git reset -q --hard "$feat"; git rebase -q main
 review "$ok" "$ok" "" "$feat"
 aa pass "rebased onto unrelated base change, review kept"
 git checkout -q docs
@@ -960,6 +994,13 @@ ship_run GH_BODY="$T/body"
 expect pass "ship: UI file changed, no image in the PR body → nothing written" test "$(writes)" = ""
 expect pass "ship: ... names the UI file and the --attach fix" \
   bash -c "grep -q 'UI files changed (src/a.txt)' '$T/ship.out' && grep -q 'gh pr edit 12 .*--attach' '$T/ship.out'"
+expect pass "ship: ... EVIDENCE_CMD empty → says to set it, the rulebook's stage 8" \
+  grep -q 'EVIDENCE_CMD is empty in .standards/config.sh: set it to the repo.s one capture script' "$T/ship.out"
+git checkout -q main; sed 's|^EVIDENCE_CMD=.*|EVIDENCE_CMD="scripts/evidence-capture.sh"|' .standards/config.sh > "$T/c" && cp "$T/c" .standards/config.sh
+git commit -qam "main: EVIDENCE_CMD" && git push -q origin main; git checkout -q feat/1-x; git rebase -q main
+ship_run GH_BODY="$T/body"
+expect pass "ship: ... EVIDENCE_CMD set → names the command to run" \
+  bash -c "test -z '$(writes)' && grep -q 'capture the set with: scripts/evidence-capture.sh' '$T/ship.out'"
 body "![after, 375 px](https://github.com/user-attachments/assets/0f0f)"
 ship_run GH_BODY="$T/body"
 expect pass "ship: markdown image in the PR body → merge" test "$(writes)" = "merge;comment;"
@@ -979,6 +1020,27 @@ git checkout -q main; git reset -q --hard "$main0"; git push -q -f origin main 2
 git checkout -q feat/1-x; git reset -q --hard "$feat"
 ship_run
 expect pass "ship: UI_GLOBS empty → no image needed" test "$(writes)" = "merge;comment;"
+
+# The evidence capture template (templates/evidence-capture.example.sh): a syntax check and its dry
+# run only — a real run needs a browser and a running app. The dry run must call no browser (a fake
+# agent-browser first on PATH records any call) and list one file per page × viewport × theme.
+echo "evidence template"
+ev="$SKILL/templates/evidence-capture.example.sh"
+mkdir -p "$T/fakeab"; cp "$SKILL/tests/ship-fixtures/fake-agent-browser.sh" "$T/fakeab/agent-browser"; chmod +x "$T/fakeab/agent-browser"
+evd() { : > "$T/ab.log"; env AB_LOG="$T/ab.log" PATH="$T/fakeab:$PATH" TMPDIR="$T" "$@" /bin/bash "$ev" --dry-run > "$T/ev.out" 2> "$T/ev.err"; }
+expect pass "evidence: the template parses (bash -n)" /bin/bash -n "$ev"
+evd EVIDENCE_PAGES="/ /settings/team" EVIDENCE_VIEWPORTS="390x844 844x390" EVIDENCE_THEMES="light dark"
+expect pass "evidence: dry run → 2 pages × 2 viewports × 2 themes = 8 files listed, nothing else on stdout" \
+  test "$(grep -c '\.png$' "$T/ev.out")" = 8 -a "$(wc -l < "$T/ev.out" | tr -d ' ')" = 8
+expect pass "evidence: ... named page-WxH-theme, '/' as home" \
+  bash -c "grep -qx '$T/evidence.DRY-RUN/home-390x844-light.png' '$T/ev.out' && grep -qx '$T/evidence.DRY-RUN/settings-team-844x390-dark.png' '$T/ev.out'"
+expect pass "evidence: ... no browser call, no dir written" bash -c "test ! -s '$T/ab.log' && test ! -e '$T/evidence.DRY-RUN'"
+expect pass "evidence: ... size and theme are set before the page loads" grep -q "would set viewport 390x844 and theme light, then load http://localhost:3000/ → " "$T/ev.err"
+evd
+expect pass "evidence: defaults → home at 390x844, 360x740, 844x390 in light and dark (6 files)" test "$(grep -c '\.png$' "$T/ev.out")" = 6
+evd EVIDENCE_VIEWPORTS="390by844"; evc=$?
+expect pass "evidence: a viewport that is not WxH → exit 2 before any capture, says so" \
+  bash -c "test $evc = 2 && test ! -s '$T/ev.out' && grep -q \"viewport '390by844' is not WxH\" '$T/ev.err' && test ! -s '$T/ab.log'"
 
 # Deploy: with DEPLOY_CMD set (on the base), bin/ship deploys after the merge from a fresh
 # detached checkout of origin/main in a temp dir, runs LIVE_CHECK_CMD there, then removes it.
@@ -1363,7 +1425,8 @@ rm_lint() {
   local fx="$SKILL/tests/saferm-fixtures"
   find "$@" -type f -exec awk -v allow="$fx/rm-allow.txt" -f "$fx/rm-lint.awk" "$fx/rm-allow.txt" {} +
 }
-expect pass "lint-rm: scripts/ and tests/run.sh are clean" rm_lint "$SKILL/scripts" "$SKILL/tests/run.sh"
+expect pass "lint-rm: scripts/, tests/run.sh, the speed cases and the evidence template are clean" \
+  rm_lint "$SKILL/scripts" "$SKILL/tests/run.sh" "$SKILL/tests/speed-cases.sh" "$SKILL/tests/parallel-fixtures" "$SKILL/templates/evidence-capture.example.sh"
 # Planted in a copy, never in the real scripts/.
 cp -R "$SKILL/scripts" "$T/lint-probe"
 expect pass "lint-rm: the unplanted copy passes" rm_lint "$T/lint-probe"
@@ -1489,6 +1552,9 @@ for weak in git-dir tmp-root slashes home-root abs-tmpdir repo-home; do
   bit=$?
   expect pass "safe_rm bite: cases go wrong without '$weak' ($(grep -c '^  WRONG' "$T/bite-$weak.log") wrong)" test "$bit" = 0
 done
+
+# --- speed, same gates: the parallel runner, gate locks, pre-push lanes, bin/ship's e2e + perf ---
+. "$SKILL/tests/speed-cases.sh"
 
 echo
 echo "$pass passed, $fail wrong"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # bin/ship [pr]: the only merge path. Runs the pre-merge gates, then merges (MERGE_MODE in
 # config.sh: squash by default, merge or rebase), then deploys when DEPLOY_CMD is set.
+# Order: a preflight of every cheap check (all misses listed at once), then e2e and perf, then
+# the merge. bin/ship --preflight [pr]: the preflight alone, read-only. bin/ship --checks-only:
+# e2e and perf alone, recorded for the real run to reuse (start it when the reviewers start).
 # bin/ship --deploy: the deploy stage alone (re-run after a failed deploy or live check).
 # Approval: the owner's `approved` label, or — when every gate passes and
 # .standards/checks/agent-approval.sh agrees — the agent's own.
@@ -93,31 +96,67 @@ if [ "${1:-}" = --deploy ]; then
   esac
 fi
 
+# load_ship_libs: e2e and perf (.standards/lib/ship-checks.sh, on parallel.sh).
+load_ship_libs() {
+  . "$ROOT/.standards/lib/parallel.sh" && . "$ROOT/.standards/lib/ship-checks.sh" \
+    || { red "FAIL ship: cannot load .standards/lib/parallel.sh or ship-checks.sh"; return 1; }
+}
+# bin/ship --checks-only: e2e and perf for this checkout, recorded, nothing else (no PR, no
+# merge, no label). Started in the background when the pre-merge reviewers start, so bin/ship
+# later reuses the pass for the same input instead of running them again. Only with
+# VERDICT_REUSE=1 (the owner's setting): without it the pass would never be used. Any change to
+# the input (a fix the reviewers ask for) runs them again.
+if [ "${1:-}" = --checks-only ]; then
+  echo "repo-standards ship --checks-only: e2e and perf on $(git rev-parse --short HEAD)"
+  [ "${VERDICT_REUSE:-}" = 1 ] || { red "FAIL checks-only: VERDICT_REUSE is off in .standards/config.sh, so bin/ship would never reuse this run — nothing run"; exit 1; }
+  load_ship_libs || exit 1
+  if SHIP_CHECKS_ONLY=1 ship_checks; then green "PASS checks-only: bin/ship on this same input reuses it"; exit 0; fi
+  red "FAIL checks-only: fix the cause above; bin/ship will run e2e and perf again"; exit 1
+fi
+
+# bin/ship --preflight [pr]: only the cheap checks below (seconds, read-only: no merge, no label,
+# no comment). Run it before asking the pre-merge reviewers and before pushing: it lists every
+# miss at once. bin/ship itself runs the same preflight first, before e2e and perf.
+preflight_only=""
+if [ "${1:-}" = --preflight ]; then preflight_only=1; shift; fi
+
+# --- Preflight: every cheap, deterministic check, before anything slow. Each check runs whatever
+# the others found, and every miss is printed, so one run lists them all: a refusal never waits
+# behind e2e and perf, and never comes one per run. pf_miss <label> <message> records one.
+pf_misses=""
+pf_miss() { red "  miss $2"; pf_misses="$pf_misses $1"; }
+
 # Checked before any gate runs, so a typo never fails only at the last step.
 case "${MERGE_MODE:=squash}" in
   squash|merge|rebase) ;;
-  *) red "FAIL ship: MERGE_MODE=\"$MERGE_MODE\" — use squash, merge or rebase in .standards/config.sh"; exit 1 ;;
+  *) pf_miss merge-mode "MERGE_MODE=\"$MERGE_MODE\" — use squash, merge or rebase in .standards/config.sh" ;;
 esac
 # The deploy config, on the base (what deploys after this merge) and on this branch (what the
 # next merge deploys): a DEPLOY_CMD without a LIVE_CHECK_CMD fails now, not after the merge.
 base_deploy_cfg
-deploy_cfg_ok "$base_deploy" "$base_live" "origin/$BASE_BRANCH's .standards/config.sh" || exit 1
-deploy_cfg_ok "${DEPLOY_CMD:-}" "${LIVE_CHECK_CMD:-}" ".standards/config.sh" || exit 1
+deploy_cfg_ok "$base_deploy" "$base_live" "origin/$BASE_BRANCH's .standards/config.sh" || pf_misses="$pf_misses deploy-config"
+deploy_cfg_ok "${DEPLOY_CMD:-}" "${LIVE_CHECK_CMD:-}" ".standards/config.sh" || pf_misses="$pf_misses deploy-config"
 pr="${1:-$(gh pr view --json number -q .number 2>/dev/null)}"
-[ -n "$pr" ] || { red "FAIL ship: no PR for this branch (usage: bin/ship <pr>)"; exit 1; }
-json="$(gh pr view "$pr" --json headRefName,headRefOid,labels,closingIssuesReferences,body)" || exit 1
-head_ref="$(printf '%s' "$json" | jq -r .headRefName)"
-head_oid="$(printf '%s' "$json" | jq -r .headRefOid)"
+json=""; head_ref=""; head_oid=""
+if [ -z "$pr" ]; then
+  pf_miss pr "no PR for this branch (usage: bin/ship <pr>) — the PR checks (pushed, PR head, screenshot, owner label) are skipped"
+elif ! json="$(gh pr view "$pr" --json headRefName,headRefOid,labels,closingIssuesReferences,body)"; then
+  json=""; pf_miss pr "cannot read PR #$pr — the PR checks are skipped"
+else
+  head_ref="$(printf '%s' "$json" | jq -r .headRefName)"
+  head_oid="$(printf '%s' "$json" | jq -r .headRefOid)"
+fi
 
-echo "repo-standards ship: PR #$pr ($head_ref)"
-[ "$(git rev-parse --abbrev-ref HEAD)" = "$head_ref" ] || { red "FAIL ship: check out $head_ref first"; exit 1; }
-[ -z "$(git status --porcelain --untracked-files=no)" ] || { red "FAIL ship: uncommitted changes"; exit 1; }
-[ "$(git rev-parse HEAD)" = "$head_oid" ] || { red "FAIL ship: local HEAD differs from the PR head — push (through the pre-push gate) first"; exit 1; }
-git merge-base --is-ancestor "origin/$BASE_BRANCH" HEAD || { red "FAIL ship: branch is behind origin/$BASE_BRANCH — rebase and push"; exit 1; }
-green "PASS branch current and pushed"
+echo "repo-standards ship${preflight_only:+ --preflight}: PR #${pr:-?} (${head_ref:-no PR})"
+# On another branch every check below would judge the wrong code: stop here.
+[ -z "$head_ref" ] || [ "$(git rev-parse --abbrev-ref HEAD)" = "$head_ref" ] || { red "FAIL ship: check out $head_ref first"; exit 1; }
+before="$pf_misses"
+[ -z "$(git status --porcelain --untracked-files=no)" ] || pf_miss branch "uncommitted changes — commit them (the checks read the working tree; the merge takes the PR head)"
+[ -z "$head_oid" ] || [ "$(git rev-parse HEAD)" = "$head_oid" ] || pf_miss branch "local HEAD differs from the PR head — push (through the pre-push gate) first"
+git merge-base --is-ancestor "origin/$BASE_BRANCH" HEAD || pf_miss branch "branch is behind origin/$BASE_BRANCH — rebase and push"
+[ "$pf_misses" != "$before" ] || [ -z "$head_oid" ] || green "PASS branch current and pushed"
 
-fail=0
-"$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate" "Pre-merge gate" || fail=1
+"$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate" "Pre-merge gate" || pf_misses="$pf_misses decision-log"
 
 repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 # label_check <issue-or-pr number> <label>: stdout = time the label was last added;
@@ -144,64 +183,89 @@ blast=""
 if [ -f "$spec" ] && grep -qiE "$(owner_flag_re approval)" "$spec"; then
   blast=1
   if [ "$mode" = agent ]; then info "ok   blast-radius spec: spec gate PASS stands in for spec-approved (APPROVER=agent)"
-  else label_check "$(issue_number)" spec-approved issue >/dev/null || fail=1
+  else label_check "$(issue_number)" spec-approved issue >/dev/null || pf_misses="$pf_misses spec-approved"
   fi
 fi
 
-# By change class: the app's e2e and perf skip on a site or docs branch, the site's e2e runs only
-# when the site changed. With no classes configured the class is "all" and everything runs.
-run_part e2e app "$E2E_CMD" || fail=1
-run_part site-e2e site-change "$SITE_E2E_CMD" || fail=1
-run_part perf app "$PERF_CMD" || fail=1
-# The baseline must follow coverage up: pre-push only stops it falling.
-"$ROOT/.standards/checks/coverage-baseline.sh" --ratchet || fail=1
-
 # UI evidence lives on the PR, not in git: a PR touching UI_GLOBS needs an image in its body
 # (markdown ![…], <img>, or a GitHub user-attachments link), or "Screenshots: N/A — <reason>"
-# for a change no screen shows (the pre-merge reviewers judge the reason).
+# for a change no screen shows (the pre-merge reviewers judge the reason). The images come from
+# EVIDENCE_CMD, the repo's one capture script, so no agent improvises its own.
 if [ -n "${UI_GLOBS:-}" ]; then
   ui="$(touched_files | while IFS= read -r f; do matches_any "$f" "$UI_GLOBS" && printf '%s ' "$f"; done)"
-  body="$(printf '%s' "$json" | jq -r '.body // ""')"
+  body="$(printf '%s' "$json" | jq -r '.body // ""' 2>/dev/null)"
   # HTML comments render as nothing: a commented-out image (a template hint) is no screenshot.
   while [[ "$body" == *"<!--"* ]]; do
     rest="${body#*<!--}"
     if [[ "$rest" == *"-->"* ]]; then body="${body%%<!--*}${rest#*-->}"; else body="${body%%<!--*}"; fi
   done
+  if [ -n "${EVIDENCE_CMD:-}" ]; then capture="capture the set with: $EVIDENCE_CMD (EVIDENCE_CMD in .standards/config.sh), then attach"
+  else capture="EVIDENCE_CMD is empty in .standards/config.sh: set it to the repo's one capture script (see the rulebook, stage 8), then attach"; fi
   if [ -z "$ui" ]; then info "ok   ui-evidence: no file in UI_GLOBS changed"
+  elif [ -z "$json" ]; then pf_miss ui-evidence "ui-evidence: UI files changed (${ui% }) and there is no PR body to check yet — $capture"
   elif printf '%s\n' "$body" | grep -qiE '!\[|<img|https://github\.com/user-attachments/'; then info "ok   ui-evidence: screenshot in the PR body"
   elif printf '%s\n' "$body" | grep -qE '^Screenshots: N/A — [^< ]'; then info "ok   ui-evidence: $(printf '%s\n' "$body" | grep -E '^Screenshots: N/A — ' | head -1)"
   else
-    red "  miss ui-evidence: UI files changed (${ui% }) but the PR body has no screenshot — attach one: gh pr edit $pr --body-file <body with ![after](./after.png)> --attach ./after.png (or a line 'Screenshots: N/A — <reason>')"
-    fail=1
+    pf_miss ui-evidence "ui-evidence: UI files changed (${ui% }) but the PR body has no screenshot — $capture: gh pr edit $pr --body-file <body with ![after](./after.png)> --attach ./after.png (or a line 'Screenshots: N/A — <reason>')"
   fi
 fi
 
-[ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
-
-# Approval. The owner's label must postdate the head commit: new commits need re-approval.
-# Without it, the agent approves when agent-approval.sh (the base's copy, if this branch
-# changes it) finds nothing that needs the owner.
-# The owner-label misses are printed only if the agent cannot approve either.
+# Approval, decided now so a miss never waits behind e2e and perf; agent-approval.sh only reads
+# (the merge and the labels come later, in this script). The owner's label must postdate the head
+# commit: new commits need re-approval. Without it, the agent approves when agent-approval.sh (the
+# base's copy, if this branch changes it) finds nothing that needs the owner. The owner-label
+# misses are printed only if the agent cannot approve either.
 check="$(base_copy .standards/checks/agent-approval.sh)"
 checker="${check:-$ROOT/.standards/checks/agent-approval.sh}"
-approval=""
-if approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
-  cat "$owner_log"
-  commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
-  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve" > "$owner_log"
-  else approval=owner; fi
-fi
-if [ -z "$approval" ]; then
+# decide_approval: sets approval to owner, agent, or "" (printing the misses). Run in the
+# preflight, and again right before the merge: a label removed (or a decisions.md change) while
+# e2e and perf ran must stop the merge.
+decide_approval() {
+  approval=""
+  if [ -n "$json" ] && approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
+    cat "$owner_log"
+    commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
+    if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve" > "$owner_log"
+    else approval=owner; fi
+  fi
+  [ -z "$approval" ] || return 0
   if out="$("$checker" 2>&1)"; then
     printf '%s\n' "$out"
     approval=agent
   else
     cat "$owner_log"
     printf '%s\n' "$out"
-    red "ship BLOCKED: fix the misses above, then re-run; an owner-review flag the owner has answered, close as answered in decisions.md; for no base, a removed owner-approval flag or (APPROVER=owner) gate files, ask the owner to run bin/approve $pr"
-    exit 1
   fi
+}
+decide_approval
+[ -n "$approval" ] || pf_miss approval "approval: fix the agent-approval misses above; an owner-review flag the owner has answered, close as answered in decisions.md; for no base, a removed owner-approval flag or (APPROVER=owner) gate files, ask the owner to run bin/approve ${pr:-<pr>}"
+
+if [ -n "$pf_misses" ]; then
+  # One line naming every check that missed (labels are single words, so the split is safe).
+  # shellcheck disable=SC2086
+  missed="$(printf '%s\n' $pf_misses | sort -u | tr '\n' ' ')"
+  if [ -n "$preflight_only" ]; then red "ship BLOCKED (preflight): missed: ${missed% } — fix every miss above, then re-run"
+  else red "ship BLOCKED before e2e and perf: missed: ${missed% } — fix every miss above (bin/ship --preflight re-checks them in seconds), then re-run"; fi
+  exit 1
 fi
+if [ -n "$preflight_only" ]; then
+  green "PASS preflight: every cheap check passes; bin/ship $pr now runs e2e and perf, then merges"
+  exit 0
+fi
+
+# e2e and perf (.standards/lib/ship-checks.sh): e2e beside perf's untimed half (PERF_PREP_CMD),
+# then the timed half (PERF_CMD) alone on the machine; a pass recorded by bin/ship --checks-only
+# (or, with VERDICT_REUSE=1, by an earlier bin/ship) on the same input is reused. By change class:
+# the app's e2e and perf skip on a site or docs branch, the site's e2e runs only when the site
+# changed. Loaded here, after the "branch current" check, so a branch that gets this far has both
+# files from the base.
+fail=0
+load_ship_libs || exit 1
+ship_checks || fail=1
+# The baseline must follow coverage up: pre-push only stops it falling. Not in the preflight:
+# COVERAGE_TOTAL_CMD may run the whole unit suite.
+"$ROOT/.standards/checks/coverage-baseline.sh" --ratchet || fail=1
+[ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
 
 # Gate files the branch changes, whoever approved: the owner finds every rule change under
 # the rules-changed label, owner-approved ones too. Same detection as agent-approval.sh (the
@@ -211,6 +275,16 @@ changed_gates="$("$checker" --gate-files)" || { red "FAIL ship: could not list t
 [ -z "$changed_gates" ] || entries="$(git diff -U0 --no-renames "$(base_commit)" HEAD -- docs/rule-changes.md | sed -n 's/^+\(- [0-9]\{4\}-.*\)/\1/p')"
 
 # --match-head-commit: refuse if the PR moved after these gates ran.
+# Approval again, now (seconds): e2e and perf may have taken long enough for a label to go.
+first_approval="$approval"
+info "approval re-checked before the merge (preflight: $first_approval)"
+decide_approval > "$owner_log.recheck" 2>&1
+if [ -z "$approval" ]; then  # bite: recheck
+  cat "$owner_log.recheck"; safe_rm "$owner_log.recheck"
+  red "ship BLOCKED: the approval ($first_approval) no longer holds — it changed while e2e and perf ran; nothing merged"
+  exit 1
+fi
+safe_rm "$owner_log.recheck"
 gh pr merge "$pr" "--$MERGE_MODE" --delete-branch --match-head-commit "$head_oid" || { red "FAIL ship: merge refused"; exit 1; }
 green "shipped #$pr ($approval-approved)"
 # The record is posted only once the merge happened, so it never claims an unmerged PR.
@@ -230,13 +304,25 @@ $entries"
   gh pr edit "$pr" --add-label rules-changed >/dev/null \
     || { red "FAIL ship: merged, but the rules-changed label failed — run: gh pr edit $pr --add-label rules-changed"; record_fail=1; }
 fi
-# Owner-approved: the owner already knows why; a comment only when the rules changed.
-if [ "$approval" = owner ] && [ -n "$changed_gates" ]; then
-  gh pr comment "$pr" --body "Approved by the owner (\`approved\` label) and merged through \`bin/ship\`.
+# A reused e2e + perf verdict is stated in the record with its key, its run's time and log, so it
+# is visible on the PR, never only in a terminal.
+reuse_block=""
+[ -z "$SHIP_REUSED" ] || reuse_block="
 
+**e2e and perf were reused, not re-run:** $SHIP_REUSED
+\`\`\`
+$SHIP_REUSED_KEY
+\`\`\`"
+# Owner-approved: the owner already knows why; a comment only when the rules changed or a verdict
+# was reused.
+owner_gate_line=""
+[ -z "$changed_gates" ] || owner_gate_line="
 - Gate files changed (\`$changed_gates\`), approved by the owner's \`approved\` label
-
-Head: $head_oid$notice" || { red "  warn merged, but the rule-change comment failed — post it by hand"; record_fail=1; }
+"
+if [ "$approval" = owner ] && { [ -n "$changed_gates" ] || [ -n "$SHIP_REUSED" ]; }; then
+  gh pr comment "$pr" --body "Approved by the owner (\`approved\` label) and merged through \`bin/ship\`.
+$owner_gate_line
+Head: $head_oid$notice$reuse_block" || { red "  warn merged, but the rule-change comment failed — post it by hand"; record_fail=1; }
 fi
 if [ "$approval" = agent ]; then
   # The gate list comes from the check that ran, so the record cannot drift from it.
@@ -260,9 +346,9 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 - No open \`owner-review: required\` line in decisions.md, every removed one closed as answered, and no \`owner-approval: required\` removed
 - $gate_line
 - $spec_line
-- Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed
+- Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed${SHIP_REUSED:+ (reused: see below)}
 
-Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
+Head: $head_oid$notice$reuse_block" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
 fi
 # Deploy and confirm (optional, the base's DEPLOY_CMD): the merge already happened, so a failure
 # here cannot undo it — it fails the run loudly and says what to do next. Only once the PR is

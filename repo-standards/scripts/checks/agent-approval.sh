@@ -140,11 +140,41 @@ if [ "${1:-}" = "--gate-files" ]; then
   exit 0
 fi
 
+# delta_ok <section> <new sha> <old sha>: the delta form may stand (see gate_review); else a miss.
+delta_ok() {
+  local s="$1" new old
+  new="$(git rev-parse -q --verify "$2^{commit}" 2>/dev/null)"; old="$(git rev-parse -q --verify "$3^{commit}" 2>/dev/null)"
+  if [ -z "$new" ] || [ "$new" = "$old" ]; then
+    miss "$s: 'Reviewed: $2 (delta from $3)': the delta is empty or the new sha is missing — record the sha the reviewers read"; return 1
+  fi
+  if ! git merge-base --is-ancestor "$old" "$new" 2>/dev/null; then  # bite: delta-ancestor
+    miss "$s: 'Reviewed: $2 (delta from $3)': $3 is not an ancestor of $2, so the delta does not cover the branch — review in full"; return 1
+  fi
+  if ! reviewed_before "$s" "$old"; then  # bite: delta-recorded
+    miss "$s: 'Reviewed: $2 (delta from $3)': $3 was never recorded here as the Reviewed sha of a Verdict: PASS — review in full"; return 1
+  fi
+}
+
+# reviewed_before <section> <full sha>: some commit of decisions.md's history (from HEAD) has, in
+# that section, Verdict: PASS with a Reviewed sha (full, or a delta's new sha) that is this commit.
+reviewed_before() {
+  local c r v
+  while IFS= read -r c; do
+    git show "$c:$dec" > "$changed.hist" 2>/dev/null || continue
+    v="$(section_verdict "$changed.hist" "$1")"
+    [ "$v" = PASS ] || continue
+    r="$(section_field "$changed.hist" "$1" "Reviewed:")"; r="${r%% *}"
+    printf '%s' "$r" | grep -qE '^[0-9a-f]{7,40}$' || continue
+    [ "$(git rev-parse -q --verify "$r^{commit}" 2>/dev/null)" = "$2" ] && return 0
+  done < <(git log --format=%H HEAD -- "$dec")
+  return 1
+}
+
 # gate_review <section>: the section in decisions.md passed review — one copy of it and of
 # each reviewer line, Verdict PASS, both reviewers PASS (or split with the arbiter PASS),
 # and a Reviewed sha that still covers HEAD. Each miss is printed.
 gate_review() {
-  local s="$1" n p c v a b arb sha full later f passes
+  local s="$1" n p c v a b arb sha delta full later f passes
   n="$(grep -c "^## $s\$" "$dec")"
   [ "$n" -le 1 ] || miss "'## $s' appears $n times in $dec"
   # Only the first of each line is read, so a second one would be silently ignored.
@@ -167,10 +197,22 @@ gate_review() {
   # same content at HEAD as at the reviewed commit. A rebase onto unrelated base changes
   # keeps the review; a base change to a reviewed file needs a new one. Only a literal
   # hex sha is accepted — never HEAD, a branch, or a ref that merely looks like hex.
+  # A fix round after a PASS may re-review only the delta: "Reviewed: <new sha> (delta from <old
+  # sha>)". The new sha is the one that must cover HEAD, exactly as a full review's. The old sha
+  # must be a strict ancestor of the new one and must have been recorded in this section, in
+  # decisions.md's history, as the Reviewed sha of a Verdict: PASS (reviewed_before): only then do
+  # that earlier review and the delta together cover the whole branch — the condition that makes a
+  # delta review no weaker than a full one.
   sha="$(section_field "$dec" "$s" "Reviewed:")"
+  delta="$(printf '%s\n' "$sha" | sed -n 's/^[0-9a-f]\{7,40\} (delta from \([0-9a-f]\{7,40\}\))$/\1/p')"
+  [ -z "$delta" ] || sha="${sha%% *}"
   full="$(git rev-parse -q --verify "$sha^{commit}" 2>/dev/null)"
   if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{7,40}$'; then
-    miss "$s: 'Reviewed:' must be a commit sha, got '${sha:-empty}'"
+    miss "$s: 'Reviewed:' must be a commit sha, or '<sha> (delta from <sha>)' after a fix round, got '${sha:-empty}'"
+  elif [ -n "$delta" ] && ! git cat-file -e "$delta^{commit}" 2>/dev/null; then
+    miss "$s: 'Reviewed: $sha (delta from $delta)': $delta is not a commit present locally (fetch it, or review in full)"
+  elif [ -n "$delta" ] && ! delta_ok "$s" "$sha" "$delta"; then
+    :  # delta_ok printed the miss
   elif [ -z "$full" ] || [ "${full#"$sha"}" = "$full" ]; then
     miss "$s: reviewed commit $sha is not present locally (fetch it, or review again)"
   elif [ $diff_ok -eq 1 ]; then
@@ -179,7 +221,7 @@ gate_review() {
       [ "$f" != "$dec" ] || continue
       [ "$(git rev-parse -q --verify "$full:$f")" = "$(git rev-parse -q --verify "HEAD:$f")" ] || later="$later $f"
     done < "$changed"
-    [ -z "$later" ] && info "ok   $s: review covers HEAD (reviewed $sha)" || miss "$s: differs from the reviewed commit $sha:$later"
+    [ -z "$later" ] && info "ok   $s: review covers HEAD (reviewed $sha${delta:+, delta from $delta})" || miss "$s: differs from the reviewed commit $sha:$later"
   fi
 }
 
