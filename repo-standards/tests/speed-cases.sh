@@ -45,7 +45,15 @@ sp() {
 }
 marks() { srm "$T/marks"; mkdir -p "$T/marks"; }
 fresh_locks() { srm "$SL"; mkdir -p "$SL"; }
-hold() { sleep "$1" & holder=$!; }   # hold <seconds>: a live process a lock can name; pid in $holder
+# sleeper <seconds>: a sleep in the background, pid in $v, returned only once it is `sleep`: a signal
+# that reaches the forked child before its exec would hit a copy of this suite, EXIT trap and all
+# (it deleted the suite's temp dir once).
+sleeper() {
+  sleep "$1" & v=$!
+  for _ in $(seq 1 50); do [ "$(ps -o comm= -p "$v" 2> /dev/null | sed 's#.*/##')" = sleep ] && return 0; sleep 0.1; done
+  return 1
+}
+hold() { local v; sleeper "$1"; holder=$v; }   # hold <seconds>: a live process a lock can name; pid in $holder
 lock_by() { mkdir -p "$SL/$1.lock" && printf '%s\n' "$2" > "$SL/$1.lock/pid"; }   # lock_by <name> <pid>
 gp() { git -C "$P" "$@"; }
 bump() { printf '%s\n' "$RANDOM" >> "$P/$1" && gp add -- "$1" && gp commit -qm "change $1"; }   # bump <path>
@@ -66,7 +74,7 @@ speed_repo() {
     for f in lint typecheck unit site-unit diff-cover e2e perf; do cp "$SPF/fake.sh" "scripts/$f.sh"; done
     cp "$SPF/version.sh" scripts/version.sh
     chmod +x bin/ship scripts/*.sh .standards/hooks/* .standards/checks/* .standards/bin/*
-    : > docs/doc-map.txt; printf 'a\n' > src/a.txt
+    : > docs/doc-map.txt; printf 'a\n' > src/a.txt; printf '.env*\nnode_modules/\n' > .gitignore
     git add -A . && git commit -qm base && git push -q origin main
     git checkout -q -b feat/7-x
     sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > docs/work/7-x/decisions.md
@@ -194,7 +202,7 @@ wait "$holder" 2> /dev/null
 hold 3; lock_by e2e-x "$holder"
 sp "$GS" lock=e2e-x unlock=e2e-x
 expect pass "locks: gate_lock waits for a live holder, says so, then takes it" \
-  all_of said "wait the e2e-x lock is held by pid $holder" , grep -qE '^locked e2e-x after [1-9]' "$out"
+  all_of said "wait the e2e-x lock is held by pid $holder" "got the e2e-x lock after" , grep -qE '^locked e2e-x after [1-9]' "$out"
 wait "$holder" 2> /dev/null
 sp "$GS" busy-on job=a:one:true run marked busy-off marked
 expect pass "locks: gate_busy_on keeps the mark past par_run (pre-push's tail); busy-off removes it" \
@@ -241,6 +249,86 @@ no_overlap() {
 expect pass "locks: two gates at once both finish, and each timed part runs alone" \
   all_of test "$cA" -eq 0 , test "$cB" -eq 0 , since_lt 20 , no_overlap
 
+# The lock dir is this user's own real dir; nothing in it is a symlink; cleanup deletes only there.
+lockdir_cases() {
+  local L="$T/ld"
+  srm "$L"; mkdir -p "$L/target" "$L/locks"; printf 'keep\n' > "$L/target/keep.txt"; ln -s "$L/target" "$L/locks/busy"
+  sp STANDARDS_LOCK_DIR="$L/locks" "$@" "$GS" idle
+  expect pass "lock dir: busy/ is a symlink → refused, nothing deleted through it" \
+    all_of code_is 1 , said "refused lock dir $L/locks/busy: it is a symlink" , test -f "$L/target/keep.txt"
+  srm "$L/locks/busy"; mkdir "$L/locks/busy"; ln -s "$L/target/keep.txt" "$L/locks/busy/999999"
+  sp STANDARDS_LOCK_DIR="$L/locks" "$@" "$GS" idle
+  expect pass "lock dir: an entry in busy/ is a symlink → refused, its target kept" \
+    all_of code_is 1 , said "a symlink in the lock dir" , test -f "$L/target/keep.txt"
+  srm "$L/locks/busy/999999"; chmod 777 "$L/locks"
+  sp STANDARDS_LOCK_DIR="$L/locks" "$@" "$GS" job=a:one:true run
+  expect pass "lock dir: group/world-writable → refused, no check runs" \
+    all_of code_is 1 , said "refused lock dir $L/locks: group- or world-writable" , unsaid "PASS one"
+  chmod 755 "$L/locks"; ln -s "$L/locks" "$L/link"
+  sp STANDARDS_LOCK_DIR="$L/link" "$@" "$GS" job=a:one:true run
+  expect pass "lock dir: the dir itself a symlink → refused" all_of code_is 1 , said "refused lock dir $L/link: it is a symlink"
+  sp STANDARDS_LOCK_DIR="$L/new" "$@" "$GS" job=a:one:true run
+  expect pass "lock dir: made here → mode 700 (dir and busy/)" \
+    all_of code_is 0 , test "$(stat -f %Lp "$L/new" 2> /dev/null || stat -c %a "$L/new")" = 700 , test "$(stat -f %Lp "$L/new/busy" 2> /dev/null || stat -c %a "$L/new/busy")" = 700
+}
+lockdir_cases
+# LOCK_WAIT_MAX: a lock that never frees fails the gate, naming what blocked it.
+fresh_locks; hold 20; lock_by timed "$holder"; s0=$(date +%s)
+sp T_LOCK_WAIT_MAX=2 "$GS" lock=timed
+expect pass "locks: LOCK_WAIT_MAX=2, timed held by a live gate → FAIL after ~2 s naming the lock and holder" \
+  all_of code_is 1 , said "FAIL waited" "LOCK_WAIT_MAX=2" "the timed lock, held by pid $holder" , since_lt 8
+s0=$(date +%s); sp T_LOCK_WAIT_MAX=2 "$GS" job=a:one:true run
+expect pass "locks: ... and a gate waiting to start its checks behind it the same" \
+  all_of code_is 1 , said "FAIL waited" "another gate's timed checks (pid $holder)" , since_lt 8
+kill "$holder" 2> /dev/null; wait "$holder" 2> /dev/null; fresh_locks
+hold 20; mkdir -p "$SL/busy"; printf '%s\n' "$(ps -o lstart= -p "$holder")" > "$SL/busy/$holder"; s0=$(date +%s)
+sp T_LOCK_WAIT_MAX=2 "$GS" idle
+expect pass "locks: ... and the idle wait the same, naming the busy gate" \
+  all_of code_is 1 , said "FAIL waited" "other gates to finish their checks (pid $holder)" , since_lt 8
+kill "$holder" 2> /dev/null; wait "$holder" 2> /dev/null; fresh_locks
+# within <seconds> <command...>: runs it; past <seconds>, kills it and what it started (exit 124).
+kill_tree() { local c; for c in $(pgrep -P "$1"); do kill_tree "$c"; done; kill -KILL "$1" 2> /dev/null; }
+within() {
+  local s="$1" p i; shift
+  "$@" & p=$!
+  for ((i = 0; i < s * 10; i++)); do kill -0 "$p" 2> /dev/null || { wait "$p"; return; }; sleep 0.1; done
+  kill_tree "$p"; wait "$p" 2> /dev/null; return 124
+}
+# The reviewer's deadlock: gate A busy, its check starts a nested gate that wants `timed`; gate B
+# holds `timed` and waits for A to go idle. The nested gate must not wait on either.
+two_deadlock() {
+  local a b ra rb
+  (cd "$P" && exec env -u STANDARDS_GATE_BUSY STANDARDS_LOCK_DIR="$SL" "$GS" "job=a:inner:sleep 2; '$GS' lock=timed unlock=timed" run) < /dev/null > "$T/dl-a.out" 2>&1 &
+  a=$!
+  sleep 1
+  (cd "$P" && exec env -u STANDARDS_GATE_BUSY STANDARDS_LOCK_DIR="$SL" "$GS" lock=timed idle unlock=timed) < /dev/null > "$T/dl-b.out" 2>&1 &
+  b=$!
+  wait "$a"; ra=$?; wait "$b"; rb=$?
+  [ "$ra" -eq 0 ] && [ "$rb" -eq 0 ]
+}
+within 30 two_deadlock; code=$?
+expect pass "locks: nested gate wanting timed inside a busy gate while another holds timed and waits for idle → both finish" code_is 0
+expect pass "locks: ... the nested gate says it did not take the outer gate's timed lock" grep -q "the timed lock is its outer gate's to hold; not taken" "$T/dl-a.out"
+fresh_locks
+# race_cases: a stale timed lock (its process gone); gate B judges it stale, pauses 2 s, then
+# claims; gate A judges it stale meanwhile, reclaims and takes it. B must see A holds it now.
+race_cases() {
+  local a b
+  fresh_locks; : > "$glog"; lock_by timed 999999
+  (cd "$P" && exec env -u STANDARDS_GATE_BUSY STANDARDS_LOCK_DIR="$SL" GATE_LOG="$glog" GATE_NAME=B STANDARDS_GATE_TEST_PAUSE=2 "$@" \
+    "$GS" lock=timed log=start-hold sleep=1 log=end-hold unlock=timed) < /dev/null > "$T/race-b.out" 2>&1 &
+  b=$!
+  (cd "$P" && exec env -u STANDARDS_GATE_BUSY STANDARDS_LOCK_DIR="$SL" GATE_LOG="$glog" GATE_NAME=A STANDARDS_GATE_TEST_PAUSE=0 "$@" \
+    "$GS" sleep=0.5 lock=timed log=start-hold sleep=3 log=end-hold unlock=timed) < /dev/null > "$T/race-a.out" 2>&1 &
+  a=$!
+  wait "$a"; wait "$b"
+  expect pass "locks: two gates reclaiming one stale lock → never both hold it" \
+    awk '{ t[$1 " " $3] = $2 } END { if (t["start-hold A"] == "" || t["start-hold B"] == "") exit 1
+      exit !(t["start-hold B"] >= t["end-hold A"] || t["start-hold A"] >= t["end-hold B"]) }' "$glog"
+  fresh_locks
+}
+race_cases
+
 # --- pre-push: lanes, then the order-dependent checks -----------------------------------------
 echo "pre-push lanes"
 pps() { # pps [VAR=value ...]: the real pre-push hook of feat/7-x's HEAD
@@ -253,7 +341,7 @@ listed_failed() { grep -qxF -- "  - $1" "$out"; }
 pps
 expect pass "pre-push: every check green → PASSED" all_of code_is 0 , said "pre-push PASSED"
 expect pass "pre-push: … lists its checks and lanes before running them" \
-  all_of before "lane unit: unit → seeds" "done " , before "lane repo: cross-reads → doc-map → decision-log" "done " , before "lane site: site-lint → site-typecheck → site-unit" "done "
+  all_of before "lane build: typecheck → unit → seeds" "done " , before "lane repo: cross-reads → doc-map → decision-log" "done " , before "lane site: site-lint → site-typecheck → site-unit" "done "
 expect pass "pre-push: … diff-coverage runs after the unit tests, tdd after diff-coverage" \
   all_of before "done unit" "RUN  diff-coverage" , before "done site-unit" "RUN  diff-coverage" , before "RUN  diff-coverage" "tdd: source changed"
 : > "$flog.list"
@@ -268,9 +356,9 @@ for spec in "lint:lint.sh" "typecheck:typecheck.sh" "unit:unit.sh" "site-unit:si
   expect pass "pre-push: … every other check still ran" \
     all_of called "lint.sh " "typecheck.sh " "unit.sh " "site-unit.sh " "diff-cover.sh " , said "tdd: source changed" "PASS decision-log"
 done
-pps T_LANES="typecheck=build unit=build"
-expect pass "pre-push: PREPUSH_LANES puts named checks in one lane, in turn" \
-  all_of code_is 0 , said "lane build: typecheck → unit" "lane lint: lint" "lane unit: seeds"
+pps T_LANES="typecheck=tc"
+expect pass "pre-push: PREPUSH_LANES moves a named check to its own lane" \
+  all_of code_is 0 , said "lane tc: typecheck" "lane build: unit → seeds" "lane lint: lint"
 pps T_LANES="*=serial"
 expect pass "pre-push: PREPUSH_LANES \"*=serial\" runs every check in one lane" \
   all_of code_is 0 , said "lane serial: lint → typecheck → unit → seeds → site-lint" , unsaid "lane repo:"
@@ -319,11 +407,46 @@ key_cases() {
   expect pass "ship-checks: the base moved (rebase, same files) → runs everything" called "e2e.sh " "perf.sh measure"
   shp "$@"; shp FAKE_VERSION=v9 "$@"
   expect pass "ship-checks: a tool version (VERDICT_KEY_CMD) changed → runs everything" called "e2e.sh " "perf.sh measure"
+  shp "$@"; printf 'edit\n' >> "$P/notes.txt"; shp "$@"
+  expect pass "ship-checks: an uncommitted edit to a tracked file → runs everything" called "e2e.sh " "perf.sh measure"
+  gp checkout -q -- notes.txt
+  shp "$@"; shp T_PREP="scripts/perf.sh prep " "$@"
+  expect pass "ship-checks: a command changed (PERF_PREP_CMD) → runs everything" called "e2e.sh " "perf.sh measure"
+  shp "$@"; shp PATH="$T/fakeuname:$PATH" "$@"
+  expect pass "ship-checks: the OS (uname) changed → runs everything" called "e2e.sh " "perf.sh measure"
+  # Inputs outside git: a gitignored .env file, a named environment variable, the installed deps.
+  printf 'ok\n' > "$P/.env.e2e"; shp "$@"; printf 'broken\n' > "$P/.env.e2e"; shp "$@"
+  expect pass "ship-checks: a gitignored file in VERDICT_IGNORED_GLOBS (.env*) changed → runs everything" called "e2e.sh " "perf.sh measure"
+  shp MODE=ok "$@"; shp MODE=bad "$@"
+  expect pass "ship-checks: a variable named in VERDICT_ENV changed → runs everything" called "e2e.sh " "perf.sh measure"
+  shp MODE=bad "$@"
+  expect pass "ship-checks: ... and the same value again → reused" nothing_called
+  mkdir -p "$P/node_modules"; printf 'v1\n' > "$P/node_modules/.modules.yaml"; shp "$@"
+  printf 'v2\n' > "$P/node_modules/.modules.yaml"; shp "$@"
+  expect pass "ship-checks: the installed deps changed (an install marker) → runs everything" called "e2e.sh " "perf.sh measure"
+  shp T_DEPS_CMD='echo one' "$@"; shp T_DEPS_CMD='echo two' "$@"
+  expect pass "ship-checks: VERDICT_DEPS_CMD's output changed → runs everything" called "e2e.sh " "perf.sh measure"
 }
+mkdir -p "$T/fakeuname"; cp "$SPF/uname.sh" "$T/fakeuname/uname"; chmod +x "$T/fakeuname/uname"
 key_cases
-printf 'edit\n' >> "$P/notes.txt"; shp
-expect pass "ship-checks: an uncommitted edit to a tracked file → runs everything" called "e2e.sh " "perf.sh measure"
-gp checkout -q -- notes.txt
+shp T_DEPS_CMD=false
+expect pass "ship-checks: VERDICT_DEPS_CMD fails → runs everything, says nothing can be reused" \
+  all_of called "e2e.sh " , said "verdict key could not be read"
+# forged_cases: a record without the hash of a run log beside it (hand-written, or older) is refused,
+# and so is one whose log no longer matches its hash.
+forged_cases() {
+  shp "$@"; shp "$@"
+  expect pass "ship-checks: (a fresh record with its run log is reused)" nothing_called
+  for f in "$vdir"/ship-*; do case "$f" in *.log) ;; *) sed '$s/^\(passed [0-9]* [0-9a-f]* [a-z-]*\) .*/\1/' "$f" > "$f.new" && mv "$f.new" "$f" ;; esac; done
+  shp "$@"
+  expect pass "ship-checks: a record with no run-log hash (forged or old) → refused, said so, runs everything" \
+    all_of called "e2e.sh " "perf.sh measure" , said "refused a recorded pass for this input"
+  shp "$@"; for f in "$vdir"/ship-*.log; do printf 'edited\n' >> "$f"; done
+  shp "$@"
+  expect pass "ship-checks: a record whose run log was edited → refused, runs everything" called "e2e.sh " "perf.sh measure"
+}
+vdir="$(cd "$P" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/standards-verdicts"
+forged_cases
 shp FAKE_VERSION=fail
 expect pass "ship-checks: VERDICT_KEY_CMD fails → runs everything, says nothing can be reused" \
   all_of code_is 0 , called "e2e.sh " , said "verdict key could not be read"
@@ -396,7 +519,10 @@ bs
 expect pass "ship: e2e and perf pass → merge, comment" all_of code_is 0 , called "e2e.sh " "perf.sh measure" , grep -q '^pr merge 12' "$T/gh.log"
 bs
 expect pass "ship: re-run on the same input → reused, and the approval comment says so" \
-  all_of code_is 0 , nothing_called , grep -q 'e2e and perf passed (e2e and perf passed .* reused, not re-run' "$T/gh.log"
+  all_of code_is 0 , nothing_called , grep -q 'e2e and perf were reused, not re-run:.* reused, not re-run' "$T/gh.log"
+expect pass "ship: ... the comment names the original run's time, log and hash, and the whole key" \
+  all_of grep -qE 'passed [0-9]+ min ago \([0-9-]+T[0-9:]+Z\) on commit' "$T/gh.log" , grep -qE 'run log .*standards-verdicts/ship-[0-9a-f]+\.log, git hash [0-9a-f]{40}' "$T/gh.log" , \
+    grep -qE '^tree [0-9a-f]{40}' "$T/gh.log" , grep -qE '^deps [0-9a-f]{40}' "$T/gh.log"
 
 # --- bin/ship's preflight: every cheap check first, all misses at once, before e2e and perf ----
 # T_REUSE= (verdict reuse off) and a new input in each case: e2e and perf would run if reached.
@@ -428,35 +554,74 @@ bsa T_REUSE= bash bin/ship --preflight 12
 expect pass "bin/ship --preflight, every cheap check green → PASS, runs nothing, writes nothing" \
   all_of code_is 0 , said "PASS preflight" , nothing_called , eval '! gh_wrote'
 
-# --- bin/ship --checks-only: e2e + perf alone, recorded; bin/ship reuses it (even reuse off) ----
+# --- bin/ship --checks-only: e2e + perf alone, recorded; bin/ship reuses it (VERDICT_REUSE=1 only) --
 echo "ship checks-only"
+newin() { bump notes.txt; rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null; }   # a new input, reviewed and pushed
+newin
 bsa T_REUSE= bash bin/ship --checks-only
+expect pass "checks-only: VERDICT_REUSE off (the owner's setting) → refuses, runs nothing" \
+  all_of code_is 1 , said "VERDICT_REUSE is off" , nothing_called
+bsa bash bin/ship --checks-only
 expect pass "checks-only: runs e2e and perf, records the pass, writes nothing to GitHub" \
   all_of code_is 0 , called "e2e.sh " "perf.sh measure" , said "PASS checks-only" "recorded: e2e and perf passed" , eval '! gh_wrote'
-bs T_REUSE=
-expect pass "checks-only: then bin/ship (VERDICT_REUSE off) on the same input → reused, merged, comment says by whom" \
+bs
+expect pass "checks-only: then bin/ship on the same input → reused, merged, comment says by whom" \
   all_of code_is 0 , nothing_called , grep -q 'on commit .* by bin/ship --checks-only with the same input' "$T/gh.log"
-bump notes.txt; rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
-bs T_REUSE=; bs T_REUSE=
-expect pass "checks-only: ... a bin/ship pass with VERDICT_REUSE off is still not recorded or reused" called "e2e.sh " "perf.sh measure"
-bsa T_REUSE= bash bin/ship --checks-only; bump notes.txt; rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
-bs T_REUSE=
+newin; bsa bash bin/ship --checks-only; bs T_REUSE=
+expect pass "checks-only: ... but not once the owner turns VERDICT_REUSE off" called "e2e.sh " "perf.sh measure"
+newin; bsa bash bin/ship --checks-only; newin; bs
 expect pass "checks-only: a fix after it (new input) → bin/ship runs e2e and perf again" called "e2e.sh " "perf.sh measure"
-bsa T_REUSE= FAKE_FAIL=e2e.sh bash bin/ship --checks-only
+newin; bsa FAKE_FAIL=e2e.sh bash bin/ship --checks-only
 expect pass "checks-only: e2e fails → exit 1, says so" all_of code_is 1 , said "FAIL checks-only"
-bs T_REUSE=
+bs
 expect pass "checks-only: ... then bin/ship runs everything" all_of code_is 0 , called "e2e.sh " "perf.sh measure"
 # Started in the background as the reviewers start: a bin/ship meanwhile waits for it, then reuses.
-bump notes.txt; rv "$ok" "$ok" "" "$(head_of)"; gp push -q origin feat/7-x 2> /dev/null
+newin
 (cd "$P" && exec env -u STANDARDS_GATE_BUSY -u STANDARDS_RERUN -u PAR_LOG_DIR -u STANDARDS_LIB STANDARDS_LOCK_DIR="$SL" \
-  FAKE_LOG="$T/bg.log" FAKE_SLEEP=3 T_REUSE= GH_LOG="$T/gh-bg.log" PATH="$T/fakebin:$PATH" bash bin/ship --checks-only) < /dev/null > "$T/bg.out" 2>&1 &
+  FAKE_LOG="$T/bg.log" FAKE_SLEEP=3 GH_LOG="$T/gh-bg.log" PATH="$T/fakebin:$PATH" bash bin/ship --checks-only) < /dev/null > "$T/bg.out" 2>&1 &
 bgp=$!
 for _ in $(seq 1 100); do grep -qs '^running ' "$vdir"/ship-* && break; sleep 0.1; done
-bs T_REUSE=
+bs
 wait "$bgp"; bgc=$?
 expect pass "checks-only in the background: bin/ship waits for it, says so, then reuses its pass (runs nothing itself)" \
   all_of test "$bgc" -eq 0 , code_is 0 , said "wait bin/ship --checks-only (pid" "by bin/ship --checks-only" , nothing_called
 expect pass "checks-only in the background: ... which ran e2e and perf once" grep -qx "e2e.sh " "$T/bg.log.calls"
+# wait_cases: a "running" record that must not hold bin/ship up: its process stopped, its record
+# older than LOCK_WAIT_MAX, its pid reused by another process; and the wait itself is bounded.
+wait_cases() {
+  local v
+  bump notes.txt
+  sleeper 60 || echo "FATAL sleeper"; kill -STOP "$v"
+  sp T_LOCK_WAIT_MAX=5 "$@" "$GS" "running=$v"; s0=$(date +%s); shp T_LOCK_WAIT_MAX=5 "$@"
+  expect pass "checks-only wait: its process is stopped (state T) → not waited for, runs here, says so" \
+    all_of called "e2e.sh " , said "is stopped: treated as unfinished" , since_lt 4
+  kill -CONT "$v"; kill "$v" 2> /dev/null; wait "$v" 2> /dev/null
+  bump notes.txt; sleeper 60 || echo "FATAL sleeper"
+  sp T_LOCK_WAIT_MAX=5 "$@" "$GS" "running=$v:$(($(date +%s) - 100))"; s0=$(date +%s); shp T_LOCK_WAIT_MAX=5 "$@"
+  expect pass "checks-only wait: its record is older than LOCK_WAIT_MAX → unfinished, runs here, says so" \
+    all_of called "e2e.sh " , said "started over 5s ago (LOCK_WAIT_MAX)" , since_lt 4
+  bump notes.txt
+  sp T_LOCK_WAIT_MAX=5 "$@" "$GS" "running=$v"
+  for f in "$vdir"/ship-*; do case "$f" in *.log) ;; *) sed '$s/^\(running [0-9]* [0-9]*\) .*/\1 Mon Jan  1 00:00:00 2001/' "$f" > "$f.new" && mv "$f.new" "$f" ;; esac; done
+  s0=$(date +%s); shp T_LOCK_WAIT_MAX=5 "$@"
+  expect pass "checks-only wait: its pid now names another process (start time differs) → not waited for" \
+    all_of called "e2e.sh " , unsaid "wait bin/ship --checks-only" , since_lt 4
+  bump notes.txt
+  sp T_LOCK_WAIT_MAX=3 "$@" "$GS" "running=$v:$(($(date +%s) + 600))"; s0=$(date +%s); shp T_LOCK_WAIT_MAX=3 "$@"
+  expect pass "checks-only wait: a live run is waited for at most LOCK_WAIT_MAX, with progress, then runs here" \
+    all_of called "e2e.sh " , said "wait bin/ship --checks-only (pid $v)" "waited 3s (LOCK_WAIT_MAX)" , since_ge 3 , since_lt 9
+  kill "$v" 2> /dev/null; wait "$v" 2> /dev/null
+}
+wait_cases
+# The approval is read again right before the merge: an owner label removed while e2e and perf
+# ran stops it (the agent cannot approve here: an open owner-review flag).
+printf 'owner-review: required — a test flag\n' >> "$P/docs/work/7-x/decisions.md"; newin
+printf 'approved\n' > "$T/lab-on"; bs T_REUSE= GH_LABELS="$T/lab-on" GH_PAGES="$T/fresh"
+expect pass "ship: owner label kept through e2e and perf → re-checked, merged" \
+  all_of code_is 0 , called "e2e.sh " , said "approval re-checked before the merge (preflight: owner)" , grep -q '^pr merge 12' "$T/gh.log"
+printf 'approved\n' > "$T/lab-on"; bs T_REUSE= GH_LABELS="$T/lab-on" GH_PAGES="$T/fresh" FAKE_TOUCH="$T/lab-on"
+expect pass "ship: owner label removed while e2e ran → BLOCKED before the merge, nothing written" \
+  all_of code_is 1 , called "e2e.sh " , said "the approval (owner) no longer holds" , eval '! gh_wrote'
 
 # --- The cases bite: drop one tagged line ("# bite: <name>") from a copy of the lib, run the
 # cases that guard it against the copy, and some must go wrong.
@@ -473,4 +638,10 @@ bite() { # bite <file under scripts/lib> <tag> <cases function>
 }
 bite parallel.sh count runner_cases
 bite ship-checks.sh idle alone_cases
-for tag in tree untracked base tools; do bite ship-checks.sh "$tag" key_cases; done
+for tag in tree untracked base tools modified commands os ignored env deps; do bite ship-checks.sh "$tag" key_cases; done
+bite ship-checks.sh loghash forged_cases
+bite parallel.sh reclaim race_cases
+bite parallel.sh lockdir-mode lockdir_cases
+bite parallel.sh busy-link lockdir_cases
+bite ship-checks.sh wait-stopped wait_cases
+bite ship-checks.sh wait-stale wait_cases

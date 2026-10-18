@@ -103,10 +103,12 @@ load_ship_libs() {
 }
 # bin/ship --checks-only: e2e and perf for this checkout, recorded, nothing else (no PR, no
 # merge, no label). Started in the background when the pre-merge reviewers start, so bin/ship
-# later reuses the pass for the same input instead of running them again (ship-checks.sh: even
-# with VERDICT_REUSE off). Any change to the input (a fix the reviewers ask for) runs them again.
+# later reuses the pass for the same input instead of running them again. Only with
+# VERDICT_REUSE=1 (the owner's setting): without it the pass would never be used. Any change to
+# the input (a fix the reviewers ask for) runs them again.
 if [ "${1:-}" = --checks-only ]; then
   echo "repo-standards ship --checks-only: e2e and perf on $(git rev-parse --short HEAD)"
+  [ "${VERDICT_REUSE:-}" = 1 ] || { red "FAIL checks-only: VERDICT_REUSE is off in .standards/config.sh, so bin/ship would never reuse this run — nothing run"; exit 1; }
   load_ship_libs || exit 1
   if SHIP_CHECKS_ONLY=1 ship_checks; then green "PASS checks-only: bin/ship on this same input reuses it"; exit 0; fi
   red "FAIL checks-only: fix the cause above; bin/ship will run e2e and perf again"; exit 1
@@ -215,23 +217,28 @@ fi
 # misses are printed only if the agent cannot approve either.
 check="$(base_copy .standards/checks/agent-approval.sh)"
 checker="${check:-$ROOT/.standards/checks/agent-approval.sh}"
-approval=""
-if [ -n "$json" ] && approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
-  cat "$owner_log"
-  commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
-  if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve" > "$owner_log"
-  else approval=owner; fi
-fi
-if [ -z "$approval" ]; then
+# decide_approval: sets approval to owner, agent, or "" (printing the misses). Run in the
+# preflight, and again right before the merge: a label removed (or a decisions.md change) while
+# e2e and perf ran must stop the merge.
+decide_approval() {
+  approval=""
+  if [ -n "$json" ] && approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
+    cat "$owner_log"
+    commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
+    if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve" > "$owner_log"
+    else approval=owner; fi
+  fi
+  [ -z "$approval" ] || return 0
   if out="$("$checker" 2>&1)"; then
     printf '%s\n' "$out"
     approval=agent
   else
     cat "$owner_log"
     printf '%s\n' "$out"
-    pf_miss approval "approval: fix the agent-approval misses above; an owner-review flag the owner has answered, close as answered in decisions.md; for no base, a removed owner-approval flag or (APPROVER=owner) gate files, ask the owner to run bin/approve ${pr:-<pr>}"
   fi
-fi
+}
+decide_approval
+[ -n "$approval" ] || pf_miss approval "approval: fix the agent-approval misses above; an owner-review flag the owner has answered, close as answered in decisions.md; for no base, a removed owner-approval flag or (APPROVER=owner) gate files, ask the owner to run bin/approve ${pr:-<pr>}"
 
 if [ -n "$pf_misses" ]; then
   # One line naming every check that missed (labels are single words, so the split is safe).
@@ -268,6 +275,16 @@ changed_gates="$("$checker" --gate-files)" || { red "FAIL ship: could not list t
 [ -z "$changed_gates" ] || entries="$(git diff -U0 --no-renames "$(base_commit)" HEAD -- docs/rule-changes.md | sed -n 's/^+\(- [0-9]\{4\}-.*\)/\1/p')"
 
 # --match-head-commit: refuse if the PR moved after these gates ran.
+# Approval again, now (seconds): e2e and perf may have taken long enough for a label to go.
+first_approval="$approval"
+info "approval re-checked before the merge (preflight: $first_approval)"
+decide_approval > "$owner_log.recheck" 2>&1
+if [ -z "$approval" ]; then  # bite: recheck
+  cat "$owner_log.recheck"; safe_rm "$owner_log.recheck"
+  red "ship BLOCKED: the approval ($first_approval) no longer holds — it changed while e2e and perf ran; nothing merged"
+  exit 1
+fi
+safe_rm "$owner_log.recheck"
 gh pr merge "$pr" "--$MERGE_MODE" --delete-branch --match-head-commit "$head_oid" || { red "FAIL ship: merge refused"; exit 1; }
 green "shipped #$pr ($approval-approved)"
 # The record is posted only once the merge happened, so it never claims an unmerged PR.
@@ -287,13 +304,25 @@ $entries"
   gh pr edit "$pr" --add-label rules-changed >/dev/null \
     || { red "FAIL ship: merged, but the rules-changed label failed — run: gh pr edit $pr --add-label rules-changed"; record_fail=1; }
 fi
-# Owner-approved: the owner already knows why; a comment only when the rules changed.
-if [ "$approval" = owner ] && [ -n "$changed_gates" ]; then
-  gh pr comment "$pr" --body "Approved by the owner (\`approved\` label) and merged through \`bin/ship\`.
+# A reused e2e + perf verdict is stated in the record with its key, its run's time and log, so it
+# is visible on the PR, never only in a terminal.
+reuse_block=""
+[ -z "$SHIP_REUSED" ] || reuse_block="
 
+**e2e and perf were reused, not re-run:** $SHIP_REUSED
+\`\`\`
+$SHIP_REUSED_KEY
+\`\`\`"
+# Owner-approved: the owner already knows why; a comment only when the rules changed or a verdict
+# was reused.
+owner_gate_line=""
+[ -z "$changed_gates" ] || owner_gate_line="
 - Gate files changed (\`$changed_gates\`), approved by the owner's \`approved\` label
-
-Head: $head_oid$notice" || { red "  warn merged, but the rule-change comment failed — post it by hand"; record_fail=1; }
+"
+if [ "$approval" = owner ] && { [ -n "$changed_gates" ] || [ -n "$SHIP_REUSED" ]; }; then
+  gh pr comment "$pr" --body "Approved by the owner (\`approved\` label) and merged through \`bin/ship\`.
+$owner_gate_line
+Head: $head_oid$notice$reuse_block" || { red "  warn merged, but the rule-change comment failed — post it by hand"; record_fail=1; }
 fi
 if [ "$approval" = agent ]; then
   # The gate list comes from the check that ran, so the record cannot drift from it.
@@ -317,9 +346,9 @@ Mode: APPROVER=$mode (from the base branch's \`.standards/config.sh\`)
 - No open \`owner-review: required\` line in decisions.md, every removed one closed as answered, and no \`owner-approval: required\` removed
 - $gate_line
 - $spec_line
-- Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed${SHIP_REUSED:+ ($SHIP_REUSED)}
+- Spec gate and plan gate passed (or not needed on a docs-only branch), e2e and perf passed${SHIP_REUSED:+ (reused: see below)}
 
-Head: $head_oid$notice" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
+Head: $head_oid$notice$reuse_block" || { red "  warn merged, but the approval comment failed — post it by hand"; [ -z "$changed_gates" ] || record_fail=1; }
 fi
 # Deploy and confirm (optional, the base's DEPLOY_CMD): the merge already happened, so a failure
 # here cannot undo it — it fails the run loudly and says what to do next. Only once the PR is

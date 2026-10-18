@@ -39,11 +39,14 @@ TDD_COMPILE_FAIL_RE=""   # optional ERE over a test's failing output on the base
                          # "Cannot find module|cannot find .* in scope|error TS2305". A match is labelled
                          # compile-only red and needs "TDD: compile-red — <reason>" in decisions.md
 PREPUSH_LANES=""         # optional: pre-push runs its independent checks at the same time, in lanes; a lane's
-                         # checks run in turn. Default lanes: lint, typecheck, unit (then seeds), site (site-lint,
-                         # site-typecheck, site-unit), repo (cross-reads, doc-map, decision-log, guards, file-size,
-                         # roadmap, stories). Put checks that write the same files in one lane, e.g.
-                         # "typecheck=build unit=build"; "*=serial" runs every check in one lane, one at a time.
+                         # checks run in turn. Default lanes: lint, build (typecheck → unit → seeds: they often
+                         # share build output), site (site-lint, site-typecheck, site-unit), repo (cross-reads,
+                         # doc-map, decision-log, guards, file-size, roadmap, stories). Checks that write nothing in
+                         # common can be split out, e.g. "typecheck=typecheck" when typecheck writes no build
+                         # output unit reads; "*=serial" runs every check in one lane, one at a time.
                          # diff-coverage, coverage-baseline, tdd and local checks always run after, in turn
+LOCK_WAIT_MAX=1800       # seconds any one wait for another gate's lock may last before this gate fails, naming
+                         # the lock and its holder (a lock that never frees fails instead of hanging)
 
 # Space-separated globs; * also matches "/".
 SRC_GLOBS="src/* app/* apps/* packages/* lib/*"
@@ -100,10 +103,24 @@ VERDICT_REUSE=""         # "1": a bin/ship re-run on exactly the same input (eve
                          # decisions.md, untracked files, the base, the commands, OS, VERDICT_KEY_CMD's output;
                          # under a day) reuses the last e2e + perf PASS; any failure on that input voids it.
                          # STANDARDS_RERUN=1 bin/ship runs them anyway. Records live in .git/standards-verdicts/.
-                         # Off or on, bin/ship reuses a pass that `bin/ship --checks-only` recorded for the same input
+                         # Also needed by `bin/ship --checks-only` (its pass is reused only with this on). The installer
+                         # turns it on once VERDICT_KEY_CMD and the key's inputs below are set (logged as its call)
 VERDICT_KEY_CMD=""       # with VERDICT_REUSE: prints the versions of the tools e2e and perf use, so a tool
                          # change re-runs them, e.g. "node -v && pnpm -v && pnpm exec playwright --version".
                          # Exits non-zero → nothing is reused or recorded
+# What the reuse key covers (ship_verdict_key in .standards/lib/ship-checks.sh): every tracked file but the issue's
+# decisions.md, untracked unignored files, uncommitted edits, the base, the e2e/perf commands, OS, tool versions,
+# and the three below. It does NOT cover anything else outside git: other gitignored files and build output,
+# environment variables not named here, running services, databases, the network, the clock. A test that reads one
+# of those can pass on reuse and fail on a real run: name it below, or leave reuse off (the default).
+VERDICT_IGNORED_GLOBS=".env*" # gitignored files hashed into the key (a glob without "/" matches at any depth)
+VERDICT_ENV=""           # environment variables whose values e2e/perf read, e.g. "NODE_ENV API_URL"; their values go
+                         # into the key (hashed, never stored in clear), set or unset
+VERDICT_DEPS_MARKERS="node_modules/.modules.yaml node_modules/.package-lock.json node_modules/.yarn-state.yml node_modules/.yarn-integrity"
+                         # files a package manager rewrites on every install: content + mtime in the key, with every
+                         # known lockfile present (pnpm-lock.yaml, package-lock.json, yarn.lock, Cargo.lock, …)
+VERDICT_DEPS_CMD=""      # optional: prints the installed-dependency state for other stacks (e.g. "pip freeze");
+                         # must exit 0, else nothing is reused or recorded
 MERGE_MODE="squash"      # how bin/ship merges: squash | merge (keeps step-split commits) | rebase
 COVERAGE_RATCHET_SLACK=2 # bin/ship fails when total coverage is more than this many points above
                          # .standards/coverage-baseline, and prints the one-line raise

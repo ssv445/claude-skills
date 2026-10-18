@@ -45,16 +45,17 @@ class_report
 # checks (bin/ship's PERF_CMD) wait for it, and it waits for theirs first (parallel.sh).
 gate_busy_on || { red "FAIL push: cannot mark this gate busy in $(_gate_dir) (another gate's timed checks would run under its load; set STANDARDS_LOCK_DIR to a writable temp dir)"; exit 1; }
 # The independent checks run at the same time, in lanes; a lane's checks run in turn. Default
-# lanes: lint, typecheck, unit (then seeds, which may share the test database), site (the site's
-# three, which share its build state), repo (the repo-standards checks, seconds each). Checks
-# that write the same files belong in one lane: PREPUSH_LANES in config.sh. Every check runs
-# whatever the others do; any failure blocks. The app's and the site's commands run by change
-# class; the rest run on every class.
+# lanes: lint, build (typecheck, then unit, then seeds: a typecheck and a test run often write the
+# same build output, and seeds may share the test database), site (the site's three, which share
+# its build state), repo (the repo-standards checks, seconds each). A repo whose typecheck and
+# unit tests write nothing in common can split them with PREPUSH_LANES in config.sh (e.g.
+# "typecheck=typecheck"). Every check runs whatever the others do; any failure blocks. The app's
+# and the site's commands run by change class; the rest run on every class.
 par_reset
 job lint lint 'run_part lint app "$LINT_CMD"'
-job typecheck typecheck 'run_part typecheck app "$TYPECHECK_CMD"'
-job unit unit 'run_part unit app "$UNIT_CMD"'
-job seeds unit 'run_cmd seeds "$SEED_CHECK_CMD"'
+job typecheck build 'run_part typecheck app "$TYPECHECK_CMD"'
+job unit build 'run_part unit app "$UNIT_CMD"'
+job seeds build 'run_cmd seeds "$SEED_CHECK_CMD"'
 job site-lint site 'run_part site-lint site "$SITE_LINT_CMD"'
 job site-typecheck site 'run_part site-typecheck site "$SITE_TYPECHECK_CMD"'
 job site-unit site 'run_part site-unit site "$SITE_UNIT_CMD"'

@@ -34,7 +34,7 @@ One line each, starting at column 0, accepted at the pre-merge gate. Format (ind
     docs-unchanged: <doc path> — <reason>
 
 ## Pre-merge gate
-Before asking: run `docs/templates/review-checklist.md` (pre-merge) and `bin/ship --preflight`, and start `bin/ship --checks-only` in the background. A fix round after a PASS re-reviews only `git diff <Reviewed sha>..HEAD` and edits the line below to `Reviewed: <new sha> (delta from <old sha>)`; review in full when the delta touches more than the fix, or a reviewer asks.
+Before asking: run `docs/templates/review-checklist.md` (pre-merge) and `bin/ship --preflight`, and, with `VERDICT_REUSE=1`, start `bin/ship --checks-only` in the background. A fix round after a PASS re-reviews only `git diff <Reviewed sha>..HEAD` and edits the line below to `Reviewed: <new sha> (delta from <old sha>)`; review in full when the delta touches more than the fix, or a reviewer asks.
 - Reviewer A: <PASS | FAIL> — <key points>
 - Reviewer B: <PASS | FAIL> — <key points>
 - Arbiter: <PASS | FAIL> — <ruling and why; only on disagreement>

@@ -52,6 +52,7 @@ else
   # ab <args>: one agent-browser command in this script's own session; its output to stderr.
   ab() { agent-browser --session "$session" "$@" >&2; }
   trap 'agent-browser --session "$session" close > /dev/null 2>&1' EXIT
+  ab open about:blank || { say "FAIL evidence: agent-browser cannot start a browser"; exit 2; }
 fi
 
 # apply_theme <theme>: as THEME_JS says (see above).
@@ -67,11 +68,15 @@ for page in $PAGES; do
     for theme in $THEMES; do
       file="$out/$(slug "$page")-${w}x${h}-$theme.png"
       if [ -n "$dry" ]; then
-        say "would capture $BASE_URL$page at ${w}x${h}, theme $theme → $file"
+        say "would set viewport ${w}x${h} and theme $theme, then load $BASE_URL$page → $file"
         files+=("$file"); continue
       fi
-      # A fresh load per capture: nothing one theme or size left behind shows in the next.
-      if ab open "$BASE_URL$page" && ab set viewport "$w" "$h" && apply_theme "$theme" \
+      # Size and theme first, then a fresh load per capture: the page renders at that size in that
+      # theme from its first paint, and nothing one capture left behind shows in the next. A
+      # THEME_JS theme lives in the page's origin (storage, attributes), so it is set on the loaded
+      # page and the page is loaded again.
+      if ab set viewport "$w" "$h" && { [ -n "$THEME_JS" ] || apply_theme "$theme"; } && ab open "$BASE_URL$page" \
+         && { [ -z "$THEME_JS" ] || { apply_theme "$theme" && ab reload; }; } \
          && ab wait "$SETTLE_MS" && ab screenshot "$file" && [ -s "$file" ]; then
         say "ok   $page ${w}x${h} $theme"
         files+=("$file")

@@ -107,7 +107,13 @@ _par_stop() {
 # only when that process is alive and an ancestor of this one.
 #   STANDARDS_LOCK_DIR  default /tmp/repo-standards-locks-<uid>. /tmp, not $TMPDIR: a sandbox or
 #                       session may set its own TMPDIR, which would split the lock silently. It
-#                       must be a dir safe_rm may delete in (a temp dir or inside the repo).
+#                       must be a dir safe_rm may delete in (a temp dir or inside the repo), this
+#                       user's own, mode 700 when made here (_gate_dir_ok).
+#   LOCK_WAIT_MAX       seconds any one wait may last (default 1800); then the gate fails, naming
+#                       the lock and its holder. Each wait that ended prints how long it took.
+# A gate nested in another (_gate_nested; par_run's lanes and ship_alone export the outer gate's
+# pid) neither waits for idle nor takes `timed`: its outer gate already does, and a nested wait on
+# either would deadlock with another gate's timed half.
 GATE_WAITED=0 # seconds the last _gate_busy_on waited for another gate's timed checks
 _gate_dir() { printf '%s\n' "${STANDARDS_LOCK_DIR:-/tmp/repo-standards-locks-$(id -u)}"; }
 _gate_start() { ps -o lstart= -p "$1" 2> /dev/null; }
@@ -149,21 +155,83 @@ _gate_held() {
   fi
   [ "$h" != "$$" ] && _gate_alive "$h" "$(cat "$1/start" 2> /dev/null)"
 }
-# _gate_dir_ok: the lock dir exists (made if needed) and safe_rm may clear stale entries in it;
-# otherwise a stale lock could never be removed and every gate would wait on it forever.
+# The lock dir is shared by every gate of this user, and stale entries in it are deleted, so it
+# must be this user's own real directory: made mode 700, refused when it (or its busy/) is a
+# symlink, not a directory, not owned by this user, or group- or world-writable — otherwise
+# anyone (or a stray symlink) could point the stale-entry cleanup at other files. Deletions in it
+# go only through _gate_rm.
+# _gate_safe_dir <dir>: that dir passes; else says why.
+_gate_safe_dir() {
+  [ ! -L "$1" ] || { echo "  refused lock dir $1: it is a symlink"; return 1; }
+  [ -d "$1" ] || { echo "  refused lock dir $1: not a directory"; return 1; }
+  [ -O "$1" ] || { echo "  refused lock dir $1: not owned by $(id -un)"; return 1; }
+  [ -z "$(find "$1" -prune \( -perm -020 -o -perm -002 \) 2> /dev/null)" ] || { echo "  refused lock dir $1: group- or world-writable"; return 1; }  # bite: lockdir-mode
+}
+# _gate_dir_ok: the lock dir and its busy/ exist (made 700 if needed), pass _gate_safe_dir, and
+# safe_rm may clear stale entries there; otherwise a stale lock could never be removed and every
+# gate would wait on it forever.
 _gate_dir_ok() {
   local d
   d="$(_gate_dir)"
-  mkdir -p "$d/busy" 2> /dev/null && safe_rm --check "$d/busy/probe" 2> /dev/null
+  [ -e "$d" ] || [ -L "$d" ] || (umask 077 && mkdir -p "$d") 2> /dev/null
+  _gate_safe_dir "$d" || return 1
+  [ -e "$d/busy" ] || [ -L "$d/busy" ] || (umask 077 && mkdir "$d/busy") 2> /dev/null
+  _gate_safe_dir "$d/busy" || return 1  # bite: busy-link
+  safe_rm --check "$d/busy/probe" 2> /dev/null
+}
+# _gate_rm <entry>: delete one lock or busy mark, only when it sits directly in the verified lock
+# dir or its busy/ (resolved physically) and is no symlink; then through safe_rm.
+_gate_rm() {
+  local d parent
+  d="$(CDPATH='' cd -P -- "$(_gate_dir)" 2> /dev/null && pwd -P)" || return 1
+  parent="$(CDPATH='' cd -P -- "${1%/*}" 2> /dev/null && pwd -P)" || return 1
+  case "$parent" in "$d" | "$d/busy") ;; *) echo "  refused to delete $1: not directly in the lock dir $d"; return 1 ;; esac
+  case "${1##*/}" in "" | . | ..) return 1 ;; esac
+  [ ! -L "$1" ] || { echo "  refused to delete $1: a symlink in the lock dir"; return 1; }
+  safe_rm "$1"
+}
+# _gate_waited <since> <what>: fails, saying what blocked it, once a wait passes LOCK_WAIT_MAX
+# seconds (default 1800): a lock that never frees fails the gate instead of hanging it.
+_gate_waited() {
+  local n=$(($(date +%s) - $1))
+  [ "$n" -ge "${LOCK_WAIT_MAX:-1800}" ] || return 0
+  echo "FAIL waited ${n}s (LOCK_WAIT_MAX=${LOCK_WAIT_MAX:-1800}) for $2"
+  return 1
+}
+# _gate_reclaim <lock dir>: remove a lock judged stale, so that two gates can never both take
+# it over: removers take <lock>.claim (mkdir, atomic), judge the lock again under it — another gate
+# may have reclaimed and taken it since this one looked — and only then remove it. A claim left by
+# a gate that died holding it is cleared after 30 s.
+_gate_reclaim() {
+  local c="$1.claim"
+  # Test hook (tests/run.sh): a pause between judging the lock stale and claiming it.
+  [ -z "${STANDARDS_GATE_TEST_PAUSE:-}" ] || sleep "$STANDARDS_GATE_TEST_PAUSE"
+  if ! mkdir "$c" 2> /dev/null; then
+    [ -L "$c" ] && { echo "  refused $c: a symlink in the lock dir"; return 1; }
+    [ $(($(date +%s) - $(_gate_mtime "$c"))) -lt 30 ] || _gate_rm "$c" || return 1
+    sleep 0.2
+    return 0
+  fi
+  if _gate_held "$1"; then _gate_rm "$c"; return 0; fi  # bite: reclaim
+  _gate_rm "$1" || { _gate_rm "$c"; return 1; }
+  _gate_rm "$c"
 }
 
-# gate_lock <name>: wait until this gate holds <name>, one holder on the machine.
+# gate_lock <name>: wait until this gate holds <name>, one holder on the machine. A gate nested in
+# another (see _gate_nested) does not take `timed`: its outer gate holds or waits for it, and
+# waiting on it from inside would never end.
 gate_lock() {
-  local d l said=""
+  local d l said="" s
   d="$(_gate_dir)"
   _gate_dir_ok || return 1
+  if [ "$1" = timed ] && _gate_nested; then
+    echo "  nested in gate pid $STANDARDS_GATE_BUSY: the timed lock is its outer gate's to hold; not taken"
+    return 0
+  fi
   l="$d/$1.lock"
+  s=$(date +%s)
   until mkdir "$l" 2> /dev/null; do
+    [ ! -L "$l" ] || { echo "  refused $l: a symlink in the lock dir"; return 1; }
     # Gone between the two looks (its holder just let go): try again; fail only when the dir
     # cannot be written, so this never loops on a lock it can never make.
     if [ ! -d "$l" ]; then
@@ -172,7 +240,7 @@ gate_lock() {
     fi
     if ! _gate_held "$l"; then
       [ "$(cat "$l/pid" 2> /dev/null)" = "$$" ] && return 0
-      safe_rm "$l" || return 1
+      _gate_reclaim "$l" || return 1
       continue
     fi
     # Held by the gate this one runs inside: waiting would never end.
@@ -182,32 +250,46 @@ gate_lock() {
     fi
     [ -n "$said" ] || echo "  wait the $1 lock is held by pid $(cat "$l/pid" 2> /dev/null) ($(cat "$l/what" 2> /dev/null))"
     said=1
+    _gate_waited "$s" "the $1 lock, held by pid $(cat "$l/pid" 2> /dev/null) ($(cat "$l/what" 2> /dev/null))" || return 1
     sleep 1
   done
-  printf '%s\n' "$PWD" > "$l/what" && _gate_start $$ > "$l/start" && printf '%s\n' "$$" > "$l/pid"
+  printf '%s\n' "$PWD" > "$l/what" && _gate_start $$ > "$l/start" && printf '%s\n' "$$" > "$l/pid" || return 1
+  [ -z "$said" ] || echo "  got the $1 lock after $(($(date +%s) - s))s waiting"
 }
 gate_unlock() {
   local l
   l="$(_gate_dir)/$1.lock"
-  [ "$(cat "$l/pid" 2> /dev/null)" = "$$" ] && safe_rm "$l"
+  [ "$(cat "$l/pid" 2> /dev/null)" = "$$" ] && _gate_rm "$l"
   return 0
 }
 
-# gate_wait_idle: wait until no other gate is running checks (the timed lock holder calls it).
+# gate_wait_idle: wait until no other gate is running checks (the timed lock holder calls it). A
+# nested gate does not wait: its own outer gate is busy, and that never ends while it waits.
 gate_wait_idle() {
-  local d f p busy said=""
+  local d f p busy said="" s
   d="$(_gate_dir)/busy"
+  if _gate_nested; then
+    echo "  nested in gate pid $STANDARDS_GATE_BUSY: not waiting for other gates to go idle (its outer gate does)"
+    return 0
+  fi
+  _gate_dir_ok || return 1
+  s=$(date +%s)
   while :; do
     busy=""
     for f in "$d"/*; do
-      [ -e "$f" ] || continue
+      [ -e "$f" ] || [ -L "$f" ] || continue
+      [ ! -L "$f" ] || { echo "  refused $f: a symlink in the lock dir"; return 1; }
       p="$(basename "$f")"
       [ "$p" != "$$" ] && [ "$p" != "${STANDARDS_GATE_BUSY:-}" ] || continue
-      if _gate_alive "$p" "$(cat "$f" 2> /dev/null)"; then busy="$busy $p"; else safe_rm "$f" || return 1; fi
+      if _gate_alive "$p" "$(cat "$f" 2> /dev/null)"; then busy="$busy $p"; else _gate_rm "$f" || return 1; fi
     done
-    [ -n "$busy" ] || return 0
+    if [ -z "$busy" ]; then
+      [ -z "$said" ] || echo "  other gates idle after $(($(date +%s) - s))s waiting"
+      return 0
+    fi
     [ -n "$said" ] || echo "  wait other gates are running checks (pid$busy); the timed checks start when they finish"
     said=1
+    _gate_waited "$s" "other gates to finish their checks (pid$busy)" || return 1
     sleep 2
   done
 }
@@ -234,19 +316,21 @@ _gate_busy_on() {
   s=$(date +%s)
   while :; do
     # Mark first, then look: a timed half that locks after this line sees the mark and waits.
+    [ ! -L "$d/busy/$$" ] || { echo "  refused $d/busy/$$: a symlink in the lock dir"; return 1; }
     _gate_start $$ > "$d/busy/$$" || return 1
     if ! _gate_held "$d/timed.lock"; then
       GATE_WAITED=$(($(date +%s) - s))
       GATE_BUSY_DEPTH=1
       return 0
     fi
-    safe_rm "$d/busy/$$" || return 1
+    _gate_rm "$d/busy/$$" || return 1
     if _gate_ancestor "$(cat "$d/timed.lock/pid" 2> /dev/null)"; then
       echo "  the timed lock is held by this gate's own outer gate; a nested gate needs its own STANDARDS_LOCK_DIR"
       return 1
     fi
     [ -n "$said" ] || echo "  wait timed checks are running or waiting (pid $(cat "$d/timed.lock/pid" 2> /dev/null), $(cat "$d/timed.lock/what" 2> /dev/null)); these start when they finish"
     said=1
+    _gate_waited "$s" "another gate's timed checks (pid $(cat "$d/timed.lock/pid" 2> /dev/null))" || return 1
     sleep 2
   done
 }
@@ -254,7 +338,7 @@ _gate_busy_off() {
   [ "$GATE_BUSY_DEPTH" -gt 0 ] || return 0
   GATE_BUSY_DEPTH=$((GATE_BUSY_DEPTH - 1))
   [ "$GATE_BUSY_DEPTH" -eq 0 ] || return 0
-  _gate_nested || safe_rm "$(_gate_dir)/busy/$$"
+  _gate_nested || _gate_rm "$(_gate_dir)/busy/$$"
 }
 
 par_run() {

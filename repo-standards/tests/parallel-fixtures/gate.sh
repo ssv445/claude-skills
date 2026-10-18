@@ -16,6 +16,8 @@
 #   held=<dir>                    print "held" or "free" (_gate_held)
 #   alone=<command>               ship_alone on the command
 #   ship                          ship_checks (bin/ship's e2e and perf step)
+#   running=<pid>[:<epoch>]       write a --checks-only "running" record for this input naming that
+#                                 process (and start epoch, default now), as a --checks-only run would
 #   inner=<step>                  this script again, as a child, with that one step: "inner exit <rc>"
 #   log=<word>                    append "<word> <epoch> $GATE_NAME" to $GATE_LOG
 #   sleep=<seconds>
@@ -46,6 +48,11 @@ step() {
     held=*) if _gate_held "${1#held=}"; then echo held; else echo free; fi ;;
     alone=*) ship_alone eval "${1#alone=}" ;;
     ship) ship_checks ;;
+    running=*)
+      s="${1#running=}"; local pid="${s%%:*}" at="$(date +%s)" k f
+      case "$s" in *:*) at="${s#*:}" ;; esac
+      k="$(ship_verdict_key)" && f="$(ship_verdict_file "$k")" && mkdir -p "$(dirname "$f")" \
+        && printf '%s\nrunning %s %s %s\n' "$k" "$at" "$pid" "$(_ship_start "$pid")" > "$f" ;;
     inner=*) "$self" "${1#inner=}"; echo "inner exit $?" ;;
     log=*) printf '%s %s %s\n' "${1#log=}" "$(date +%s)" "${GATE_NAME:-}" >> "$GATE_LOG" ;;
     sleep=*) sleep "${1#sleep=}" ;;

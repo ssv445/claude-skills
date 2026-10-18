@@ -2,7 +2,7 @@
 
 The exact list the reviewers of each gate work through. The author runs it first and fixes every miss before asking for review: most first-round findings are a line from this list (most often an error case with no test). Reviewers get this same file, and still look past it for what it does not name: it is the floor of a review, not the whole of it.
 
-Mark each line `ok`, `N/A — <reason>`, or the miss. A miss found by the author is fixed, not listed.
+Read it before each review; nothing is recorded from it. A miss the author finds is fixed, not listed.
 
 ## Spec gate (`spec.md`, before the plan)
 - [ ] **User** is a real persona (linked), with skill, device, language and frequency; not "users".
@@ -37,4 +37,4 @@ Mark each line `ok`, `N/A — <reason>`, or the miss. A miss found by the author
 - [ ] A gate file changed (agent mode): the line in `docs/rule-changes.md` says plainly what the rules now do differently, and the gate-change review is done.
 
 ### Fix round after a PASS
-Re-review only `git diff <Reviewed sha>..HEAD` and record `Reviewed: <new sha> (delta from <old sha>)`. Review in full instead when the delta touches more than the fix asked for, or when any reviewer asks to.
+Re-review only `git diff <Reviewed sha>..HEAD` and record `Reviewed: <new sha> (delta from <old sha>)`, where the old sha is the one the PASS recorded. `agent-approval.sh` accepts that only when the old sha is an ancestor of the new one and was recorded as this gate's `Reviewed:` under `Verdict: PASS`, so the earlier full review plus the delta cover the whole branch. Review in full instead when the delta touches more than the fix asked for, or when any reviewer asks to.

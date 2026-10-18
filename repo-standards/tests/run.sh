@@ -221,30 +221,46 @@ review "$ok" "$ok" "" "0123456789abcdef0123456789abcdef01234567"
 aa fail "Reviewed: sha not present locally"
 git checkout -q docs
 # Diff-only re-review after a fix round: "Reviewed: <new sha> (delta from <old sha>)". The new sha
-# must cover HEAD like a full review's; the old one must be a commit present here.
-review "$ok" "$ok" "" "$(git rev-parse HEAD) (delta from $(git rev-parse HEAD~1))"
-aa pass "Reviewed: <sha> (delta from <old sha>), new sha covers HEAD"
-expect pass "agent-approval: ... says it reviewed the delta" grep -q "review covers HEAD (reviewed $(git rev-parse HEAD), delta from $(git rev-parse HEAD~1))" "$T/last.log.prev"
-review "$ok" "$ok" "" "$(git rev-parse --short HEAD) (delta from $(git rev-parse --short HEAD~2))"
+# must cover HEAD like a full review's. The old one must be an ancestor of the new one, not the
+# same commit, and recorded before in decisions.md's history as this gate's Reviewed sha under
+# Verdict: PASS — so the delta plus that full review cover the whole branch.
+pm_verdict() { awk -v v="$1" '/^## / { s = $0 } s == "## Pre-merge gate" && /^Verdict:/ { $0 = "Verdict: " v } { print }' "$dec" > "$T/dec" && cp "$T/dec" "$dec"; }
+recorded() { review "$ok" "$ok" "" "$1"; pm_verdict "${2:-PASS}"; git commit -qam "pre-merge gate at $1 (${2:-PASS})"; }  # recorded <sha> [verdict]
+h="$(git rev-parse HEAD)"; h1="$(git rev-parse HEAD~1)"; h2="$(git rev-parse HEAD~2)"; h3="$(git rev-parse HEAD~3)"
+recorded "$h1"; recorded "$h2" FAIL; pm_verdict PASS
+review "$ok" "$ok" "" "$h (delta from $h1)"
+aa pass "Reviewed: <sha> (delta from <old sha>): old sha an ancestor, recorded PASS before; new sha covers HEAD"
+expect pass "agent-approval: ... says it reviewed the delta" grep -q "review covers HEAD (reviewed $h, delta from $h1)" "$T/last.log.prev"
+review "$ok" "$ok" "" "$(git rev-parse --short "$h") (delta from $(git rev-parse --short "$h1"))"
 aa pass "Reviewed: short shas in the delta form"
-review "$ok" "$ok" "" "$(git rev-parse HEAD~1) (delta from $(git rev-parse HEAD~2))"
+review "$ok" "$ok" "" "$h1 (delta from $h2)"
 aa fail "delta form whose new sha predates a code commit"
-review "$ok" "$ok" "" "$(git rev-parse HEAD) (delta from 0123456789abcdef0123456789abcdef01234567)"
+review "$ok" "$ok" "" "$h (delta from $h)"
+aa fail "delta from the reviewed sha itself (an empty delta)"
+review "$ok" "$ok" "" "$h (delta from $h3)"
+aa fail "delta from a parent never recorded as reviewed"
+review "$ok" "$ok" "" "$h (delta from $h2)"
+aa fail "delta from a sha recorded only under a non-PASS verdict"
+orphan="$(git commit-tree -m orphan "$(git rev-parse "$h^{tree}")")"; recorded "$orphan"
+review "$ok" "$ok" "" "$h (delta from $orphan)"
+aa fail "delta from an orphan commit (recorded PASS, but no ancestor)"
+review "$ok" "$ok" "" "$h (delta from 0123456789abcdef0123456789abcdef01234567)"
 aa fail "delta from a sha not present locally"
-review "$ok" "$ok" "" "$(git rev-parse HEAD) (delta from HEAD~1)"
+review "$ok" "$ok" "" "$h (delta from HEAD~1)"
 aa fail "delta from a symbolic name"
-review "$ok" "$ok" "" "$(git rev-parse HEAD) (looked again)"
+review "$ok" "$ok" "" "$h (looked again)"
 aa fail "Reviewed: sha with some other suffix"
-git checkout -q docs
+git checkout -q docs; git reset -q --hard "$h"
 
 # Rebasing onto a base that changed other files keeps the review; the same file does not.
 feat="$(git rev-parse HEAD)"; main0="$(git rev-parse main)"
+recorded "$(git rev-parse HEAD~1)"; review "$ok" "$ok" "" "$feat (delta from $(git rev-parse "$feat~1"))"; git commit -qam "delta review"
 git checkout -q main; echo "unrelated" > notes.txt; git add notes.txt; git commit -qm "main: notes"
 git checkout -q feat/7-mul; git rebase -q main
+aa pass "rebased onto unrelated base change, delta review kept (no re-review; history rewritten)"
+git reset -q --hard "$feat"; git rebase -q main
 review "$ok" "$ok" "" "$feat"
 aa pass "rebased onto unrelated base change, review kept"
-review "$ok" "$ok" "" "$feat (delta from $(git rev-parse "$feat~1"))"
-aa pass "rebased onto unrelated base change, delta review kept (no re-review)"
 git checkout -q docs
 git checkout -q main; { echo "# math helpers"; cat src/math.sh; } > "$T/m" && cp "$T/m" src/math.sh; git commit -qam "main: math header"
 git checkout -q feat/7-mul; git rebase -q main
@@ -1019,6 +1035,7 @@ expect pass "evidence: dry run → 2 pages × 2 viewports × 2 themes = 8 files 
 expect pass "evidence: ... named page-WxH-theme, '/' as home" \
   bash -c "grep -qx '$T/evidence.DRY-RUN/home-390x844-light.png' '$T/ev.out' && grep -qx '$T/evidence.DRY-RUN/settings-team-844x390-dark.png' '$T/ev.out'"
 expect pass "evidence: ... no browser call, no dir written" bash -c "test ! -s '$T/ab.log' && test ! -e '$T/evidence.DRY-RUN'"
+expect pass "evidence: ... size and theme are set before the page loads" grep -q "would set viewport 390x844 and theme light, then load http://localhost:3000/ → " "$T/ev.err"
 evd
 expect pass "evidence: defaults → home at 390x844, 360x740, 844x390 in light and dark (6 files)" test "$(grep -c '\.png$' "$T/ev.out")" = 6
 evd EVIDENCE_VIEWPORTS="390by844"; evc=$?
