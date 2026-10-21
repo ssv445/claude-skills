@@ -12,24 +12,53 @@ BASE_BRANCH="main"
 APPROVER="owner"
 
 # --- pre-push (budget: 2 min total) ---
+# SITE_*_CMD (optional): the same gate for a second half of the repo, e.g. a website next to an
+# app. They run by change class (see "Change class" below); leave empty for a single-part repo.
 LINT_CMD=""
+SITE_LINT_CMD=""
 TYPECHECK_CMD=""
+SITE_TYPECHECK_CMD=""
 UNIT_CMD=""
-DIFF_COVERAGE_CMD=""     # must exit non-zero when changed-line coverage < DIFF_COVERAGE_MIN
+SITE_UNIT_CMD=""
+DIFF_COVERAGE_CMD=""     # must exit non-zero when changed-line coverage < DIFF_COVERAGE_MIN. Runs on every class:
+                         # with change classes on, the script picks its own reports (checks_for app / site-change)
 DIFF_COVERAGE_MIN=90
-COVERAGE_TOTAL_CMD=""    # prints total line coverage as a bare number, e.g. 87.4; compared to .standards/coverage-baseline
+COVERAGE_TOTAL_CMD=""    # prints total line coverage as a bare number, e.g. 87.4; compared to .standards/coverage-baseline.
+                         # Measures the app, so it is skipped when change classes are on and the app is untouched
 TEST_FILES_CMD=""        # runs ONLY the test files appended as arguments, e.g. "pnpm vitest run"
+SITE_TEST_FILES_CMD=""   # same for test files under SITE_GLOBS; empty = TEST_FILES_CMD
 SEED_CHECK_CMD=""        # validates seeds against the current schema
 
 # Space-separated globs; * also matches "/".
 SRC_GLOBS="src/* app/* apps/* packages/* lib/*"
 TEST_GLOBS="*.test.* *.spec.* *_test.* */__tests__/* tests/* test/* e2e/*"
-DEPS_LINKS="node_modules"        # paths symlinked into the TDD scratch checkout so tests can run there
+DEPS_LINKS="node_modules"        # paths symlinked into the TDD scratch checkout so tests can run there (nested ok: site/node_modules)
 FILE_SIZE_GLOBS="*.ts *.tsx *.js *.jsx *.mjs *.py *.go *.rb *.php"
 MAX_FILE_LINES=400
 
+# --- Change class (optional): which checks a branch needs, from every path it touches ---
+# Off while SITE_GLOBS and DOCS_GLOBS are both empty: every check runs on every branch. Set them
+# so a docs-only or site-only branch skips the app's checks (and a docs-only one the site's).
+# change_class in .standards/lib/common.sh reads these; first match wins, in this order:
+#   SHARED_GLOBS  read by both sides' checks (a test reads it from the other side): class "all"
+#   APP_GLOBS     always app, even a doc inside them (e.g. the gate files: ".standards/* bin/*")
+#   SITE_GLOBS    the second half of the repo: alone (docs aside), only the site's checks run
+#   DOCS_GLOBS    docs: alone, neither side's checks run; with others, neutral
+#   anything else is app. Mixed app and site, no file, or a failed file list: "all".
+# Repo-standards checks (TDD, doc map, decision log, file size, roadmap, cross-reads) run on every class.
+SHARED_GLOBS=""
+APP_GLOBS=""
+SITE_GLOBS=""            # e.g. "site/* scripts/deploy-site.sh"
+DOCS_GLOBS=""            # e.g. "docs/* *.md"
+# cross-reads.sh: a skipped check must not read a changed file. Tracked files (git pathspecs)
+# whose quoted path literals are classed: the app side's tests must not read site or docs files,
+# the site side's must not read docs files, unless those paths are in SHARED_GLOBS. Empty = unchecked.
+CROSS_READS_APP_FILES=""   # e.g. "Tests/*.swift"
+CROSS_READS_SITE_FILES=""  # e.g. "site/*.ts site/*.mjs"
+
 # --- bin/ship (pre-merge) ---
 E2E_CMD=""
+SITE_E2E_CMD=""          # optional; with change classes on, runs only when the site changed
 PERF_CMD=""              # must exit non-zero when a budget from a spec's Expectations is exceeded
 
 # --- intake ---

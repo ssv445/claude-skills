@@ -2,7 +2,7 @@
 
 The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`, and `## Gate-change review` too when a gate file changed under `APPROVER="agent"`. When `bin/ship` approves on its own, and when it needs the owner: "Approval and shipping" in `docs/guidelines/repo-standards.md`.
 
-To hand a taste or product call to the owner, add a line at column 0 anywhere in this file (indented here so it is not itself a flag); `bin/ship` then waits for the owner's `approved` label:
+Taste and product calls: pick the recommended option and log it under `## Decisions`. Only a big call (a price, a public claim or pitch, a new screen or visual design, anything that costs money, or a change that loosens a check) goes to the owner: add a line at column 0 anywhere in this file (indented here so it is not itself a flag); `bin/ship` then waits for the owner's `approved` label:
 
     owner-review: required — <reason>
 
