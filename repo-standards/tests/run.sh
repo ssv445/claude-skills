@@ -109,6 +109,10 @@ expect pass "architecture: branch with no issue folder" $A
 git checkout -q feat/7-mul; git branch -q -D feat/8-nodir
 git checkout -q -b feat/7-archcheck
 expect pass "architecture: filled, no structure change" $A
+sed -i.bak '/^## Architecture review/,/^## /s/^Verdict: PASS$/Verdict: PENDING/' docs/work/7-mul/decisions.md && rm -f docs/work/7-mul/decisions.md.bak
+git commit -qam "architecture review not done"
+expect fail "architecture: Architecture review not PASS" $A
+git revert --no-edit HEAD >/dev/null
 git rm -q "$spec" && git commit -qm "no spec"
 expect fail "architecture: issue folder without spec.md" $A
 grep -v '^- Modules touched\|^- New owners\|^- New module or owner change\|^## Architecture impact\|^Names from' "$SKILL/templates/spec.md" > "$spec"
@@ -125,8 +129,7 @@ sed -e 's/^## Architecture impact/## Architecture Impact/' -e 's/^- Modules touc
     "$SKILL/templates/spec.md" > "$spec" && git commit -qam "markdown variants"
 expect pass "architecture: bold, other bullets, capitals" $A
 section math "invoices -> billing" "yes, new billing module" && git commit -qam "structure change, nothing else"
-expect fail "architecture: owner change without doc, ADR, approval" $A
-sed -i.bak 's/^owner-approval: not-required/owner-approval: Required/' "$spec" && rm -f "$spec.bak"
+expect fail "architecture: owner change without doc or ADR" $A
 mkdir -p docs/adr && echo "# 0001 — Billing module" > docs/adr/0001-billing.md
 git add docs && git commit -qm "ADR and approval, doc still missing"
 expect fail "architecture: owner change without the architecture doc" $A
@@ -135,15 +138,15 @@ git add docs && git commit -qm "doc updated but owner not named"
 expect fail "architecture: new owner not named in the doc" $A
 printf '| Billing | billing (src/billing) | logic | charges and invoices |\n' >> docs/guidelines/architecture.md
 git commit -qam "owner named in the doc"
-expect pass "architecture: owner change with doc, new ADR, approval" $A
+expect pass "architecture: owner change with doc and new ADR, no owner approval needed" $A
 git checkout -q feat/7-mul; git branch -q -D feat/7-archcheck
 # Editing an old ADR is not a new decision record.
 git checkout -q main
 mkdir -p docs/adr && echo "# 0000 — Old decision" > docs/adr/0000-old.md && git add docs && git commit -qm "old ADR on base"
 git checkout -q -b feat/7-oldadr
 mkdir -p docs/work/7-mul
+sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > docs/work/7-mul/decisions.md
 section math "invoices -> billing" yes
-sed -i.bak 's/^owner-approval: not-required/owner-approval: required/' "$spec" && rm -f "$spec.bak"
 cp "$SKILL/templates/architecture.md" docs/guidelines/architecture.md && echo "billing" >> docs/guidelines/architecture.md
 echo "typo fix" >> docs/adr/0000-old.md
 git add docs && git commit -qm "only an old ADR edited"

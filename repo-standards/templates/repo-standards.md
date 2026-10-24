@@ -53,22 +53,23 @@ Done when: the issue has a story or reproduction, and acceptance criteria.
 ### 2. Spec
 Write `docs/work/<issue>-<slug>/spec.md` from `docs/templates/spec.md`. The **Expectations** block is the heart of it: user, interaction, inputs, error cases, scale and performance, accuracy, freshness/caching, non-goals.
 - Tag every Expectations line **[sourced: <where>]** (issue, ICP doc, guideline, existing behaviour) or **[inferred]** (your guess).
-- Set `owner-approval: required` when the change touches the **blast-radius list**: architecture (including any new module, new owner or change of owner), schema or data model, a new third-party dependency or paid service, auth or security, pricing or a user-facing promise.
-- Fill `## Architecture impact`: modules touched, the one owner of each new fact, store, shared resource or outbound call, and whether it adds a module or changes an owner (see Architecture below).
+- Set `owner-approval: required` when the change touches the **blast-radius list**: schema or data model, a new third-party dependency or paid service, auth or security, pricing or a user-facing promise.
+- Fill `## Architecture impact`: modules touched, the one owner of each new fact, store, shared resource or outbound call, and whether it adds a module or changes an owner (see Architecture below). Design to the existing architecture from the start; the spec gate checks it.
 
 Done when: every Expectations field is filled or `N/A — reason`, every line is tagged, and `## Architecture impact` is filled.
 
 ### 3. Spec gate
 Two reviewers attack the spec: missing error cases, unrealistic scale, wrong user, accuracy or freshness claims that will hurt, untestable criteria. Disagreement → arbiter rules with reasons. A taste dispute → the owner.
+Then the **architecture review** (`## Architecture review`): a reviewer who did not write the spec checks the declared impact against `docs/guidelines/architecture.md` and the code — nothing undeclared — and the design against the structure principles (Architecture below). Misfits are fixed in the spec now, before any plan; a change the architecture itself needs is made in the doc in this branch, with an ADR. No owner sign-off: only a genuine product or taste trade-off goes to the owner, as an `owner-review` flag.
 Then ask the owner about every **[inferred]** line (one question at a time) and, if `owner-approval: required`, for the `spec-approved` label. Write each answer back into the doc it belongs in (ICP, guideline, glossary) so the question is never asked again, and re-tag the line **[sourced]**.
 
-Done when: `## Spec gate` in `decisions.md` has `Verdict: PASS`; no **[inferred]** lines remain; `spec-approved` present when required.
+Done when: `## Spec gate` and `## Architecture review` in `decisions.md` have `Verdict: PASS`; no **[inferred]** lines remain; `spec-approved` present when required.
 
 ### 4. Plan
 Add a `## Plan` to the spec. Full vertical slice. The layer checklist — every layer marked `included` or `N/A — reason`: data/schema, API, UI, shared types, seeds, docs (from `docs/doc-map.txt`), unit, integration, e2e, perf, deploy/migration. Blast-radius change → write an ADR (`docs/adr/NNNN-<slug>.md`) and link it.
 
 ### 5. Plan gate
-Same two-reviewers-plus-arbiter shape. Reviewers check the plan against the Expectations: every error case has a test, every perf budget has a perf check, every input edge case has a seed.
+Same two-reviewers-plus-arbiter shape. Reviewers check the plan against the Expectations and the architecture review — every step stays in the modules and owners it approved — every error case has a test, every perf budget has a perf check, every input edge case has a seed.
 
 Done when: `## Plan gate` has `Verdict: PASS`.
 
@@ -90,7 +91,7 @@ Fill the evidence table (PR template): per acceptance criterion — method, expe
 For every changed file matching `docs/doc-map.txt`, update the mapped doc in this branch. A doc that truly needs no change: `docs-unchanged: <doc> — reason` in `decisions.md`. Schema changes carry comments on every table and column.
 
 ### 10. Pre-merge gate
-Two reviewers on the full diff, spec, and evidence: correctness, missed Expectations, test quality (would these tests catch a regression?), a second owner for anything `docs/guidelines/architecture.md` already assigns, I/O reached without a seam (see Code for agents), `N/A` and `docs-unchanged` reasons. Arbiter on disagreement.
+Two reviewers on the full diff, spec, and evidence: correctness, missed Expectations, test quality (would these tests catch a regression?), code that does not match the spec's `## Architecture impact` (an undeclared module, owner, outbound call or connection, or a second owner for anything `docs/guidelines/architecture.md` assigns), I/O reached without a seam (see Code for agents), `N/A` and `docs-unchanged` reasons. Arbiter on disagreement.
 Edit the template's reviewer, arbiter, `Reviewed:` and `Verdict:` lines in place — `bin/ship` refuses a second copy of any of them. Record the commit the reviewers read as `Reviewed: <sha>`; a later change to any file the branch touches (`decisions.md` aside) needs a new review; a rebase onto base changes to other files does not. A reviewer who finds a taste or product call adds `owner-review: required — <reason>` to `decisions.md`. When the branch changes a gate file under `APPROVER="agent"`, append its line to `docs/rule-changes.md`, run the gate-change review and fill `## Gate-change review`. Then ship with `bin/ship <pr>`: it approves and merges on its own when every gate passes. When it refuses, fix what it reports and re-run; only an `owner-review` flag, a removed owner flag, a missing base, or (owner mode) a gate-file change goes to the owner, who decides and runs `bin/approve <pr>`.
 
 Done when: `## Pre-merge gate` has `Verdict: PASS` and `bin/ship` succeeds.
@@ -130,7 +131,17 @@ The roadmap is planned as a graph and executed in a line. All of it lives in `do
 
 `docs/guidelines/architecture.md` is the target structure: units, modules (one job each), owners, outbound calls, connections.
 - **One owner per fact.** Every fact, store, shared resource and outbound call has exactly one owning module. Others ask the owner; they never write its store or drive its resource. A second owner is a defect, even when both copies agree today.
-- **Changing the structure** — a new module, or a new or moved owner — is a blast-radius change: `owner-approval: required` (approved per `APPROVER`, like every blast-radius spec), a new ADR, and the architecture doc updated in the same branch, naming each new owner. The pre-push hook checks this from the spec.
+- **Day zero, not afterthought.** Every spec declares its architecture impact and passes an agent architecture review before the plan is written. Agents keep the structure; the owner is not asked to approve it.
+- **Changing the structure** — a new module, or a new or moved owner — needs a new ADR and the architecture doc updated in the same branch, naming each new owner. The pre-push hook checks the spec, the review verdict and these files.
+- **Structure principles** — what the architecture review checks:
+  1. One job per module: it fits in 5 words without "and".
+  2. One owner per fact, store, shared resource and outbound call.
+  3. Dependencies point one way, from entry points to logic to stores; no cycles.
+  4. Other units enter a unit through its entry module; its internals and stores stay private.
+  5. What changes together lives together; a unit has one reason to change.
+  6. Few connections between units.
+  7. Small units: 9 modules or fewer.
+  8. Each external system is reached through one adapter module.
 - **Drift check.** At each versioned release, and at every monthly review in repos that deploy on each merge or ran no release that month, compare the code as built against the doc and list the gaps: modules, owners, outbound calls and connections that exist in one but not the other. Each gap is fixed, put in the roadmap Inbox, or resolved by changing the doc through a spec. Log the check in the doc's `## Drift checks`.
 
 ## Code for agents
@@ -163,7 +174,7 @@ Seeds are code, reviewed like code. `docs/seed-profile.md` holds production's *s
 
 | Hook | Checks |
 |---|---|
-| pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, spec's architecture impact filled (a structure change carries the architecture doc, an ADR and owner approval), seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
+| pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, spec's architecture impact filled and its architecture review PASS (a structure change carries the architecture doc and a new ADR), seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
 | `bin/ship` (pre-merge) | branch current with base, pushed, e2e, perf budgets, decision log pre-merge gate PASS, `spec-approved` when required; then approval — the agent's own (`agent-approval.sh`: reviewers PASS or split with arbiter PASS, review covers HEAD, no `owner-review: required` present or removed, gate files changed only under `APPROVER="agent"` with a passing gate-change review) or the owner's `approved` label; then squash merge, and label a gate-file change `rules-changed` |
 | `.claude` guard | blocks raw merges, hook bypass, and agents touching owner labels |
 

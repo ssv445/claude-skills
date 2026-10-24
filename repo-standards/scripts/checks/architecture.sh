@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Architecture impact: the issue's spec must fill "## Architecture impact". A new owner, a new
-# module or an owner change must also add an ADR, update the architecture doc (naming each new
-# owner) and ask for owner approval. One owner per fact only holds if new owners are named.
+# Architecture impact: the issue's spec must fill "## Architecture impact", and decisions.md must
+# carry a passing "## Architecture review" (an agent review at the spec gate, not the owner).
+# A new owner, a new module or an owner change must also add an ADR and update the architecture
+# doc, naming each new owner. One owner per fact only holds if new owners are named.
 . "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
 
 arch="${ARCH_DOC:-docs/guidelines/architecture.md}"
@@ -38,6 +39,11 @@ for f in "Modules touched" "New owners" "New module or owner change"; do
 done
 [ $fail -eq 0 ] || { red "FAIL architecture: fill \"## Architecture impact\" in $spec"; exit 1; }
 
+dec="$d/decisions.md"
+v="$( [ -f "$dec" ] && section_verdict "$dec" "Architecture review")"
+[ "$v" = PASS ] || { red "FAIL architecture: \"## Architecture review\" in $dec is ${v:-missing}, needs Verdict: PASS"; exit 1; }
+info "ok   Architecture review: PASS"
+
 owners="$(field "New owners")"
 change="$(field "New module or owner change" | tr '[:upper:]' '[:lower:]')"
 case "$change" in
@@ -54,7 +60,6 @@ esac
 changed="$(changed_files)"
 printf '%s\n' "$changed" | grep -qxF "$arch" || { red "  miss $arch not updated in this branch"; fail=1; }
 [ -n "$(git diff --diff-filter=A --name-only "$(base_commit)" HEAD -- docs/adr/)" ] || { red "  miss no new ADR added under docs/adr/"; fail=1; }
-grep -qiE "$(owner_flag_re approval)" "$spec" || { red "  miss spec front matter does not ask for owner approval (owner-approval: required)"; fail=1; }
 # Each "thing -> module" in New owners must name a module the architecture doc knows.
 for m in $(printf '%s\n' "$owners" | sed 's/→/->/g' | tr ',;' '\n\n' | sed -n 's/.*->[[:space:]]*//p' \
              | sed -E 's/[[:space:]]*\(.*//; s/[[:space:]]+$//; s/[[:space:]]/_SPACE_/g'); do
@@ -65,6 +70,6 @@ case "$(printf '%s' "$owners" | tr '[:upper:]' '[:lower:]')" in
   none|none[!a-z]*) ;;
   *) printf '%s' "$owners" | sed 's/→/->/g' | grep -q -- '->' || { red "  miss \"New owners:\" must name each as <thing> -> <owning module>"; fail=1; } ;;
 esac
-[ $fail -eq 0 ] || { red "FAIL architecture: a structure change needs a new ADR, the architecture doc and owner approval"; exit 1; }
-info "ok   structure change carries $arch, a new ADR and owner approval"
+[ $fail -eq 0 ] || { red "FAIL architecture: a structure change needs a new ADR and the architecture doc updated in this branch"; exit 1; }
+info "ok   structure change carries $arch and a new ADR"
 green "PASS architecture"
