@@ -53,9 +53,10 @@ Done when: the issue has a story or reproduction, and acceptance criteria.
 ### 2. Spec
 Write `docs/work/<issue>-<slug>/spec.md` from `docs/templates/spec.md`. The **Expectations** block is the heart of it: user, interaction, inputs, error cases, scale and performance, accuracy, freshness/caching, non-goals.
 - Tag every Expectations line **[sourced: <where>]** (issue, ICP doc, guideline, existing behaviour) or **[inferred]** (your guess).
-- Set `owner-approval: required` when the change touches the **blast-radius list**: architecture, schema or data model, a new third-party dependency or paid service, auth or security, pricing or a user-facing promise.
+- Set `owner-approval: required` when the change touches the **blast-radius list**: architecture (a new module or a change of owner), schema or data model, a new third-party dependency or paid service, auth or security, pricing or a user-facing promise.
+- Fill `## Architecture impact`: modules touched, the one owner of each new fact, store, shared resource or outbound call, and whether it adds a module or changes an owner (see Architecture below).
 
-Done when: every Expectations field is filled or `N/A — reason`, and every line is tagged.
+Done when: every Expectations field is filled or `N/A — reason`, every line is tagged, and `## Architecture impact` is filled.
 
 ### 3. Spec gate
 Two reviewers attack the spec: missing error cases, unrealistic scale, wrong user, accuracy or freshness claims that will hurt, untestable criteria. Disagreement → arbiter rules with reasons. A taste dispute → the owner.
@@ -89,7 +90,7 @@ Fill the evidence table (PR template): per acceptance criterion — method, expe
 For every changed file matching `docs/doc-map.txt`, update the mapped doc in this branch. A doc that truly needs no change: `docs-unchanged: <doc> — reason` in `decisions.md`. Schema changes carry comments on every table and column.
 
 ### 10. Pre-merge gate
-Two reviewers on the full diff, spec, and evidence: correctness, missed Expectations, test quality (would these tests catch a regression?), `N/A` and `docs-unchanged` reasons. Arbiter on disagreement.
+Two reviewers on the full diff, spec, and evidence: correctness, missed Expectations, test quality (would these tests catch a regression?), a second owner for anything `docs/guidelines/architecture.md` already assigns, I/O reached without a seam (see Code for agents), `N/A` and `docs-unchanged` reasons. Arbiter on disagreement.
 Edit the template's reviewer, arbiter, `Reviewed:` and `Verdict:` lines in place — `bin/ship` refuses a second copy of any of them. Record the commit the reviewers read as `Reviewed: <sha>`; a later change to any file the branch touches (`decisions.md` aside) needs a new review; a rebase onto base changes to other files does not. A reviewer who finds a taste or product call adds `owner-review: required — <reason>` to `decisions.md`. When the branch changes a gate file under `APPROVER="agent"`, append its line to `docs/rule-changes.md`, run the gate-change review and fill `## Gate-change review`. Then ship with `bin/ship <pr>`: it approves and merges on its own when every gate passes. When it refuses, fix what it reports and re-run; only an `owner-review` flag, a removed owner flag, a missing base, or (owner mode) a gate-file change goes to the owner, who decides and runs `bin/approve <pr>`.
 
 Done when: `## Pre-merge gate` has `Verdict: PASS` and `bin/ship` succeeds.
@@ -125,6 +126,13 @@ The roadmap is planned as a graph and executed in a line. All of it lives in `do
 
 `decisions.md` is the only process record: every non-trivial choice, the alternatives rejected, each reviewer disagreement and the arbiter's ruling, the owner's answers. It is what the next agent reads to understand why. Raw transcripts are not attached anywhere.
 
+## Architecture
+
+`docs/guidelines/architecture.md` is the target structure: units, modules (one job each), owners, outbound calls, connections.
+- **One owner per fact.** Every fact, store, shared resource and outbound call has exactly one owning module. Others ask the owner; they never write its store or drive its resource. A second owner is a defect, even when both copies agree today.
+- **Changing the structure** — a new module, or a new or moved owner — is a blast-radius change: `owner-approval: required`, an ADR, and the architecture doc updated in the same branch. The pre-push hook checks this from the spec.
+- **Drift check.** Before each release, and at the monthly review when no release ran one, compare the code as built against the doc and list the gaps (for example with the `draw-architecture` skill's `vs` mode). Each gap is fixed, put in the roadmap Inbox, or resolved by changing the doc through a spec. Log the check in the doc's `## Drift checks`.
+
 ## Code for agents
 
 Code is read by search. Optimise for that:
@@ -133,7 +141,15 @@ Code is read by search. Optimise for that:
 - **One pattern per concern.** The approved pattern for data fetching, errors, forms, jobs, etc. is in `docs/guidelines/`. A new pattern needs an ADR.
 - **Local.** Tests beside the code; small module surfaces; files stay under `MAX_FILE_LINES`.
 - **Typed and validated at every boundary** — API, DB, external input — so a wrong shape fails loudly where it enters.
+- **Seams for the outside world.** Time, randomness, hardware, network and file locations reach logic through an injected interface that has a fake, so every behaviour can be tested without them. Durations come from the injected clock, never from counting events or loop passes. Tests never touch real user data, the real install, or production accounts.
 - **Rationale in comments**: the why, and the what when the code is opaque.
+
+## Stored data
+
+Anything persisted — files, databases, caches, settings — outlives the code that wrote it.
+- A stored format changes only by adding optional fields; old data must keep loading.
+- A structural change backs up the user's data first and can be reverted without loss.
+- A bad record is skipped and reported; it never blocks the read or overwrites good data.
 
 ## Seeds
 
@@ -141,13 +157,13 @@ Seeds are code, reviewed like code. `docs/seed-profile.md` holds production's *s
 
 ## Context lives in the repo
 
-`docs/product/icp.md` (who the users are), `docs/adr/`, `docs/guidelines/` (with a routing table in `CLAUDE.md`: when working on X, read Y), `docs/runbooks/`, `docs/glossary.md`, schema comments, `docs/work/` per issue. When a fact exists only in the owner's head or a chat, it is missing — write it down in the doc it belongs to.
+`docs/product/icp.md` (who the users are), `docs/guidelines/architecture.md` (structure and owners), `docs/adr/`, `docs/guidelines/` (with a routing table in `CLAUDE.md`: when working on X, read Y), `docs/runbooks/`, `docs/glossary.md`, schema comments, `docs/work/` per issue. When a fact exists only in the owner's head or a chat, it is missing — write it down in the doc it belongs to.
 
 ## Gates the hooks enforce
 
 | Hook | Checks |
 |---|---|
-| pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
+| pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, spec's architecture impact filled (a structure change carries the architecture doc, an ADR and owner approval), seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
 | `bin/ship` (pre-merge) | branch current with base, pushed, e2e, perf budgets, decision log pre-merge gate PASS, `spec-approved` when required; then approval — the agent's own (`agent-approval.sh`: reviewers PASS or split with arbiter PASS, review covers HEAD, no `owner-review: required` present or removed, gate files changed only under `APPROVER="agent"` with a passing gate-change review) or the owner's `approved` label; then squash merge, and label a gate-file change `rules-changed` |
 | `.claude` guard | blocks raw merges, hook bypass, and agents touching owner labels |
 

@@ -94,6 +94,32 @@ git checkout -q -b chore-no-issue
 expect fail "decision-log: branch without issue number" .standards/checks/decision-log.sh "Spec gate"
 git checkout -q feat/7-mul; git branch -q -D chore-no-issue
 
+echo "architecture"
+# On a side branch for issue 7, so the spec and docs written here never reach later tests.
+git checkout -q -b feat/7-archcheck
+expect pass "architecture: no spec yet" .standards/checks/architecture.sh
+spec=docs/work/7-mul/spec.md
+grep -v '^- Modules touched\|^- New owners\|^- New module or owner change\|^## Architecture impact\|^Names from' "$SKILL/templates/spec.md" > "$spec"
+git add docs && git commit -qm "spec without the section"
+expect fail "architecture: spec has no Architecture impact section" .standards/checks/architecture.sh
+cp "$SKILL/templates/spec.md" "$spec" && git commit -qam "template placeholders left"
+expect fail "architecture: placeholders left in the section" .standards/checks/architecture.sh
+sed -e 's/^- Modules touched: .*/- Modules touched: math/' -e 's/^- New owners: .*/- New owners: none/' \
+    -e 's/^- New module or owner change: .*/- New module or owner change: no/' "$SKILL/templates/spec.md" > "$spec"
+git commit -qam "no structure change"
+expect pass "architecture: filled, no structure change" .standards/checks/architecture.sh
+sed -i.bak 's/^- New module or owner change: no/- New module or owner change: yes, new billing module/' "$spec" && rm -f "$spec.bak"
+git commit -qam "structure change, nothing else"
+expect fail "architecture: owner change without doc, ADR, approval" .standards/checks/architecture.sh
+sed -i.bak 's/^owner-approval: not-required/owner-approval: required/' "$spec" && rm -f "$spec.bak"
+mkdir -p docs/adr && echo "# 0001 — Billing module" > docs/adr/0001-billing.md
+git add docs && git commit -qm "ADR and approval, doc still missing"
+expect fail "architecture: owner change without the architecture doc" .standards/checks/architecture.sh
+cp "$SKILL/templates/architecture.md" docs/guidelines/architecture.md
+git add docs && git commit -qm "architecture doc"
+expect pass "architecture: owner change with doc, ADR, approval" .standards/checks/architecture.sh
+git checkout -q feat/7-mul; git branch -q -D feat/7-archcheck
+
 echo "guard scope"
 # The guard installed in this repo, fed hook JSON with a cwd. It judges commands aimed at
 # this repo only, and blocks executing the approve script, not mentioning it.
