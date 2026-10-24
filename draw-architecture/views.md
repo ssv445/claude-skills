@@ -1,90 +1,75 @@
 # View recipes
 
-Each recipe states what the view is: its parts, layout and encoding, then the done-check. Colours use the `explain-visually` tokens: blue = our module/store, violet = external, green = done/cheap, amber = changed/warning, red = broken/removed, grey = untouched.
+Colours use the `explain-visually` tokens. On the overview, colour has only four meanings: blue = our module, violet = external, red = a failed factor, and (gap figures only) amber = to build. Everything else is ink on paper.
 
-## layers — Layered architecture diagram
+## overview — the one diagram
 
-- **Claim:** what sits in each layer, and that calls only go down.
-- **Layout:** full-width horizontal bands stacked top to bottom, one per layer. Top = closest to the user (UI / entry points), bottom = storage / platform. Layer name in `.tb` at the band's left edge, a `.ts` one-line purpose under it.
-- **Inside a band:** one box per module, left to right, `.t` name + `.ts` job (max 5 words).
-- **Arrows:** only between bands, pointing down, each with a verb. An arrow that goes up or skips a layer is drawn red with a "!" badge: it is a layering violation worth seeing.
-- **Externals** sit outside the bands on the right, violet.
-- **Done-check:** every module is in exactly one band; no unlabelled arrow; every upward arrow is red.
+Five marks, nothing else.
 
-## components (c4) — Component diagram
+| Mark | Drawn as |
+|---|---|
+| Module | Box: `.tb` name, `.ts` job (≤ 5 words). A store is the same box drawn as a cylinder. |
+| Unit | Dashed rounded outline around the modules one owner controls / that change together. Unit name top-left in `.ts`. An outline may span bands. |
+| Layer | Full-width band behind the boxes, top = entry points (UI, CLI, timers), bottom = stores and platform. Layer name in `.ts` at the left edge. |
+| Connection | One solid arrow style, labelled with what moves (a noun: "job spec", "frame"). Points down or sideways. |
+| Broken rule | The offending box, outline or arrow in red, with a badge naming the factor (`F3`). |
 
-- **Claim:** which modules exist inside one container, and how they connect.
-- **Layout:** one dashed container (the app / service), named top-left. Components inside on a grid, entry point top-left, stores bottom. Actors and external systems outside the container: people left, systems right.
-- **Box:** `.tb` name, `.ts` "[tech] · one-line job".
-- **Arrows:** every one labelled with a verb + what moves ("sends frame", "reads posture"). One accent-blue path for the main loop.
-- **Done-check:** no floating box (every box has an arrow); every arrow has a verb; one accent path at most.
+- **Readable at a glance:** at most 12 code boxes and 15 arrows. Above that, draw one box per unit (its job + module count) instead of its modules, and add one zoom figure per unit that has a fail, drawn with the same recipe.
+- **Zoom on F1 fails:** a module that fails F1 (one box doing several jobs, e.g. one big file) gets a zoom figure of its internal parts (functions or sections, with `file:line`), drawn with this recipe and scored for F2–F5 inside it. Problems inside a big box, such as a cycle between two of its parts, must not disappear because the box is drawn whole.
+- **Stores** sit as small cylinders inside the unit that writes them, in the bottom band. Its writer gets the only arrow. Readers are not drawn as arrows; they are listed under the cylinder in `.ts` ("read by health"). A reader from another unit is an F4 break: one red arrow per reader-unit → owning-unit pair, not one per file. A store written only by a person (a hand-edited config) gets its writer arrow from that caller. A folder several units write into is one cylinder, drawn red for F2, with the writers listed under it.
+- **Bundle arrows:** one arrow per (from, to) pair; the label names up to two things that move, then "+n".
+- **Callers** (people, timers, dashboards, other services that call in) sit in the top band, violet. **Externals we call out to** sit on the right, violet. F8 is scored on externals only. Many similar things (20 jobs, all scripts) are one box with a count.
+- **Cycles:** one red double-headed curved arrow with a `cycle` badge, so it reads as a loop even when both boxes share a band.
+- **Layout:** modules on a grid inside their band. Positions are fixed by the model so the same module sits in the same place in every figure on the page, including both halves of a gap figure. The svg may set `min-width` up to 1000px, and the page column may widen to 1180px for it.
+- **No** sequence numbers, sync/async styles, legends for single-use marks, or hover cards. Those belong to `sequence` and `responsibilities`.
+- **Under the figure, one line of counts:** code modules · stores · units · arrows between units · red marks · largest unit (code modules).
+- **Done-check:** ≤ 12 code boxes and ≤ 15 arrows per figure; every module is in one band and one unit; every arrow has a label; every red mark has a factor badge and a fail or warn row in the scorecard, and every fail row has a red mark.
 
-## context / containers — C4 levels 1 and 2
+## scorecard — always under the overview
 
-- **context:** the system as one box in the centre, people left, external systems right, arrows labelled with what they exchange. Nothing inside the box.
-- **containers:** the system boundary dashed; inside, one box per deployable/runnable unit (app, server, database, worker) with tech in `.ts`; arrows labelled with protocol + purpose ("HTTPS · fetch jobs").
-- **Done-check:** context has no internals; containers has no code-level modules.
+HTML table, one row per factor F1–F8, in order.
 
-## dfd — Data flow diagram
+| Column | Content |
+|---|---|
+| # · Factor | `F3` · Dependencies point one way |
+| Result | Pass / Warn / Fail / N/A pill (green / amber / red / grey). Warn = over the limit by one, or the result flips on a counting choice (say which). |
+| Evidence | What was counted: "14 arrows checked, 1 upward: `health → run`" with `file:line` where code shows it |
+| Gap | For a fail: what must change, one line ("move lock handling out of `run` into `lock.ts`") |
 
-- **Claim:** how data moves and where it rests.
-- **Shapes, fixed:** processes = rounded boxes, numbered `1`, `2`…; data stores = open-ended rectangles (two horizontal lines, no sides) labelled `D1`, `D2`…; external entities = violet squares.
-- **Layout:** left to right, sources on the left, sinks on the right.
-- **Arrows** carry the data's name, a noun ("frame", "posture score"), not a verb. That is the difference from `components`.
-- **Done-check:** every process has at least one input and one output; no arrow runs store-to-store or external-to-store without a process between.
+Header line above the table: `6 / 8 factors pass`.
 
-## sequence — Sequence diagram
+- **N/A** only when the factor cannot apply (no stores → F2), with the reason in Evidence.
+- **Done-check:** every Evidence cell names counted elements; no "looks fine".
 
-- **Claim:** the order of messages in one named scenario. Name it in the `h2` ("Frame to glow").
-- **Participants:** boxes across the top, ordered by first appearance in the scenario, left to right. Initiator (person/timer) first. Max 7; group the rest.
-- **Spacing:** participants evenly spaced, at least 130 px apart; dashed vertical lifelines down from each.
-- **Messages:** horizontal arrows, top to bottom in time order, at least 44 px apart, each numbered `1.` `2.`… with a short verb label above the line.
-  - Call = solid arrow. Return = dashed arrow, labelled with what returns. Async (fire and forget: a spawn, an event, or a file/DB write nobody waits on) = solid line with an open arrowhead (`<path d="M0 0 L10 5 L0 10" class="k">` marker, no fill) and "async" in `.ts`.
-  - Self-call = small loop on the same lifeline.
-  - Labels that cross lifelines get a paper-coloured halo: `.halo{paint-order:stroke;stroke:var(--paper);stroke-width:5px}`.
-- **Frames:** `alt` / `loop` / `opt` as a labelled dashed box spanning the involved lifelines, guard in `[brackets]`. The frame starts 30 px above its first message (room for the tab label) and ends 20 px below its last.
-- **Accent:** the one message the scenario is about in accent blue.
-- **Done-check:** numbers strictly increase down the page; every call that expects an answer has a dashed return (async messages need none); no participant without a message.
+## gap list — always, after the scorecard
 
-## responsibilities (raci, crc) — Responsibility matrix
+The auditor's to-do list. Table: Module/unit · Today · Target · Change · Factor.
 
-- **Form:** HTML table, not SVG. One row per module, in layer order.
-- **Columns, fixed and in this order:** Module · Owns (the facts or state it is the single source of truth for) · Receives (input, from whom) · Sends (output, to whom) · Never does.
-- **Cells:** short phrases, one per line. Name the other module in Receives/Sends ("posture ← detector"). "Never does" lists the tempting jobs it must stay out of ("never writes the DB").
-- **Below the table:** if one fact has two owners, a red callout naming it (`.callout{border-left:4px solid var(--red);background:var(--hl-red);padding:10px 14px;border-radius:8px}`). One owner per fact is the point of the view.
-- **If the user says `raci`:** use this table, not an R/A/C/I letter grid, unless they ask for the letter grid by name.
-- **Done-check:** every module from the model has a row; every fact is owned by exactly one row; every Receives has a matching Sends somewhere.
+- **Without `vs <target>`:** the target is "passes all 8 factors". One row per fail from the scorecard, plus a row per doc-vs-code mismatch found while extracting the model (Factor column = `doc`).
+- **With `vs <target>`:** draw the overview twice in one wide figure, "Target" left, "Today (from code)" right, same positions. On the Today half: module in both = plain; only in today = red (to remove); only in target = amber dashed outline (to build); in both but different layer, unit or job = amber fill. Then score the factors for both: the scorecard gets two Result columns, Target and Today. Every amber or red mark gets a gap-list row.
+- Order rows by blast radius: what most other modules depend on goes first.
+- **Done-check:** every red/amber mark and every failed factor has at least one row.
 
-## deps — Module dependency graph
+## responsibilities — drill-down
 
-- **Claim:** which module imports which, in code.
-- **Layout:** top to bottom DAG. A module sits above everything it depends on; leaves (no dependencies) on the bottom row. Arrows point from the importer down to the imported module, unlabelled (direction is the meaning; say so in the caption).
-- **Source:** real imports (grep / read), never guessed. Third-party packages are left out unless asked.
-- **Cycles:** both edges red with a "cycle" badge; list them in the caption.
-- **Fan-in:** a module imported by 4+ others gets a thicker outline.
-- **Done-check:** every edge was seen in an import line; no upward arrow except red cycle edges.
+- HTML table, one row per module, in layer order.
+- **Columns, fixed:** Module · Owns (facts or state it is the single source of truth for) · Receives (input ← from whom) · Sends (output → to whom) · Never does (tempting jobs it must stay out of).
+- A fact with two owners → red callout under the table (`.callout{border-left:4px solid var(--red);background:var(--hl-red);padding:10px 14px;border-radius:8px}`) and an F2 fail in the scorecard.
+- `raci` means this table, not an R/A/C/I letter grid, unless the user names the letter grid.
+- **Done-check:** every module has a row; every fact has one owner; every Receives has a matching Sends.
 
-## storage — Data ownership map
+## sequence — drill-down
 
-- **Figure:** stores as cylinders along the bottom (database, files, cache, remote). Modules above. Each store has exactly one accent-blue arrow labelled "only writer" from its owner. Readers connect with thin grey dashed arrows labelled "reads".
-- **Table under it:** Store · What it holds · Writer · Readers · Lifetime (how long data lives / where it is backed up).
-- **Done-check:** every store has exactly one writer; a second writer is drawn red and called out.
+- Name the scenario in the `h2` ("One tick fires one job").
+- **Participants:** boxes across the top, ordered by first appearance, initiator first, max 7, ≥ 130 px apart, dashed lifelines down. Use the overview's module names.
+- **Messages:** horizontal, top to bottom in time order, ≥ 44 px apart, numbered `1.` `2.`… with a short verb label.
+  - Call = solid arrow. Return = dashed arrow labelled with what returns. Async (a spawn, an event, a write nobody waits on) = solid line, open arrowhead (`<path d="M0 0 L10 5 L0 10" class="k">` marker, no fill), "async" in `.ts`.
+  - Self-call = small loop on the lifeline.
+  - Labels crossing lifelines get a halo: `.halo{paint-order:stroke;stroke:var(--paper);stroke-width:5px}`.
+- **Frames:** `loop` / `alt` / `opt` as a dashed box over the involved lifelines, guard in `[brackets]`, starting 30 px above its first message and ending 20 px below its last.
+- One accent-blue message: the one the scenario is about.
+- **Done-check:** numbers strictly increase down the page; every call that expects an answer has a dashed return; every participant has a message.
 
-## adrs — Architecture Decision Records
+## ops — optional Twelve-Factor scorecard
 
-- **Form:** one card per decision, numbered `ADR-001`…, newest last.
-- **Card fields, in order:** Title (the decision as a statement) · Status (proposed / accepted / superseded by ADR-n) · Context (the force that made a choice necessary) · Decision · Options rejected (one line each, with why) · Consequences (what gets easier, what gets harder).
-- **Source:** decisions found in the subject or conversation. Don't invent ones that weren't made.
-- **Done-check:** every card has a rejected option and a consequence that costs something.
-
-## architecture-board
-
-One page: `layers` figure first, then the `responsibilities` table for the same modules, same names, same order.
-
-## gap-board
-
-- **Pick the view** (default `layers`) and draw it twice side by side on a wide figure: left "Target", right "As-built (today's code)". Same positions for the same module in both.
-- **As-built encoding:** module in both = grey; only in today's code = red (to remove); only in target = amber dashed outline (to build); in both but moved layer or changed job = amber fill.
-- **Gap list** under the figure: table of Module · Today · Target · Change.
-- **As-built** must come from the code, not from the target plan.
-- **Done-check:** every amber or red mark has a row in the gap list.
+Only when asked. Same table shape as the scorecard, rows = the twelve factors (codebase, dependencies, config, backing services, build/release/run, processes, port binding, concurrency, disposability, dev/prod parity, logs, admin processes). Kept as its own section so deployment findings don't mix with structure findings.

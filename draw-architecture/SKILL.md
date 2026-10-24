@@ -1,47 +1,42 @@
 ---
 name: draw-architecture
-description: "Use when the user asks to draw, diagram or document a system's architecture by a named view — layered diagram, component diagram, C4, data flow diagram (DFD), sequence diagram, responsibility matrix, RACI, CRC cards, module dependency graph, data ownership map, storage view, ADRs, architecture board, gap analysis, as-built vs target, architecture description — or invokes /draw-architecture."
+description: "Use when the user asks to draw, diagram, review or audit a system's architecture or structure — overview, modularity, cohesion, coupling, separation of concerns, ownership, boundaries, layers, responsibility matrix, sequence diagram, target vs as-built, gap analysis, architecture review, twelve-factor — or invokes /draw-architecture."
 ---
 
 # Draw Architecture
 
-Draws named architecture views so each one comes out in the same, predictable shape every time. Each view has a fixed recipe in `views.md`. The style, template and publishing come from the `explain-visually` skill.
+One overview diagram that lets a reviewer judge a system's structure at a glance, scored against 8 fixed structure factors, with the gap shown. Recipes are in `views.md`.
 
 **REQUIRED SUB-SKILL:** `explain-visually` — its notebook template, drawing rules, quickstart and publish steps apply to every figure here.
 
 ## Input
 
-`/draw-architecture <view | board | all> <subject>`
+`/draw-architecture [view] <subject> [vs <target>]`
 
-- **view:** one or more names from the table below, comma-separated.
-- **board:** `architecture-board` or `gap-board` (composites).
-- **all:** the full architecture description, every view that has content.
-- **subject:** a file path, a repo or folder, a pasted structure, or nothing (the system discussed in this conversation).
+- **view:** `overview` (default), `responsibilities`, `sequence`, `ops`. Comma-separate to combine.
+- **subject:** a repo, folder, file, pasted structure, or nothing (the system in this conversation).
+- **vs <target>:** a target design (file or conversation). Adds the target-vs-today gap. Without it, the gap is today vs the 8 factors.
 
-## Views
+## The 8 structure factors
 
-| Say | You get | Form |
+| # | Factor | Passes when |
 |---|---|---|
-| `layers` | Layered architecture diagram | SVG |
-| `components` (alias `c4`) | Component diagram, C4 Component level | SVG |
-| `dfd` | Data flow diagram | SVG |
-| `sequence` | Sequence diagram for one scenario | SVG |
-| `responsibilities` (alias `raci`, `crc`) | Responsibility matrix: owns / receives / sends / never does | Table |
-| `deps` | Module dependency graph | SVG |
-| `storage` | Data ownership map | SVG + table |
-| `adrs` | Architecture Decision Records | Cards |
-| `context`, `containers` | C4 Context / Container levels | SVG |
-| `architecture-board` | `layers` + `responsibilities` on one page | Composite |
-| `gap-board` | Target vs as-built for the same view, with a gap list | Composite |
+| F1 | One job per module | Every module's job fits in 5 words with no "and" |
+| F2 | One owner per fact | Every store has exactly one writer |
+| F3 | Dependencies point one way | No upward arrow, no cycle |
+| F4 | Hide internals | Arrows enter a unit through one box only |
+| F5 | What changes together, lives together | Each unit has one reason to change |
+| F6 | Few connections between units | Bundled arrows between units ≤ 2 × number of units |
+| F7 | Small units | 9 code modules or fewer per unit (stores don't count) |
+| F8 | Outside world behind one adapter | Each external system we call out to is touched by one module (callers coming in are not scored) |
+
+Counting: a unit includes the stores it writes. Stores are never modules for F1, F7. F6 counts arrows between our own units only; callers and externals are not units.
 
 ## Steps
 
-1. **Read `views.md`.** Each chosen view has a recipe: what it must show, its fixed layout, its encoding, and a done-check. Follow the recipe exactly; it is what makes the output "as expected".
-2. **Extract the model once.** From the subject, list modules (name, layer, one-line job), stores, external actors, and the messages between them. Every view on the page draws from this one list, so names match across views. Facts you could not verify go in a "Not verified" note at the end, never drawn as fact.
-3. **Build the page** from the `explain-visually` template. One `<section>` per view, in the order of the Views table. For `all`, a view with no content for this subject is left out and named in the footer; views the user didn't ask for aren't mentioned. Vocabulary the template lacks (open arrowheads, label halos, callouts) is defined in `views.md`; add it to the page's CSS/defs.
-4. **Run each view's done-check** before publishing. Fix failures; don't ship them.
-5. **Publish** per `explain-visually` (`icon: "diagram"`). Reply with the link and one line per view.
-
-## Ids on multi-figure pages
-
-Every SVG gets its own filter and marker ids: `r1`/`a1` in the first figure, `r2`/`a2` in the second, and so on. Shared ids make later figures pick up the first figure's arrowheads.
+1. **Read `views.md`** and follow the recipe for each chosen view exactly.
+2. **Extract one model** from the subject, from code, not from docs: modules (name, layer, unit, job), stores (writers, readers), externals, connections (from → to, what moves). Every view on the page uses these names. Docs that disagree with code → note it in the gap list.
+3. **Score the factors** against the model. Each result names the elements it counted, so a pass is checkable and a fail points at something.
+4. **Build the page** from the `explain-visually` template, in this order: overview figure, scorecard, gap list, then any extra views. Each SVG gets its own ids (`r1`/`a1`, `r2`/`a2`…).
+5. **Run the done-checks** in `views.md`. Fix failures before publishing.
+6. **Publish** per `explain-visually` (`icon: "diagram"`). Reply with the link, the pass count (e.g. 6/8), and the top 3 gaps.
