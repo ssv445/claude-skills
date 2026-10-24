@@ -53,6 +53,8 @@ git add -A && git commit -qm base
 git checkout -q -b feat/7-mul
 mkdir -p docs/work/7-mul
 sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > docs/work/7-mul/decisions.md
+sed -e 's/^- Modules touched: .*/- Modules touched: math/' -e 's/^- New owners: .*/- New owners: none/' \
+    -e 's/^- New module or owner change: .*/- New module or owner change: no/' "$SKILL/templates/spec.md" > docs/work/7-mul/spec.md
 git add docs/work && git commit -qm "decision log"
 
 echo "tdd"
@@ -93,6 +95,72 @@ expect fail "decision-log: pre-merge gate still PENDING" bash -c "sed 's/^Verdic
 git checkout -q -b chore-no-issue
 expect fail "decision-log: branch without issue number" .standards/checks/decision-log.sh "Spec gate"
 git checkout -q feat/7-mul; git branch -q -D chore-no-issue
+
+echo "architecture"
+# Side branches only, so the specs and docs written here never reach later tests.
+A=.standards/checks/architecture.sh
+spec=docs/work/7-mul/spec.md
+section() { # section <modules> <owners> <change>: rewrite the spec's three fields
+  sed -e "s/^- Modules touched: .*/- Modules touched: $1/" -e "s/^- New owners: .*/- New owners: $2/" \
+      -e "s/^- New module or owner change: .*/- New module or owner change: $3/" "$SKILL/templates/spec.md" > "$spec"
+}
+git checkout -q -b feat/8-nodir
+expect pass "architecture: branch with no issue folder" $A
+git checkout -q feat/7-mul; git branch -q -D feat/8-nodir
+git checkout -q -b feat/7-archcheck
+expect pass "architecture: filled, no structure change" $A
+sed -i.bak '/^## Architecture review/,/^## /s/^Verdict: PASS$/Verdict: PENDING/' docs/work/7-mul/decisions.md && rm -f docs/work/7-mul/decisions.md.bak
+git commit -qam "architecture review not done"
+expect fail "architecture: Architecture review not PASS" $A
+git revert --no-edit HEAD >/dev/null
+git rm -q "$spec" && git commit -qm "no spec"
+expect fail "architecture: issue folder without spec.md" $A
+grep -v '^- Modules touched\|^- New owners\|^- New module or owner change\|^## Architecture impact\|^Names from' "$SKILL/templates/spec.md" > "$spec"
+git add docs && git commit -qm "spec without the section"
+expect fail "architecture: spec has no Architecture impact section" $A
+cp "$SKILL/templates/spec.md" "$spec" && git commit -qam "template placeholders left"
+expect fail "architecture: placeholders left in the section" $A
+section math "invoices -> billing" no && git commit -qam "owners named, answer no"
+expect fail "architecture: owners named but change answered no" $A
+section math none "not sure yet" && git commit -qam "not a yes or no"
+expect fail "architecture: change answer is not yes or no" $A
+sed -e 's/^## Architecture impact/## Architecture Impact/' -e 's/^- Modules touched: .*/* **Modules touched**: math/' \
+    -e 's/^- New owners: .*/+ **New owners:** None/' -e 's/^- New module or owner change: .*/- New module or owner change: **NO**/' \
+    "$SKILL/templates/spec.md" > "$spec" && git commit -qam "markdown variants"
+expect pass "architecture: bold, other bullets, capitals" $A
+section math "invoices -> billing" "yes, new billing module" && git commit -qam "structure change, nothing else"
+expect fail "architecture: owner change without doc or ADR" $A
+mkdir -p docs/adr && echo "# 0001 — Billing module" > docs/adr/0001-billing.md
+git add docs && git commit -qm "ADR and approval, doc still missing"
+expect fail "architecture: owner change without the architecture doc" $A
+cp "$SKILL/templates/architecture.md" docs/guidelines/architecture.md
+git add docs && git commit -qm "doc updated but owner not named"
+expect fail "architecture: new owner not named in the doc" $A
+printf '| Billing | billing (src/billing) | logic | charges and invoices |\n' >> docs/guidelines/architecture.md
+git commit -qam "owner named in the doc"
+expect pass "architecture: owner change with doc and new ADR, no owner approval needed" $A
+git checkout -q feat/7-mul; git branch -q -D feat/7-archcheck
+# Editing an old ADR is not a new decision record.
+git checkout -q main
+mkdir -p docs/adr && echo "# 0000 — Old decision" > docs/adr/0000-old.md && git add docs && git commit -qm "old ADR on base"
+git checkout -q -b feat/7-oldadr
+mkdir -p docs/work/7-mul
+sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > docs/work/7-mul/decisions.md
+section math "invoices -> billing" yes
+cp "$SKILL/templates/architecture.md" docs/guidelines/architecture.md && echo "billing" >> docs/guidelines/architecture.md
+echo "typo fix" >> docs/adr/0000-old.md
+git add docs && git commit -qm "only an old ADR edited"
+expect fail "architecture: only an existing ADR edited" $A
+expect pass "architecture: ...and it fails for the ADR alone" bash -c "grep -q 'no new ADR' '$T/last.log.prev' && [ \$(grep -c 'miss' '$T/last.log.prev') = 1 ]"
+git checkout -q feat/7-mul; git branch -q -D feat/7-oldadr
+git checkout -q main && git reset -q --hard HEAD~1 && git checkout -q feat/7-mul
+# A spec written before the gate reached the base branch is grandfathered.
+git checkout -q -b feat/9-old main
+mkdir -p docs/work/9-old
+grep -v '^- Modules touched\|^- New owners\|^- New module or owner change\|^## Architecture impact\|^Names from' "$SKILL/templates/spec.md" > docs/work/9-old/spec.md
+git add docs && GIT_AUTHOR_DATE="2000-01-01T00:00:00" git commit -qm "old spec"
+expect pass "architecture: spec older than the gate is skipped" $A
+git checkout -q feat/7-mul; git branch -q -D feat/9-old
 
 echo "guard scope"
 # The guard installed in this repo, fed hook JSON with a cwd. It judges commands aimed at

@@ -1,6 +1,6 @@
 # Decisions — #<issue> <title>
 
-The process record for this issue. The pre-push hook requires `## Spec gate` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`, and `## Gate-change review` too when a gate file changed under `APPROVER="agent"`. When `bin/ship` approves on its own, and when it needs the owner: "Approval and shipping" in `docs/guidelines/repo-standards.md`.
+The process record for this issue. The pre-push hook requires `## Spec gate`, `## Architecture review` and `## Plan gate` with `Verdict: PASS`; `bin/ship` requires `## Pre-merge gate` with `Verdict: PASS`, and `## Gate-change review` too when a gate file changed under `APPROVER="agent"`. When `bin/ship` approves on its own, and when it needs the owner: "Approval and shipping" in `docs/guidelines/repo-standards.md`.
 
 To hand a taste or product call to the owner, add a line at column 0 anywhere in this file (indented here so it is not itself a flag); `bin/ship` then waits for the owner's `approved` label:
 
@@ -11,6 +11,12 @@ To hand a taste or product call to the owner, add a line at column 0 anywhere in
 - Reviewer B: <PASS | FAIL> — <key points>
 - Arbiter (only on disagreement): <ruling and why>
 - Owner answers to [inferred] lines: <line → answer → doc it was written back to>
+Verdict: PENDING
+
+## Architecture review
+At the spec gate, before the plan. A reviewer who did not write the spec reads its `## Architecture impact`, `docs/guidelines/architecture.md` and the code it touches, and checks: is the declared impact true (no undeclared module, owner, outbound call or connection)? Does the design follow the structure principles in the rulebook? Where it does not, change the spec to fit; where the architecture itself should change, change the doc in this branch and add an ADR. PASS only once aligned.
+- Reviewer: <PASS | FAIL> — <principles checked, findings>
+- Aligned: <none needed | what changed in the spec, the doc or the ADR>
 Verdict: PENDING
 
 ## Plan gate

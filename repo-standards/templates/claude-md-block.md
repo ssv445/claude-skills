@@ -10,6 +10,7 @@ Hard rules (the hooks back these up; treat a red hook as a stop, not an obstacle
 - In agent mode a gate-file change also needs a line appended to `docs/rule-changes.md` and `## Gate-change review` in `decisions.md`.
 - `approved` / `spec-approved` labels are the owner's alone, added via `bin/approve` at a terminal. Never edit gate files, or rephrase commands, to get past `bin/ship` or the guard.
 - Asking the owner: name the exact rule that requires them (e.g. "this PR changes gate files"), and give the one command to run. Then keep working on everything that does not depend on the answer — prep, plans, other issues. Stop only when the next step needs their input.
+- One owner per fact: every fact, store, shared resource and outbound call has exactly one owning module, listed in `docs/guidelines/architecture.md`. Every spec gets an architecture review before the plan (`## Architecture review` in decisions.md) and is aligned with that doc and the rulebook's structure principles. A new module or owner change also needs a new ADR and that doc updated in the same branch; no owner approval.
 - An idea that is not today's work goes into the Inbox of `docs/product/roadmap.md` at once, then is checked against `docs/product/goals.md` before it becomes an item.
 - Taste and product calls go to the owner: add this exact line, at column 0, to `decisions.md`: `owner-review: required — <reason>`. Never remove one; only the owner resolves it. Mechanical calls: decide, record in `decisions.md`.
 

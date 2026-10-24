@@ -1,6 +1,6 @@
 ---
 name: repo-standards
-description: "Install the agentic repo standards (spec + Expectations, adversarial review with arbiter, TDD red→green, doc-map, prod-shaped seeds, decision log, goals + dependency-aware roadmap, pre-push / pre-merge hooks) into a repo. Use when creating a new repo, when asked to set up or apply repo standards, or when a repo lacks them and the user agrees to add them."
+description: "Install the agentic repo standards (spec + Expectations, adversarial review with arbiter, TDD red→green, doc-map, architecture owner map, prod-shaped seeds, decision log, goals + dependency-aware roadmap, pre-push / pre-merge hooks) into a repo. Use when creating a new repo, when asked to set up or apply repo standards, or when a repo lacks them and the user agrees to add them."
 ---
 
 # Repo Standards — installer
@@ -16,6 +16,7 @@ What gets installed (sources in this skill folder):
 | `templates/repo-standards.md` | `docs/guidelines/repo-standards.md` | The rulebook agents follow per issue |
 | `templates/claude-md-block.md` | appended to `CLAUDE.md` (`AGENTS.md` symlinked to it) | Always-loaded pointer + hard rules |
 | `templates/spec.md`, `templates/decisions.md`, `templates/adr.md` | `docs/templates/` | Per-issue spec, decision log, ADR |
+| `templates/architecture.md` | `docs/guidelines/architecture.md` | Target structure: modules, one owner per fact, outbound calls, drift log |
 | `templates/product/{goals,assumptions,stack,roadmap,ideas-rejected}.md` | `docs/product/` | Goals, assumptions, tool stack, dependency-aware roadmap |
 | `templates/product/review.md` | `docs/templates/review.md` | Monthly product review |
 | `templates/doc-map.txt` | `docs/doc-map.txt` | Code path → doc that must change with it |
@@ -30,14 +31,14 @@ What gets installed (sources in this skill folder):
 
 1. **Survey.** Read the repo's `CLAUDE.md`, package manifests, test runner configs, existing hooks (`.husky/`, `core.hooksPath`), existing `docs/`. Done when you can name: language/stack, lint, typecheck, unit-test, coverage, e2e, perf commands (or that one is missing), the hook manager in use, and the GitHub owner login.
 2. **Branch.** Work on `chore/<issue>-repo-standards` (open the issue first; this install is itself an issue). Never on main.
-3. **Copy** every row of the table above. Existing files with the same path: merge, never overwrite — show the user the conflict if a merge is not obvious.
+3. **Copy** every row of the table above. Existing files with the same path: merge, never overwrite — show the user the conflict if a merge is not obvious. On an upgrade, merge new template sections (such as `## Architecture impact` in `spec.md`) into the repo's copies; specs written before a gate reached the base branch are skipped by it.
 4. **Fill `.standards/config.sh`.** Every command variable set to a real command or left empty with a `# N/A — reason` comment. Empty `UNIT_CMD` or `DIFF_COVERAGE_CMD` is not allowed when the repo has source code: add the tooling instead (e.g. vitest/jest coverage + `diff-cover` for lcov/cobertura). Ask the owner for `APPROVER` (`owner` or `agent`); leave the default `owner` if they don't say.
 5. **Wire hooks.**
    - No hook manager: `git config core.hooksPath .standards/hooks`, and add that line to the repo's setup script / README setup section (it is per-clone).
    - Husky or similar: add a `pre-push` entry that runs `.standards/hooks/pre-push`; leave the manager in charge.
 6. **Product context.** Interview the owner, one question at a time, for goals (metric, target, date), non-goals, known assumptions, and the tool stack; fill `docs/product/`. On an existing repo, draft from what the code and docs already show and ask only for the gaps. Anything the owner shares that is future work goes to the roadmap Inbox, then through the idea flow in the rulebook.
-7. **Fill the doc map and seed profile** from what the survey found. Doc map: one line per code area that has a describing doc. Seed profile: fields marked `TODO(owner)` where only prod knowledge can answer — list them for the user.
-8. **Prove every gate can fail.** On a scratch branch, break each gate once (uncovered line, source change with no test, mapped code without its doc, missing decision-log section, failing lint, roadmap item with no goal) and show the hook output for each failing, then passing after the fix. A gate you could not make fail is not installed — say so.
+7. **Fill the doc map, seed profile and architecture doc** from what the survey found. Architecture doc: draft units, modules, owners, outbound calls and connections from the code as it is today; any fact with two writers goes in its `## Drift checks` as the first gap, not hidden in the tables. Doc map: one line per code area that has a describing doc. Seed profile: fields marked `TODO(owner)` where only prod knowledge can answer — list them for the user.
+8. **Prove every gate can fail.** On a scratch branch, break each gate once (uncovered line, source change with no test, mapped code without its doc, missing decision-log section, failing lint, roadmap item with no goal, spec declaring an owner change without the architecture doc) and show the hook output for each failing, then passing after the fix. A gate you could not make fail is not installed — say so.
 9. **Report** to the user: what was installed, config values, gates proven (with output), anything left `TODO(owner)` or N/A, the `APPROVER` mode, and the owner's own steps from "Your steps (owner)" in the rulebook. Owner mode: `bin/approve --spec <issue>` for `owner-approval: required` specs; `bin/approve <pr>` for PRs `bin/ship` refuses (gate-file change, `owner-review` flag); answering `owner-review` flags; saying "merge" in repos without `bin/ship`. Agent mode: only answering `owner-review` flags, reading `docs/rule-changes.md` for rule changes (and "merge" where there is no `bin/ship`). Open the PR; the owner merges it — on first install there is no `bin/ship` on the base yet, and an upgrade is judged by the base's older rules.
 
 ## Rules for this skill

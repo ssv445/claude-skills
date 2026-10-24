@@ -27,6 +27,7 @@ TEST_GLOBS="*.test.* *.spec.* *_test.* */__tests__/* tests/* test/* e2e/*"
 DEPS_LINKS="node_modules"        # paths symlinked into the TDD scratch checkout so tests can run there
 FILE_SIZE_GLOBS="*.ts *.tsx *.js *.jsx *.mjs *.py *.go *.rb *.php"
 MAX_FILE_LINES=400
+ARCH_DOC="docs/guidelines/architecture.md"   # the architecture doc checked by checks/architecture.sh
 
 # --- bin/ship (pre-merge) ---
 E2E_CMD=""

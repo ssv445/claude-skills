@@ -1,6 +1,6 @@
 ---
 issue: <number>
-owner-approval: not-required   # required if: architecture, schema/data model, new 3rd-party dep or paid service, auth/security, pricing or user-facing promise
+owner-approval: not-required   # required if: schema/data model, new 3rd-party dep or paid service, auth/security, pricing or user-facing promise
 ---
 
 # <Title>
@@ -24,6 +24,12 @@ Tag every line `[sourced: <where>]` or `[inferred]`. A field that does not apply
 - **Freshness / caching:** what may be stale, for how long, what invalidates it.
 - **Non-goals:** what this explicitly does not handle.
 
+## Architecture impact
+Names from `docs/guidelines/architecture.md`. Reviewed at the spec gate (`## Architecture review` in decisions.md); the pre-push hook checks both.
+- Modules touched: <modules>
+- New owners: <none, or each new fact / store / shared resource / outbound call → its one owning module>
+- New module or owner change: <no | yes — then an ADR is added and docs/guidelines/architecture.md is updated in this branch>
+
 ## Plan
 Layer checklist — `included` or `N/A — reason`:
 - Data / schema:
@@ -36,7 +42,7 @@ Layer checklist — `included` or `N/A — reason`:
 - Integration tests:
 - E2E tests:
 - Perf check (budget from Expectations):
-- Deploy / migration:
+- Deploy / migration (see Stored data in the rulebook):
 - ADR: <link or N/A — reason>
 
 Steps:
