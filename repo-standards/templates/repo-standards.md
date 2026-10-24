@@ -53,7 +53,7 @@ Done when: the issue has a story or reproduction, and acceptance criteria.
 ### 2. Spec
 Write `docs/work/<issue>-<slug>/spec.md` from `docs/templates/spec.md`. The **Expectations** block is the heart of it: user, interaction, inputs, error cases, scale and performance, accuracy, freshness/caching, non-goals.
 - Tag every Expectations line **[sourced: <where>]** (issue, ICP doc, guideline, existing behaviour) or **[inferred]** (your guess).
-- Set `owner-approval: required` when the change touches the **blast-radius list**: architecture (a new module or a change of owner), schema or data model, a new third-party dependency or paid service, auth or security, pricing or a user-facing promise.
+- Set `owner-approval: required` when the change touches the **blast-radius list**: architecture (including any new module, new owner or change of owner), schema or data model, a new third-party dependency or paid service, auth or security, pricing or a user-facing promise.
 - Fill `## Architecture impact`: modules touched, the one owner of each new fact, store, shared resource or outbound call, and whether it adds a module or changes an owner (see Architecture below).
 
 Done when: every Expectations field is filled or `N/A — reason`, every line is tagged, and `## Architecture impact` is filled.
@@ -130,8 +130,8 @@ The roadmap is planned as a graph and executed in a line. All of it lives in `do
 
 `docs/guidelines/architecture.md` is the target structure: units, modules (one job each), owners, outbound calls, connections.
 - **One owner per fact.** Every fact, store, shared resource and outbound call has exactly one owning module. Others ask the owner; they never write its store or drive its resource. A second owner is a defect, even when both copies agree today.
-- **Changing the structure** — a new module, or a new or moved owner — is a blast-radius change: `owner-approval: required`, an ADR, and the architecture doc updated in the same branch. The pre-push hook checks this from the spec.
-- **Drift check.** Before each release, and at the monthly review when no release ran one, compare the code as built against the doc and list the gaps (for example with the `draw-architecture` skill's `vs` mode). Each gap is fixed, put in the roadmap Inbox, or resolved by changing the doc through a spec. Log the check in the doc's `## Drift checks`.
+- **Changing the structure** — a new module, or a new or moved owner — is a blast-radius change: `owner-approval: required` (approved per `APPROVER`, like every blast-radius spec), a new ADR, and the architecture doc updated in the same branch, naming each new owner. The pre-push hook checks this from the spec.
+- **Drift check.** At each versioned release, and at every monthly review in repos that deploy on each merge or ran no release that month, compare the code as built against the doc and list the gaps: modules, owners, outbound calls and connections that exist in one but not the other. Each gap is fixed, put in the roadmap Inbox, or resolved by changing the doc through a spec. Log the check in the doc's `## Drift checks`.
 
 ## Code for agents
 
@@ -141,15 +141,15 @@ Code is read by search. Optimise for that:
 - **One pattern per concern.** The approved pattern for data fetching, errors, forms, jobs, etc. is in `docs/guidelines/`. A new pattern needs an ADR.
 - **Local.** Tests beside the code; small module surfaces; files stay under `MAX_FILE_LINES`.
 - **Typed and validated at every boundary** — API, DB, external input — so a wrong shape fails loudly where it enters.
-- **Seams for the outside world.** Time, randomness, hardware, network and file locations reach logic through an injected interface that has a fake, so every behaviour can be tested without them. Durations come from the injected clock, never from counting events or loop passes. Tests never touch real user data, the real install, or production accounts.
+- **Seams for the outside world.** Time, randomness, hardware, network and file locations reach logic through an injected interface that has a fake, so every behaviour can be tested without them. Durations come from the injected clock, never from counting events or loop passes. Tests never touch real data, real environments or production accounts.
 - **Rationale in comments**: the why, and the what when the code is opaque.
 
 ## Stored data
 
 Anything persisted — files, databases, caches, settings — outlives the code that wrote it.
-- A stored format changes only by adding optional fields; old data must keep loading.
-- A structural change backs up the user's data first and can be reverted without loss.
-- A bad record is skipped and reported; it never blocks the read or overwrites good data.
+- Prefer additive format changes (new optional fields); old data must keep loading.
+- A structural change (rename, removal, reshaping) backs up existing data first and can be reverted without loss.
+- Validate on write and reject a wrong shape loudly. On read, a bad record is quarantined and reported: it never blocks the read of good data, never overwrites it, and never silently yields a partial result presented as whole.
 
 ## Seeds
 

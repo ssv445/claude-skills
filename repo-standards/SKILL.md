@@ -31,7 +31,7 @@ What gets installed (sources in this skill folder):
 
 1. **Survey.** Read the repo's `CLAUDE.md`, package manifests, test runner configs, existing hooks (`.husky/`, `core.hooksPath`), existing `docs/`. Done when you can name: language/stack, lint, typecheck, unit-test, coverage, e2e, perf commands (or that one is missing), the hook manager in use, and the GitHub owner login.
 2. **Branch.** Work on `chore/<issue>-repo-standards` (open the issue first; this install is itself an issue). Never on main.
-3. **Copy** every row of the table above. Existing files with the same path: merge, never overwrite — show the user the conflict if a merge is not obvious.
+3. **Copy** every row of the table above. Existing files with the same path: merge, never overwrite — show the user the conflict if a merge is not obvious. On an upgrade, merge new template sections (such as `## Architecture impact` in `spec.md`) into the repo's copies; specs written before a gate reached the base branch are skipped by it.
 4. **Fill `.standards/config.sh`.** Every command variable set to a real command or left empty with a `# N/A — reason` comment. Empty `UNIT_CMD` or `DIFF_COVERAGE_CMD` is not allowed when the repo has source code: add the tooling instead (e.g. vitest/jest coverage + `diff-cover` for lcov/cobertura). Ask the owner for `APPROVER` (`owner` or `agent`); leave the default `owner` if they don't say.
 5. **Wire hooks.**
    - No hook manager: `git config core.hooksPath .standards/hooks`, and add that line to the repo's setup script / README setup section (it is per-clone).
