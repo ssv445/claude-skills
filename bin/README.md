@@ -22,7 +22,36 @@ one state file tracking which session runs where.
 - **Filters**: hides `claude -p`/SDK sessions (entrypoint `sdk-cli`), empty sessions; previews skip caveat/slash-command noise; list capped at 15 (`m` = all)
 - **Terminal title** = `<worktree>:<branch>` (understands Zed's `<base>/<name>/<repo>` worktree layout)
 - **Archive** = move jsonl to `~/.claude-thread/archived/<encoded-cwd>/` — hidden from claude, restorable
-- **Default flags**: `--dangerously-skip-permissions --chrome --remote-control`, override via `CLAUDE_THREAD_ARGS`; binary via `CLAUDE_BIN`
+- **Default flags**: `--dangerously-skip-permissions`, plus `--remote-control` on the main account only; extra flags via `CLAUDE_THREAD_ARGS`; binary via `CLAUDE_BIN`
+
+## Accounts (profiles)
+
+Run some work on another Claude subscription while keeping one setup. A profile is a
+`CLAUDE_CONFIG_DIR` at `~/.claude-profiles/<name>`: it owns its login and per-process state,
+and symlinks everything else (`CLAUDE.md`, settings, skills, plugins, memory, `projects/`)
+to `~/.claude`. That is the layout Maestro documents for multi-account Claude Code.
+Transcripts from every account still land in `~/.claude/projects`.
+
+```bash
+cld profile new shyam-dev
+cld profile login shyam-dev                       # browser: sign in with THAT account
+cld profile map shyam-dev '~/www/worktrees/*'     # folder or glob; longest route wins
+cld profile list                                  # profiles, login state, routes
+cld main                                          # force the main account here
+cld ask "where is the Q3 pricing artifact?"       # read-only answer from main
+```
+
+- **New sessions** take the profile their folder maps to. **Resumed sessions** keep the
+  account they started on, recorded in `state.json`. A remap never moves old sessions.
+  `cld main` or `CLAUDE_PROFILE=<name|main>` overrides both.
+- **Remote Control stays on main.** Profile launches drop `--remote-control` and pass
+  `remoteControlAtStartup: false` through `--settings`, because the shared `settings.json` turns it on.
+- **MCP servers come from main.** Each launch passes main's user servers, plus main's
+  servers for that folder, through `--mcp-config`. Add a server once, on main.
+- Not shared, per profile: `.claude.json` (login), `sessions/`, `daemon/`, `jobs/`, `teams/`,
+  `history.jsonl`, caches. Claude.ai-side things are per account: artifacts, connectors,
+  Remote Control and the "Help improve Claude" setting. Turn that setting off in each account.
+- A logged-out profile refuses to launch and names the command that fixes it.
 
 ## Install
 

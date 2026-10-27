@@ -218,9 +218,100 @@ EOF
   rm -rf "$SB"
 }
 
+# ── accounts (profiles) ────────────────────────────────────────────────────
+profile_tests() {
+  local SB; SB=$(mktemp -d "$ORIG_HOME/.ct-test.XXXXXX"); export HOME="$SB/home"
+  mkdir -p "$HOME/.claude/projects" "$HOME/.claude/skills" "$HOME/.claude/sessions" \
+           "$HOME/.claude-thread" "$SB/bin" "$SB/www/acme/sub" "$SB/www/acme2" \
+           "$SB/www/worktrees/acme-x" "$SB/www/worktrees/other"
+  : > "$HOME/.claude/CLAUDE.md"
+  printf '%s\n' '{"mcpServers":{"gsc":{"type":"http","url":"http://x/gsc"}},
+    "projects":{"'"$SB/www/acme"'":{"mcpServers":{"pw":{"command":"pw"}}}}}' > "$HOME/.claude.json"
+  # fake claude: `auth status` reports a login when the profile has a marker
+  # file; any other call prints which config dir and args it got
+  cat > "$SB/bin/claude" <<'EOF'
+#!/bin/bash
+if [ "$1" = auth ] && [ "$2" = status ]; then
+  if [ -z "${CLAUDE_CONFIG_DIR:-}" ] || [ -e "$CLAUDE_CONFIG_DIR/.loggedin" ]; then
+    echo '{"loggedIn": true}'; else echo '{"loggedIn": false}'; fi
+  exit 0
+fi
+echo "CFG=${CLAUDE_CONFIG_DIR:-main}"
+printf 'ARG=%s\n' "$@"
+EOF
+  chmod +x "$SB/bin/claude"
+  awk '/^# ── account commands/{exit} {print}' "$WRAPPER" > "$SB/lib.sh"
+  # shellcheck disable=SC1090
+  . "$SB/lib.sh"
+  CLAUDE_BIN="$SB/bin/claude"; TERMINAL_ID=""; unset CLAUDE_PROFILE
+
+  profile_cmd new dev >/dev/null
+  profile_cmd new acme >/dev/null
+  : > "$PROFILES_ROOT/dev/.loggedin"; : > "$PROFILES_ROOT/acme/.loggedin"
+  check "T1: new links what you author" "$HOME/.claude/CLAUDE.md" "$(readlink "$PROFILES_ROOT/dev/CLAUDE.md")"
+  check "T2: new links transcripts, so worklog still sees them" \
+        "$HOME/.claude/projects" "$(readlink "$PROFILES_ROOT/dev/projects")"
+  check "T3: never shares the live session registry" "no" \
+        "$([ -e "$PROFILES_ROOT/dev/sessions" ] && echo yes || echo no)"
+  check "T4: 'main' is refused as a profile name" "1" \
+        "$(profile_cmd new main >/dev/null; echo $?)"
+
+  profile_cmd map dev "$SB/www/worktrees/*" >/dev/null
+  profile_cmd map acme "$SB/www/acme" >/dev/null
+  profile_cmd map acme "$SB/www/worktrees/acme-*" >/dev/null
+  check "U1: a mapped folder routes to its profile" "acme" "$(profile_which "$SB/www/acme")"
+  check "U2: and so does anything below it" "acme" "$(profile_which "$SB/www/acme/sub")"
+  check "U3: a sibling sharing the prefix does not" "" "$(profile_which "$SB/www/acme2")"
+  check "U4: a glob route matches" "dev" "$(profile_which "$SB/www/worktrees/other")"
+  check "U5: the longer route wins" "acme" "$(profile_which "$SB/www/worktrees/acme-x")"
+  check "U6: an unmapped folder is main" "" "$(profile_which "$SB")"
+  profile_cmd map acme "$SB/www/acme" >/dev/null
+  check "U7: re-mapping does not duplicate a route" "1" \
+        "$(grep -c "^$SB/www/acme	" "$PROFILE_MAP")"
+
+  local out
+  out=$(cd "$SB" && claude_cmd "" --resume x)
+  check "V1: main launches on ~/.claude" "CFG=main" "$(head -1 <<<"$out")"
+  if grep -qx "ARG=--remote-control" <<<"$out"; then
+    echo "  PASS  V2: main keeps Remote Control"; pass=$((pass+1))
+  else echo "  FAIL  V2: main lost --remote-control"; fail=$((fail+1)); fi
+  out=$(cd "$SB/www/acme" && claude_cmd acme --resume x)
+  check "V3: a profile launches on its own folder" "CFG=$PROFILES_ROOT/acme" "$(head -1 <<<"$out")"
+  if grep -qx "ARG=--remote-control" <<<"$out"; then
+    echo "  FAIL  V4: a profile got --remote-control"; fail=$((fail+1))
+  else echo "  PASS  V4: a profile gets no --remote-control flag"; pass=$((pass+1)); fi
+  check "V5: and its settings turn Remote Control off at startup" "False" \
+        "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/acme/launch-settings.json'))['remoteControlAtStartup'])")"
+  check "V6: it gets main's MCP servers plus main's for that folder" "gsc,pw" \
+        "$(python3 -c "import json;print(','.join(sorted(json.load(open('$PROFILES_ROOT/acme/launch-mcp.json'))['mcpServers'])))")"
+  rm "$PROFILES_ROOT/acme/.loggedin"
+  out=$(cd "$SB/www/acme" && claude_cmd acme --resume x); local rc=$?
+  check "V7: a logged-out profile is refused, not launched" "3" "$rc"
+  if grep -q "^CFG=" <<<"$out"; then
+    echo "  FAIL  V8: claude ran on a logged-out profile"; fail=$((fail+1))
+  else echo "  PASS  V8: and says how to log in"; pass=$((pass+1)); fi
+  : > "$PROFILES_ROOT/acme/.loggedin"
+
+  # a session keeps the account it started on
+  local S1=11111111-0000-0000-0000-000000000001 S2=22222222-0000-0000-0000-000000000002
+  state start "$S1" "$SB/www/acme" "" dev >/dev/null; state end "$S1" >/dev/null
+  check "W1: a resume keeps its recorded profile over the folder's" "dev" \
+        "$(cd "$SB/www/acme" && resolve_profile "$S1")"
+  check "W2: a new session takes the folder's profile" "acme" \
+        "$(cd "$SB/www/acme" && resolve_profile "$S2")"
+  check "W3: cld main overrides both" "" \
+        "$(cd "$SB/www/acme" && CLAUDE_PROFILE=main resolve_profile "$S1")"
+  state start "$S2" "$SB/www/acme" "" main >/dev/null; state end "$S2" >/dev/null
+  check "W4: a session recorded on main stays on main in a mapped folder" "" \
+        "$(cd "$SB/www/acme" && resolve_profile "$S2")"
+  check "W5: the picker can tag profile sessions (main untagged)" "$S1	dev" "$(state profiles)"
+  rm -rf "$SB"
+}
+
 echo "── $WRAPPER ──"
 state_tests
 lazy_tests
 project_tests
+profile_tests
 echo "  → $pass passed, $fail failed"
 exit $((fail > 0))
