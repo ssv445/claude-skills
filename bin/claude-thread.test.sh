@@ -382,6 +382,39 @@ EOF
         "CFG=$PROFILES_ROOT/acme|ARG=agents" "$(paste -sd'|' - <<<"$out")"
   out=$(cd "$SB/www/acme" && CLAUDE_CONFIG_DIR=x CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" @main stop 1 </dev/null 2>&1)
   check "Y10: cld @main stop goes to main's manager" "CFG=main|ARG=stop|ARG=1" "$(paste -sd'|' - <<<"$out")"
+
+  # cld spawn: queue here, the next new tab in that folder starts it
+  local BRIEF="$SB/brief.md" req
+  printf 'Review the PR.\nSay `hi` to $USER.\n' > "$BRIEF"
+  req() { python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$SPAWN_DIR/$1.json" "$2"; }
+  (cd "$SB/www/acme" && spawn_cmd w1 --brief "$BRIEF" >/dev/null)
+  check "Z1: spawn queues on the folder's account" "acme $(cd "$SB/www/acme" && pwd -P)" \
+        "$(req w1 profile) $(req w1 cwd)"
+  (cd "$SB/www/acme" && CLAUDE_PROFILE=main spawn_cmd w2 --brief "$BRIEF" >/dev/null)
+  check "Z2: and on an explicit account" "main" "$(req w2 profile)"
+  (cd "$SB" && spawn_cmd w3 --brief "$SB/nope.md" >/dev/null); r1=$?
+  : > "$SB/empty.md"; (cd "$SB" && spawn_cmd w3 --brief "$SB/empty.md" >/dev/null); r2=$?
+  check "Z3: a missing or empty brief is refused" "1 1" "$r1 $r2"
+  (cd "$SB" && spawn_cmd 'Bad Name' --brief "$BRIEF" >/dev/null); r1=$?
+  (cd "$SB" && spawn_cmd w1 --brief "$BRIEF" >/dev/null); r2=$?
+  check "Z4: a bad name or one already waiting is refused" "1 1" "$r1 $r2"
+  check "Z5: another folder's tab takes nothing" "" "$(cd "$SB/www/acme2" && spawn_take)"
+  printf 'edited\n' > "$BRIEF"
+  # w2 (queued on main, in a folder routed to acme) becomes the oldest, so the
+  # launch must take the queued account, not the folder's
+  touch -t 202001010000 "$SPAWN_DIR/w2.json"
+  out=$(cd "$SB/www/acme" && CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" </dev/null 2>&1)
+  check "Z6: a new tab here starts the oldest one, named, on its queued account, with the queued brief" \
+        "CFG=main|ARG=-n|ARG=w2|ARG=Review the PR.|Say \`hi\` to \$USER." \
+        "$(grep -E '^(.*CFG=|ARG=-n$|ARG=w2$|ARG=Review|Say)' <<<"$out" | sed 's/^.*CFG=/CFG=/' | paste -sd'|' -)"
+  check "Z7: and it is gone from the queue; the next one waits" "yes no" \
+        "$([ -e "$SPAWN_DIR/w1.json" ] && echo yes || echo no) $([ -e "$SPAWN_DIR/w2.json" ] && echo yes || echo no)"
+  s=$(grep -A1 '^ARG=--session-id$' <<<"$out" | tail -1 | cut -d= -f2)
+  check "Z8: its account is recorded, so a resume stays on it" "main" "$(state profile "$s")"
+  (cd "$SB" && CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" @dev spawn w9 --brief "$BRIEF" >/dev/null 2>&1)
+  check "Z9: cld @dev spawn queues on dev" "dev" "$(req w9 profile)"
+  (cd "$SB" && spawn_cmd --cancel w9 >/dev/null)
+  check "Z10: --cancel removes it" "no" "$([ -e "$SPAWN_DIR/w9.json" ] && echo yes || echo no)"
   rm -rf "$SB"
 }
 

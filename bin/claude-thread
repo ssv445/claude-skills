@@ -647,6 +647,75 @@ lazy_resume() { # <uuid>
   esac
 }
 
+# ── spawned agents ──
+# `cld spawn <name> --brief <file>` queues a long-lived agent for this folder;
+# the next terminal thread opened here (cmd-n) takes it and starts it. cld can't
+# open that tab itself: Zed has no command, link or extension API that starts a
+# terminal thread (checked 2026-10-27), and a plain terminal is never restored
+# by Zed, so it would not live long. The brief is copied in, so the file can
+# change or go away after queueing.
+SPAWN_DIR="$HOME/.claude-thread/spawn"
+
+spawn_cmd() { # <name> --brief <file> | --list | --cancel <name>
+  local name="${1:-}" prof f
+  case "$name" in
+    ""|--list)
+      ls "$SPAWN_DIR"/*.json >/dev/null 2>&1 || { echo "no agents waiting"; return 0; }
+      for f in "$SPAWN_DIR"/*.json; do
+        python3 -I -c 'import json,sys,os,time
+r = json.load(open(sys.argv[1])); m = int((time.time() - r["queued"]) / 60)
+print(f"  {r[\"name\"]:<20} {r[\"profile\"]:<14} {r[\"cwd\"].replace(os.path.expanduser(\"~\"), \"~\", 1)}  ({m}m ago)")' "$f"
+      done
+      return 0 ;;
+    --cancel)
+      [ -f "$SPAWN_DIR/${2:-}.json" ] || { echo "cld: no agent '${2:-}' waiting"; return 1; }
+      rm "$SPAWN_DIR/$2.json"; echo "cancelled '$2'"; return 0 ;;
+    -*|*[!a-z0-9-]*) echo "cld: agent name: lowercase letters, digits, hyphens"; return 1 ;;
+  esac
+  [ "${2:-}" = --brief ] && [ -n "${3:-}" ] \
+    || { echo 'usage: cld [@account] spawn <name> --brief <file>'; return 1; }
+  [ -s "$3" ] || { echo "cld: brief file missing or empty: $3"; return 1; }
+  [ -e "$SPAWN_DIR/$name.json" ] \
+    && { echo "cld: '$name' is already waiting (cld spawn --cancel $name)"; return 1; }
+  prof=$(resolve_profile); prof="${prof:-main}"
+  mkdir -p "$SPAWN_DIR"
+  python3 -I - "$SPAWN_DIR/$name.json" "$(pwd -P)" "$name" "$prof" "$3" <<'PY' || return 1
+import json, os, sys, time
+out, cwd, name, prof, brief = sys.argv[1:6]
+req = {"cwd": cwd, "name": name, "profile": prof,
+       "brief": open(brief).read(), "queued": int(time.time())}
+with open(out + ".tmp", "w") as fh:
+    json.dump(req, fh)
+os.replace(out + ".tmp", out)
+PY
+  echo "queued '$name' on $prof for $(pwd -P | sed "s|^$HOME|~|")"
+  echo "next: press cmd-n in this project's Zed window; the new tab starts it"
+}
+
+# The oldest request for this folder, moved aside so it is ours: mv is atomic,
+# so two tabs opened at once never start the same agent.
+spawn_take() {
+  local f here; here=$(pwd -P)
+  for f in $(ls -tr "$SPAWN_DIR"/*.json 2>/dev/null); do
+    [ "$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["cwd"])' "$f" 2>/dev/null)" = "$here" ] \
+      || continue
+    mv "$f" "$f.$$.taken" 2>/dev/null && { echo "$f.$$.taken"; return 0; }
+  done
+  return 0
+}
+
+spawn_run() { # <taken request>
+  local u name prof brief
+  u=$(uuidgen | tr 'A-Z' 'a-z')
+  name=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$1")
+  prof=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["profile"])' "$1")
+  brief=$(python3 -I -c 'import json,sys; sys.stdout.write(json.load(open(sys.argv[1]))["brief"])' "$1")
+  rm -f "$1"
+  echo "starting agent '$name' on $prof"
+  CLAUDE_PROFILE="$prof" run_claude "$u" --session-id "$u" -n "$name" "$brief"
+  post_exit_menu
+}
+
 # fresh session — no listing, no previews. The fast path.
 new_session() {
   local u; u=$(uuidgen | tr 'A-Z' 'a-z')
@@ -868,6 +937,8 @@ case "${1:-}" in
     esac
     export CLAUDE_PROFILE="$pick" ;;
 esac
+# after @ so `cld @sun spawn …` queues on that account
+[ "${1:-}" = spawn ] && { shift; spawn_cmd "$@"; exit $?; }
 
 # Resolved once, before any launch path: which Zed thread this shell is. The
 # nonce briefly replaces the tab title; the set_title calls below put it back.
@@ -941,6 +1012,10 @@ set_title
 # because asking for a terminal is asking to work in it.
 parked=$(state bound "$TERMINAL_ID" "$PROJ_DIR")
 [ -n "$parked" ] && lazy_resume "$parked"
+
+# a new tab here is what a queued `cld spawn` waits for
+spawned=$(spawn_take)
+[ -n "$spawned" ] && { spawn_run "$spawned"; exit 0; }
 
 claimed=$(state claim "$(pwd)" "$PROJ_DIR" "$TERMINAL_ID")
 if [ -n "$claimed" ]; then
