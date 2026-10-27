@@ -227,7 +227,7 @@ EOF
 profile_tests() {
   local SB; SB=$(mktemp -d "$ORIG_HOME/.ct-test.XXXXXX"); export HOME="$SB/home"
   mkdir -p "$HOME/.claude/projects" "$HOME/.claude/skills" "$HOME/.claude/sessions" \
-           "$HOME/.claude-thread" "$SB/bin" "$SB/www/acme/sub" "$SB/www/acme2" \
+           "$HOME/.claude/daemon" "$HOME/.claude-thread" "$SB/bin" "$SB/www/acme/sub" "$SB/www/acme2" \
            "$SB/www/worktrees/acme-x" "$SB/www/worktrees/other"
   : > "$HOME/.claude/CLAUDE.md"
   printf '%s\n' '{"mcpServers":{"gsc":{"type":"http","url":"http://x/gsc"}},
@@ -261,8 +261,10 @@ EOF
   check "T1: new links what you author" "$HOME/.claude/CLAUDE.md" "$(readlink "$PROFILES_ROOT/dev/CLAUDE.md")"
   check "T2: new links transcripts, so worklog still sees them" \
         "$HOME/.claude/projects" "$(readlink "$PROFILES_ROOT/dev/projects")"
-  check "T3: never shares the live session registry" "no" \
-        "$([ -e "$PROFILES_ROOT/dev/sessions" ] && echo yes || echo no)"
+  check "T3: shares the peer registry, so agents on any account see each other" \
+        "$HOME/.claude/sessions" "$(readlink "$PROFILES_ROOT/dev/sessions")"
+  check "T3b: but never the background-agent manager" "no" \
+        "$([ -e "$PROFILES_ROOT/dev/daemon" ] && echo yes || echo no)"
   check "T4: 'main' is refused as a profile name" "1" \
         "$(profile_cmd new main >/dev/null; echo $?)"
 
