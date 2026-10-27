@@ -37,11 +37,15 @@ PROFILES_ROOT="${CLAUDE_PROFILES_ROOT:-$HOME/.claude-profiles}"
 PROFILE_MAP="$PROFILES_ROOT/map"
 # Shared with the main account: what you author, plus history keyed by session
 # id (safe for several processes). Allowlist, not denylist: a per-process folder
-# a future Claude Code adds must not get shared by accident. Never shared:
-# .claude.json (login, account), sessions/ daemon/ jobs/ teams/ (live process
-# registry and keys), history.jsonl, caches, credentials.
+# a future Claude Code adds must not get shared by accident. sessions/ is the
+# local peer registry (one file per pid, no account data): sharing it lets
+# agents on different accounts list and message each other over local sockets
+# (tested 2026-10-27). Never shared: .claude.json (login, account), daemon/
+# jobs/ teams/ (background-agent manager, stays per account), history.jsonl,
+# caches, credentials.
 PROFILE_SHARED=(CLAUDE.md settings.json keybindings.json skills agents commands
-                plugins projects agent-memory memory file-history tasks todos plans taste)
+                plugins projects agent-memory memory file-history tasks todos plans taste
+                sessions)
 
 # claude_cmd <profile> <args…> — every launch path comes through here. An empty
 # profile is the main account.

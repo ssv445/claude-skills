@@ -48,7 +48,10 @@ cld ask "where is the Q3 pricing artifact?"       # read-only answer from main
   `remoteControlAtStartup: false` through `--settings`, because the shared `settings.json` turns it on.
 - **MCP servers come from main.** Each launch passes main's user servers, plus main's
   servers for that folder, through `--mcp-config`. Add a server once, on main.
-- Not shared, per profile: `.claude.json` (login), `sessions/`, `daemon/`, `jobs/`, `teams/`,
+- **Agents talk across accounts.** `sessions/` (the local peer registry) is shared, so
+  `ListAgents` and `SendMessage` reach agents on every profile over local sockets.
+  `claude agents` and background-agent control stay per account.
+- Not shared, per profile: `.claude.json` (login), `daemon/`, `jobs/`, `teams/`,
   `history.jsonl`, caches. Claude.ai-side things are per account: artifacts, connectors,
   Remote Control and the "Help improve Claude" setting. Turn that setting off in each account.
 - A logged-out profile refuses to launch and names the command that fixes it.
