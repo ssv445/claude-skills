@@ -7,6 +7,11 @@
 # thread binding and the parking that keeps restored tabs from launching claude.
 set -u
 WRAPPER="${1:-$(dirname "$0")/claude-thread}"
+# absolute: the account tests run the wrapper from inside other folders
+WRAPPER="$(cd "$(dirname "$WRAPPER")" && pwd)/$(basename "$WRAPPER")"
+# run from a profile session these would leak in (and the profile tests would
+# create profiles in the real folder) — the suite must not depend on its caller
+unset CLAUDE_PROFILES_ROOT CLAUDE_CONFIG_DIR CLAUDE_THREAD_ARGS CLAUDE_PROFILE CLAUDE_BIN
 # project_list deliberately skips temp paths, and mktemp -d hands out
 # /var/folders on macOS — so that one sandbox has to live under the real HOME
 ORIG_HOME="$HOME"
@@ -238,6 +243,11 @@ if [ "$1" = auth ] && [ "$2" = status ]; then
 fi
 echo "CFG=${CLAUDE_CONFIG_DIR:-main}"
 printf 'ARG=%s\n' "$@"
+prev=""
+for a in "$@"; do
+  [ "$prev" = --mcp-config ] && echo "MCPFILE=$a" && echo "MCP=$(tr -d '\n ' < "$a")"
+  prev="$a"
+done
 EOF
   chmod +x "$SB/bin/claude"
   awk '/^# ── account commands/{exit} {print}' "$WRAPPER" > "$SB/lib.sh"
@@ -283,7 +293,17 @@ EOF
   check "V5: and its settings turn Remote Control off at startup" "False" \
         "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/acme/launch-settings.json'))['remoteControlAtStartup'])")"
   check "V6: it gets main's MCP servers plus main's for that folder" "gsc,pw" \
-        "$(python3 -c "import json;print(','.join(sorted(json.load(open('$PROFILES_ROOT/acme/launch-mcp.json'))['mcpServers'])))")"
+        "$(sed -n 's/^MCP=//p' <<<"$out" | python3 -c "import json,sys;print(','.join(sorted(json.load(sys.stdin)['mcpServers'])))")"
+  local mf; mf=$(sed -n 's/^MCPFILE=//p' <<<"$out")
+  check "V6b: each launch gets its own MCP file, removed after exit" "gone" \
+        "$([ -n "$mf" ] && [ ! -e "$mf" ] && echo gone || echo "left:$mf")"
+  out=$(cd "$SB" && CLAUDE_CONFIG_DIR="$PROFILES_ROOT/acme" claude_cmd "" x)
+  check "V6c: main ignores a CLAUDE_CONFIG_DIR inherited from a profile shell" \
+        "CFG=main" "$(head -1 <<<"$out")"
+  mkdir "$HOME/.claude/plans"
+  (cd "$SB/www/acme" && claude_cmd acme x >/dev/null)
+  check "V6d: a shared folder created after 'profile new' is linked at launch" \
+        "$HOME/.claude/plans" "$(readlink "$PROFILES_ROOT/acme/plans")"
   rm "$PROFILES_ROOT/acme/.loggedin"
   out=$(cd "$SB/www/acme" && claude_cmd acme --resume x); local rc=$?
   check "V7: a logged-out profile is refused, not launched" "3" "$rc"
@@ -305,6 +325,40 @@ EOF
   check "W4: a session recorded on main stays on main in a mapped folder" "" \
         "$(cd "$SB/www/acme" && resolve_profile "$S2")"
   check "W5: the picker can tag profile sessions (main untagged)" "$S1	dev" "$(state profiles)"
+
+  # a session from before profiles: transcript exists, nothing recorded
+  local OLD=33333333-0000-0000-0000-000000000003 ACME_PROJ
+  ACME_PROJ="$HOME/.claude/projects/$(cd "$SB/www/acme" && pwd | sed 's/[^a-zA-Z0-9]/-/g')"
+  mkdir -p "$ACME_PROJ"
+  printf '%s\n' '{"type":"user","message":{"content":"old work"}}' > "$ACME_PROJ/$OLD.jsonl"
+  check "W6: an older session with no record resumes on main, not the route" "" \
+        "$(cd "$SB/www/acme" && PROJ_DIR="$ACME_PROJ" resolve_profile "$OLD")"
+
+  # the launch paths themselves, not just the resolver
+  out=$(cd "$SB/www/acme" && PROJ_DIR="$ACME_PROJ" run_claude "$S1" --resume "$S1" 2>&1)
+  check "X1: run_claude resumes on the recorded profile" "1" \
+        "$(grep -c "CFG=$PROFILES_ROOT/dev$" <<<"$out")"
+  local S4=44444444-0000-0000-0000-000000000004
+  (cd "$SB/www/acme" && PROJ_DIR="$ACME_PROJ" run_claude "$S4" --session-id "$S4" >/dev/null 2>&1)
+  check "X2: run_claude records a new session's account" "acme" "$(state profile "$S4")"
+
+  # whole-script passthrough: --continue follows the newest session's account,
+  # a bare --resume opens our picker instead of claude's account-blind one
+  state start "$OLD" "$SB/www/acme" "" dev >/dev/null; state end "$OLD" >/dev/null
+  out=$(cd "$SB/www/acme" && CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" --continue </dev/null 2>&1)
+  check "X3: --continue runs on the newest session's account" "1" \
+        "$(grep -c "CFG=$PROFILES_ROOT/dev$" <<<"$out")"
+  # sc's bare --resume with a session to recover: Enter resumes it on its account
+  out=$( (cd "$SB/www/acme" && printf '\n' | CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" --resume) 2>&1)
+  check "X4: a recovered bare --resume runs on the session's account" "1" \
+        "$(grep -c "CFG=$PROFILES_ROOT/dev$" <<<"$out")"
+  # nothing to recover: our picker, never claude's account-blind one
+  rm "$HOME/.claude-thread/state.json"
+  out=$( (cd "$SB/www/acme" && echo q | CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" --resume) 2>&1)
+  if grep -q "claude sessions:" <<<"$out" && ! grep -q "CFG=" <<<"$out"; then
+    echo "  PASS  X5: a bare --resume with nothing to recover opens our picker"; pass=$((pass+1))
+  else echo "  FAIL  X5: bare --resume launched claude directly"; fail=$((fail+1))
+    printf '%s\n' "$out" | head -8 | sed 's/^/          /'; fi
   rm -rf "$SB"
 }
 

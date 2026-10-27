@@ -48,29 +48,54 @@ PROFILE_SHARED=(CLAUDE.md settings.json keybindings.json skills agents commands
 claude_cmd() {
   local prof="$1"; shift
   if [ -z "$prof" ]; then
+    # -u: a profile session's own shell carries CLAUDE_CONFIG_DIR, and `cld main`
+    # run from it must still land on ~/.claude
     # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
-    "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" "${CLAUDE_MAIN_ARGS[@]}" $CLAUDE_THREAD_ARGS "$@"
+    env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" "${CLAUDE_MAIN_ARGS[@]}" \
+      $CLAUDE_THREAD_ARGS "$@"
     return
   fi
-  local dir="$PROFILES_ROOT/$prof"
+  local dir="$PROFILES_ROOT/$prof" mcp rc
   [ -d "$dir" ] || { echo "cld: no profile '$prof' (cld profile new $prof)"; return 1; }
   profile_logged_in "$dir" || {
     echo "cld: profile '$prof' is logged out — run: cld profile login $prof"; return 3; }
-  profile_compose "$dir" "$(pwd -P)" || return 1
+  profile_link "$dir"
+  # one MCP file per launch: it holds this folder's servers, and parallel tabs
+  # on one profile in different folders must not overwrite each other's
+  mcp=$(mktemp "$dir/launch-mcp.XXXXXX") || return 1
+  profile_compose "$dir" "$(pwd -P)" "$mcp" || { rm -f "$mcp"; return 1; }
   # shellcheck disable=SC2086
   CLAUDE_CONFIG_DIR="$dir" "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" \
-    --settings "$dir/launch-settings.json" --mcp-config "$dir/launch-mcp.json" \
+    --settings "$dir/launch-settings.json" --mcp-config "$mcp" \
     --append-system-prompt "This session runs on Claude profile '$prof', not Shyam's main account. Remote Control, claude.ai artifacts and claude.ai connectors (Gmail, Calendar, Claude Docs, Vercel) belong to the main account. For read-only help from it, run: claude-thread ask \"<question>\"" \
     $CLAUDE_THREAD_ARGS "$@"
+  rc=$?
+  rm -f "$mcp"
+  return $rc
+}
+
+# Link whatever is shared and not there yet. Run on every launch, not only at
+# `profile new`: an item ~/.claude creates later (plans/, agent-memory/) would
+# otherwise become a separate real folder in the profile and drift.
+profile_link() { # <dir>
+  local item
+  for item in "${PROFILE_SHARED[@]}"; do
+    [ -e "$HOME/.claude/$item" ] && [ ! -e "$1/$item" ] && [ ! -L "$1/$item" ] \
+      && ln -s "$HOME/.claude/$item" "$1/$item"
+  done
+  return 0
 }
 
 # The profile a launch uses, or nothing for main: an explicit CLAUDE_PROFILE
 # (`cld main` sets it) wins; then the profile a resumed session started on, so
-# a remap or a `cld main` session never silently moves account; then the
-# folder's route. Asked per launch because the project menu can cd elsewhere.
+# a remap or a `cld main` session never silently moves account; a session that
+# already has a transcript but no record predates profiles (or came from plain
+# `claude`), so it ran on main; only a brand-new session takes the folder's
+# route. Asked per launch because the project menu can cd elsewhere.
 resolve_profile() { # [uuid]
   local p="${CLAUDE_PROFILE:-}"
   [ -z "$p" ] && [ -n "${1:-}" ] && p=$(state profile "$1")
+  [ -z "$p" ] && [ -n "${1:-}" ] && [ -e "$PROJ_DIR/$1.jsonl" ] && p=main
   [ -z "$p" ] && p=$(profile_which "$(pwd)")
   [ "$p" = main ] && p=""
   echo "$p"
@@ -107,12 +132,12 @@ except Exception: sys.exit(1)'
 
 # The two files a profile launch passes in. launch-settings.json turns Remote
 # Control off: the shared settings.json turns it on at startup and --settings
-# beats user settings. launch-mcp.json = main's user MCP servers plus main's
+# beats user settings. The MCP file = main's user MCP servers plus main's
 # servers for this folder, so main stays the one list.
-profile_compose() { # <dir> <cwd>
-  python3 -I - "$1" "$2" "$HOME/.claude.json" <<'PY'
+profile_compose() { # <dir> <cwd> <mcp-file>
+  python3 -I - "$1" "$2" "$HOME/.claude.json" "$3" <<'PY'
 import json, os, sys
-d, cwd, main_json = sys.argv[1:4]
+d, cwd, main_json, mcp_file = sys.argv[1:5]
 
 def atomic(path, obj):
     tmp = f"{path}.{os.getpid()}.tmp"
@@ -128,7 +153,7 @@ try:
     servers.update(m.get("projects", {}).get(cwd, {}).get("mcpServers", {}))
 except Exception:
     pass
-atomic(os.path.join(d, "launch-mcp.json"), {"mcpServers": servers})
+atomic(mcp_file, {"mcpServers": servers})
 PY
 }
 
@@ -145,9 +170,7 @@ profile_cmd() { # new|login|map|unmap|list …
     new)
       [ -e "$dir" ] && { echo "cld: profile '$name' already exists"; return 1; }
       mkdir -p "$dir"
-      for item in "${PROFILE_SHARED[@]}"; do
-        [ -e "$HOME/.claude/$item" ] && ln -s "$HOME/.claude/$item" "$dir/$item"
-      done
+      profile_link "$dir"
       echo "created $dir"
       echo "next: cld profile login $name    then: cld profile map $name <folder-or-glob>" ;;
     login)
@@ -834,8 +857,17 @@ if [ $# -gt 0 ]; then
         exit 0
       fi ;;
   esac
-  # nothing to recover — run what sc asked (plus the fixed flags)
-  claude_cmd "$(resolve_profile)" "$@"
+  # nothing to recover — run what sc asked (plus the fixed flags). Which account:
+  # claude's own pickers can't be told, so a bare --resume opens ours instead
+  # (it routes each session to its account); --continue takes the newest
+  # session here and its recorded account; anything else, the folder's.
+  case " $* " in
+    *" --resume "*|*" -r "*) main_menu; exit 0 ;;
+    *" --continue "*|*" -c "*)
+      prof=$(resolve_profile "$(list_sessions "$PROJ_DIR" | head -1 | cut -f2)") ;;
+    *) prof=$(resolve_profile) ;;
+  esac
+  claude_cmd "$prof" "$@"
   exit $?
 fi
 
