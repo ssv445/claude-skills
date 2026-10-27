@@ -43,7 +43,16 @@ cld @                                             # pick the account from a list
 cld @sun --bg -n worker "<task>"                  # background agent on that account
 cld @sun agents | attach <id> | logs <id> | stop <id>   # that account's background agents
 cld ask "where is the Q3 pricing artifact?"       # read-only answer from main
+cld spawn reviewer --brief .tmp/briefs/reviewer.md     # queue a long-lived agent here
+cld @sun spawn reviewer --brief …                 # …on another account
+cld spawn                                         # what's waiting (--cancel <name>)
 ```
+
+**Spawned agents.** `cld spawn` queues a named agent for the current folder, with the
+brief copied in. The next terminal thread you open in that folder (`cmd-n`) starts it
+as a normal `cld` tab, so it has no idle limit, Zed restores it, and other agents reach
+it by name through `ListAgents`/`SendMessage`. cld can't open the tab itself: Zed has no
+command, link or extension API that starts a terminal thread.
 
 - **New sessions** take the profile their folder maps to. **Resumed sessions** keep the
   account they started on, recorded in `state.json`. A remap never moves old sessions.
