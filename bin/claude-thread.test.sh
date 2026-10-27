@@ -361,6 +361,27 @@ EOF
     echo "  PASS  X5: a bare --resume with nothing to recover opens our picker"; pass=$((pass+1))
   else echo "  FAIL  X5: bare --resume launched claude directly"; fail=$((fail+1))
     printf '%s\n' "$out" | head -8 | sed 's/^/          /'; fi
+
+  # cld @<account>
+  check "Y1: @ takes any unique start of a name" "acme" "$(profile_pick ac 2>/dev/null)"
+  check "Y2: @main and @m are the main account" "main main" \
+        "$(profile_pick main 2>/dev/null) $(profile_pick m 2>/dev/null)"
+  profile_cmd new dev2 >/dev/null
+  check "Y3: an exact name wins over a longer one" "dev" "$(profile_pick dev 2>/dev/null)"
+  profile_pick de >/dev/null 2>&1; check "Y4: an ambiguous start is refused" "1" "$?"
+  profile_pick zz >/dev/null 2>&1; check "Y5: an unknown name is refused" "1" "$?"
+  check "Y6: bare @ asks; Enter takes this folder's account" "acme" \
+        "$(cd "$SB/www/acme" && printf '\n' | profile_pick '' 2>/dev/null)"
+  check "Y7: and a number picks that row (1 = main)" "main" \
+        "$(cd "$SB/www/acme" && echo 1 | profile_pick '' 2>/dev/null)"
+  out=$(cd "$SB" && CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" @ac --print hi </dev/null 2>&1)
+  check "Y8: cld @acme launches on acme in an unmapped folder" "1" \
+        "$(grep -c "CFG=$PROFILES_ROOT/acme$" <<<"$out")"
+  out=$(cd "$SB" && CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" @ac agents </dev/null 2>&1)
+  check "Y9: cld @acme agents asks acme's own manager, with no launch flags" \
+        "CFG=$PROFILES_ROOT/acme|ARG=agents" "$(paste -sd'|' - <<<"$out")"
+  out=$(cd "$SB/www/acme" && CLAUDE_CONFIG_DIR=x CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" @main stop 1 </dev/null 2>&1)
+  check "Y10: cld @main stop goes to main's manager" "CFG=main|ARG=stop|ARG=1" "$(paste -sd'|' - <<<"$out")"
   rm -rf "$SB"
 }
 

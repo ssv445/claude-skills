@@ -223,6 +223,53 @@ ask_main() {
   [ -n "${1:-}" ] || { echo 'usage: cld ask "<question>"'; return 1; }
   env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROFILE "$CLAUDE_BIN" -p --permission-mode plan "$*"
 }
+
+profile_email() { # <dir, or "" for main> — the account's email; nothing if logged out
+  if [ -z "$1" ]; then env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" auth status
+  else CLAUDE_CONFIG_DIR="$1" "$CLAUDE_BIN" auth status; fi 2>/dev/null \
+    | python3 -I -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    if d.get("loggedIn"): print(d.get("email") or "logged in")
+except Exception: pass'
+}
+
+# `cld @<name>`: the account whose name starts with <name>; an exact name always
+# wins, so `@dev` still works once `dev2` exists. `cld @` alone asks. Prints the
+# name ("main" for the main account); the menu goes to stderr because callers
+# capture stdout.
+profile_pick() { # <prefix>
+  local want="$1" names=(main) hits=() d n i ans def email
+  for d in "$PROFILES_ROOT"/*/; do [ -d "$d" ] && names+=("$(basename "$d")"); done
+  if [ -n "$want" ]; then
+    for n in "${names[@]}"; do
+      [ "$n" = "$want" ] && { echo "$n"; return 0; }
+      case "$n" in "$want"*) hits+=("$n") ;; esac
+    done
+    [ ${#hits[@]} -eq 1 ] && { echo "${hits[0]}"; return 0; }
+    if [ ${#hits[@]} -eq 0 ]; then echo "cld: no account matches '@$want' (have: ${names[*]})" >&2
+    else echo "cld: '@$want' matches ${hits[*]}, type more of the name" >&2; fi
+    return 1
+  fi
+  def=$(profile_which "$(pwd)"); def="${def:-main}"
+  echo "── which account? ($(pwd | sed "s|^$HOME|~|")) ──" >&2
+  i=0
+  for n in "${names[@]}"; do
+    i=$((i+1))
+    if [ "$n" = main ]; then email=$(profile_email ""); else email=$(profile_email "$PROFILES_ROOT/$n"); fi
+    printf '  %d) %-16s %s%s\n' "$i" "$n" "${email:-NOT logged in}" \
+      "$([ "$n" = "$def" ] && echo '   ← this folder')" >&2
+  done
+  printf '  choose [Enter = %s, q = quit]: ' "$def" >&2
+  read -r ans || return 1
+  case "$ans" in
+    "") echo "$def" ;;
+    q) return 1 ;;
+    *[!0-9]*) echo "cld: pick a number" >&2; return 1 ;;
+    *) { [ "$ans" -ge 1 ] && [ "$ans" -le ${#names[@]} ]; } || { echo "cld: no choice $ans" >&2; return 1; }
+       echo "${names[$((ans-1))]}" ;;
+  esac
+}
 # claude encodes the cwd by replacing every non-alphanumeric char with '-'
 ENC_CWD="$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
 PROJ_DIR="$HOME/.claude/projects/$ENC_CWD"
@@ -809,6 +856,17 @@ case "${1:-}" in
   # `cld main …` — the main account here, even in a folder mapped to a profile
   # and for a session that started on one; then carries on as plain `cld …`
   main)    shift; export CLAUDE_PROFILE=main ;;
+  # `cld @<account> …` — that account here, like `cld main`. Background-agent
+  # commands go straight to that account's own manager: `claude agents` only
+  # sees the account it runs under.
+  @*)
+    pick=$(profile_pick "${1#@}") || exit 1; shift
+    case "${1:-}" in
+      agents|attach|logs|stop|kill|respawn|rm)
+        [ "$pick" = main ] && exec env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" "$@"
+        CLAUDE_CONFIG_DIR="$PROFILES_ROOT/$pick" exec "$CLAUDE_BIN" "$@" ;;
+    esac
+    export CLAUDE_PROFILE="$pick" ;;
 esac
 
 # Resolved once, before any launch path: which Zed thread this shell is. The

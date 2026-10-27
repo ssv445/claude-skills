@@ -38,12 +38,16 @@ cld profile login shyam-dev                       # browser: sign in with THAT a
 cld profile map shyam-dev '~/www/worktrees/*'     # folder or glob; longest route wins
 cld profile list                                  # profiles, login state, routes
 cld main                                          # force the main account here
+cld @sun                                          # that account here (any unique start of its name)
+cld @                                             # pick the account from a list
+cld @sun --bg -n worker "<task>"                  # background agent on that account
+cld @sun agents | attach <id> | logs <id> | stop <id>   # that account's background agents
 cld ask "where is the Q3 pricing artifact?"       # read-only answer from main
 ```
 
 - **New sessions** take the profile their folder maps to. **Resumed sessions** keep the
   account they started on, recorded in `state.json`. A remap never moves old sessions.
-  `cld main` or `CLAUDE_PROFILE=<name|main>` overrides both.
+  `cld main`, `cld @<name>` or `CLAUDE_PROFILE=<name|main>` overrides both.
 - **Remote Control stays on main.** Profile launches drop `--remote-control` and pass
   `remoteControlAtStartup: false` through `--settings`, because the shared `settings.json` turns it on.
 - **MCP servers come from main.** Each launch passes main's user servers, plus main's
