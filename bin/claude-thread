@@ -5,6 +5,16 @@
 # truth for sessions; ~/.claude-thread/ holds everything this wrapper owns:
 # state.json (status running/ended, pid, last_used — enables auto-resume in
 # recreated threads) and archived/ (session files hidden from claude).
+#
+# Profiles: extra Claude subscriptions on the same setup. A profile is a
+# CLAUDE_CONFIG_DIR at ~/.claude-profiles/<name> that owns only its login and
+# per-process state; CLAUDE.md, settings, skills, memory and projects/ are
+# symlinks to ~/.claude (the layout Maestro documents for multi-account Claude
+# Code). ~/.claude-profiles/map routes folders to profiles. A new session takes
+# the profile its folder maps to; a resumed one keeps the profile it started on.
+#   cld main …                      force the main account
+#   cld profile new|login|map|unmap|list
+#   cld ask "<question>"            read-only answer from the main account
 
 set -u
 
@@ -17,11 +27,197 @@ CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 # `claude` stays on auto via settings.json defaultMode.
 # Always applied, on every launch path including sc/arg passthrough — never
 # replaced by CLAUDE_THREAD_ARGS, which only appends extra flags.
-CLAUDE_FIXED_ARGS=(--dangerously-skip-permissions --remote-control)
+CLAUDE_FIXED_ARGS=(--dangerously-skip-permissions)
+# Remote Control is for the main account only (Shyam's call, 2026-10-27):
+# client-profile sessions stay off the phone/desktop app.
+CLAUDE_MAIN_ARGS=(--remote-control)
 CLAUDE_THREAD_ARGS="${CLAUDE_THREAD_ARGS:-}"
+
+PROFILES_ROOT="${CLAUDE_PROFILES_ROOT:-$HOME/.claude-profiles}"
+PROFILE_MAP="$PROFILES_ROOT/map"
+# Shared with the main account: what you author, plus history keyed by session
+# id (safe for several processes). Allowlist, not denylist: a per-process folder
+# a future Claude Code adds must not get shared by accident. Never shared:
+# .claude.json (login, account), sessions/ daemon/ jobs/ teams/ (live process
+# registry and keys), history.jsonl, caches, credentials.
+PROFILE_SHARED=(CLAUDE.md settings.json keybindings.json skills agents commands
+                plugins projects agent-memory memory file-history tasks todos plans taste)
+
+# claude_cmd <profile> <args…> — every launch path comes through here. An empty
+# profile is the main account.
 claude_cmd() {
-  # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
-  "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" $CLAUDE_THREAD_ARGS "$@"
+  local prof="$1"; shift
+  if [ -z "$prof" ]; then
+    # -u: a profile session's own shell carries CLAUDE_CONFIG_DIR, and `cld main`
+    # run from it must still land on ~/.claude
+    # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
+    env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" "${CLAUDE_MAIN_ARGS[@]}" \
+      $CLAUDE_THREAD_ARGS "$@"
+    return
+  fi
+  local dir="$PROFILES_ROOT/$prof" mcp rc
+  [ -d "$dir" ] || { echo "cld: no profile '$prof' (cld profile new $prof)"; return 1; }
+  profile_logged_in "$dir" || {
+    echo "cld: profile '$prof' is logged out — run: cld profile login $prof"; return 3; }
+  profile_link "$dir"
+  # one MCP file per launch: it holds this folder's servers, and parallel tabs
+  # on one profile in different folders must not overwrite each other's
+  mcp=$(mktemp "$dir/launch-mcp.XXXXXX") || return 1
+  profile_compose "$dir" "$(pwd -P)" "$mcp" || { rm -f "$mcp"; return 1; }
+  # shellcheck disable=SC2086
+  CLAUDE_CONFIG_DIR="$dir" "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" \
+    --settings "$dir/launch-settings.json" --mcp-config "$mcp" \
+    --append-system-prompt "This session runs on Claude profile '$prof', not Shyam's main account. Remote Control, claude.ai artifacts and claude.ai connectors (Gmail, Calendar, Claude Docs, Vercel) belong to the main account. For read-only help from it, run: claude-thread ask \"<question>\"" \
+    $CLAUDE_THREAD_ARGS "$@"
+  rc=$?
+  rm -f "$mcp"
+  return $rc
+}
+
+# Link whatever is shared and not there yet. Run on every launch, not only at
+# `profile new`: an item ~/.claude creates later (plans/, agent-memory/) would
+# otherwise become a separate real folder in the profile and drift.
+profile_link() { # <dir>
+  local item
+  for item in "${PROFILE_SHARED[@]}"; do
+    [ -e "$HOME/.claude/$item" ] && [ ! -e "$1/$item" ] && [ ! -L "$1/$item" ] \
+      && ln -s "$HOME/.claude/$item" "$1/$item"
+  done
+  return 0
+}
+
+# The profile a launch uses, or nothing for main: an explicit CLAUDE_PROFILE
+# (`cld main` sets it) wins; then the profile a resumed session started on, so
+# a remap or a `cld main` session never silently moves account; a session that
+# already has a transcript but no record predates profiles (or came from plain
+# `claude`), so it ran on main; only a brand-new session takes the folder's
+# route. Asked per launch because the project menu can cd elsewhere.
+resolve_profile() { # [uuid]
+  local p="${CLAUDE_PROFILE:-}"
+  [ -z "$p" ] && [ -n "${1:-}" ] && p=$(state profile "$1")
+  [ -z "$p" ] && [ -n "${1:-}" ] && [ -e "$PROJ_DIR/$1.jsonl" ] && p=main
+  [ -z "$p" ] && p=$(profile_which "$(pwd)")
+  [ "$p" = main ] && p=""
+  echo "$p"
+}
+
+# Longest matching route wins (~/www/worktrees/acme-* beats ~/www/worktrees/*).
+# A route matches its folder and anything below it, never a sibling sharing
+# the prefix (~/www/acme vs ~/www/acme2).
+profile_which() { # <dir>
+  local dir best="" bestlen=0 route name
+  [ -f "$PROFILE_MAP" ] || return 0
+  dir=$(cd "$1" 2>/dev/null && pwd -P) || return 0
+  while IFS=$'\t' read -r route name; do
+    [ -n "$route" ] && [ -n "$name" ] || continue
+    # unquoted $route on purpose: glob routes must match as patterns
+    # shellcheck disable=SC2254
+    case "$dir/" in
+      $route/*)
+        if [ ${#route} -gt $bestlen ] && [ -d "$PROFILES_ROOT/$name" ]; then
+          best="$name"; bestlen=${#route}
+        fi ;;
+    esac
+  done < "$PROFILE_MAP"
+  [ -n "$best" ] && echo "$best"
+  return 0
+}
+
+profile_logged_in() { # <dir>
+  CLAUDE_CONFIG_DIR="$1" "$CLAUDE_BIN" auth status 2>/dev/null \
+    | python3 -I -c 'import json,sys
+try: sys.exit(0 if json.load(sys.stdin).get("loggedIn") else 1)
+except Exception: sys.exit(1)'
+}
+
+# The two files a profile launch passes in. launch-settings.json turns Remote
+# Control off: the shared settings.json turns it on at startup and --settings
+# beats user settings. The MCP file = main's user MCP servers plus main's
+# servers for this folder, so main stays the one list.
+profile_compose() { # <dir> <cwd> <mcp-file>
+  python3 -I - "$1" "$2" "$HOME/.claude.json" "$3" <<'PY'
+import json, os, sys
+d, cwd, main_json, mcp_file = sys.argv[1:5]
+
+def atomic(path, obj):
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as fh:
+        json.dump(obj, fh, indent=2)
+    os.replace(tmp, path)   # parallel launches never see a half-written file
+
+atomic(os.path.join(d, "launch-settings.json"), {"remoteControlAtStartup": False})
+servers = {}
+try:
+    m = json.load(open(main_json))
+    servers.update(m.get("mcpServers", {}))
+    servers.update(m.get("projects", {}).get(cwd, {}).get("mcpServers", {}))
+except Exception:
+    pass
+atomic(mcp_file, {"mcpServers": servers})
+PY
+}
+
+profile_cmd() { # new|login|map|unmap|list …
+  local sub="${1:-}" name="${2:-}" dir route item d
+  case "$sub" in new|login|map)
+    case "$name" in
+      main) echo "cld: 'main' is the default account, not a profile"; return 1 ;;
+      ""|-*|*[!a-z0-9-]*) echo "cld: profile name: lowercase letters, digits, hyphens"; return 1 ;;
+    esac ;;
+  esac
+  dir="$PROFILES_ROOT/$name"
+  case "$sub" in
+    new)
+      [ -e "$dir" ] && { echo "cld: profile '$name' already exists"; return 1; }
+      mkdir -p "$dir"
+      profile_link "$dir"
+      echo "created $dir"
+      echo "next: cld profile login $name    then: cld profile map $name <folder-or-glob>" ;;
+    login)
+      [ -d "$dir" ] || { echo "cld: no profile '$name'"; return 1; }
+      echo "In the browser, sign in with the account meant for '$name' —"
+      echo "if it shows your main account, switch accounts first."
+      CLAUDE_CONFIG_DIR="$dir" "$CLAUDE_BIN" auth login ;;
+    map)
+      [ -d "$dir" ] || { echo "cld: no profile '$name'"; return 1; }
+      [ -n "${3:-}" ] || { echo "usage: cld profile map <name> <folder-or-glob>"; return 1; }
+      route="${3/#\~/$HOME}"
+      case "$route" in
+        *[\*\?\[]*) ;;   # glob: stored as written
+        *) route=$(cd "$route" 2>/dev/null && pwd -P) || { echo "cld: no such folder: $3"; return 1; } ;;
+      esac
+      mkdir -p "$PROFILES_ROOT"; touch "$PROFILE_MAP"
+      awk -F'\t' -v r="$route" '$1 != r' "$PROFILE_MAP" > "$PROFILE_MAP.tmp"
+      printf '%s\t%s\n' "$route" "$name" >> "$PROFILE_MAP.tmp"
+      mv "$PROFILE_MAP.tmp" "$PROFILE_MAP"
+      echo "$route → $name" ;;
+    unmap)
+      [ -n "$name" ] || { echo "usage: cld profile unmap <folder-or-glob>"; return 1; }
+      route="${name/#\~/$HOME}"
+      case "$route" in *[\*\?\[]*) ;; *) route=$(cd "$route" 2>/dev/null && pwd -P || echo "$route") ;; esac
+      [ -f "$PROFILE_MAP" ] && awk -F'\t' -v r="$route" '$1 != r' "$PROFILE_MAP" > "$PROFILE_MAP.tmp" \
+        && mv "$PROFILE_MAP.tmp" "$PROFILE_MAP"
+      echo "unmapped $route" ;;
+    list)
+      echo "main  ~/.claude  — default, Remote Control on"
+      for d in "$PROFILES_ROOT"/*/; do
+        [ -d "$d" ] || continue
+        if profile_logged_in "${d%/}"; then item="logged in"; else item="NOT logged in"; fi
+        echo "$(basename "$d")  ${d%/}  — $item"
+      done
+      [ -s "$PROFILE_MAP" ] && { echo; echo "routes:"; awk -F'\t' '{printf "  %s → %s\n", $1, $2}' "$PROFILE_MAP"; }
+      echo
+      echo "reminder: turn off 'Help improve Claude' in each profile's account"
+      echo "          (claude.ai → Settings → Privacy); no CLI can check it" ;;
+    *) echo "usage: cld profile new|login|map|unmap|list"; return 1 ;;
+  esac
+}
+
+# Read-only help from the main account for a profile session: plan mode can
+# look things up and answer, never send, publish or change anything as main.
+ask_main() {
+  [ -n "${1:-}" ] || { echo 'usage: cld ask "<question>"'; return 1; }
+  env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROFILE "$CLAUDE_BIN" -p --permission-mode plan "$*"
 }
 # claude encodes the cwd by replacing every non-alphanumeric char with '-'
 ENC_CWD="$(pwd | sed 's/[^a-zA-Z0-9]/-/g')"
@@ -33,8 +229,10 @@ ARCHIVE_DIR="$HOME/.claude-thread/archived/$ENC_CWD"
 #   claim <cwd> <projdir> <tid>   the session this Zed thread (tid) held last
 #                                 time, else the most recently active one for
 #                                 cwd; marks it running, prints its uuid
-#   start <uuid> <cwd> <tid>      upsert session as running under this pid, and
-#                                 bind it to this Zed thread
+#   start <uuid> <cwd> <tid> [profile]  upsert session as running under this
+#                                 pid, bind it to this Zed thread, record account
+#   profile <uuid>           the account a session started on, if recorded
+#   profiles                 "<uuid>\t<profile>" for every non-main session
 #   end <uuid>               mark session ended
 #   bound <tid> <projdir>    print the session this thread holds, if resumable
 #   hold <uuid> <tid>        thread is parked on this session without running
@@ -139,11 +337,20 @@ if cmd == "claim":
         bind(tid, u, cwd)
         out = u
 elif cmd == "start":
-    u, cwd, tid = args
+    u, cwd, tid, *rest = args
     sess.setdefault(u, {}).update(cwd=cwd, status="running", pid=pid,
                                   last_used=time.time())
     sess[u].setdefault("started", time.time())
+    # the account it runs on ("main" or a profile): a resume stays on it, and
+    # billing can later tell which subscription did the work
+    if rest and rest[0]:
+        sess[u]["profile"] = rest[0]
     bind(tid, u, cwd)
+elif cmd == "profile":
+    out = sess.get(args[0], {}).get("profile", "")
+elif cmd == "profiles":
+    out = "\n".join(f"{u}\t{s['profile']}" for u, s in sess.items()
+                    if s.get("profile") and s["profile"] != "main")
 elif cmd == "end":
     u = args[0]
     if u in sess:
@@ -215,7 +422,7 @@ ZTID
 
 # terminal title = "<worktree-dir>:<branch>" so same-worktree threads share a
 # visible prefix in Zed's sidebar and its filter can match them as a group
-set_title() {
+set_title() { # [profile] — default: what a new session here would use
   local branch name top main title
   branch=$(git branch --show-current 2>/dev/null)
   [ -z "$branch" ] && branch=$(git rev-parse --short HEAD 2>/dev/null || true)
@@ -231,15 +438,21 @@ set_title() {
     fi
   fi
   title="$name${branch:+:$branch}"
+  # a profile tab says so up front — the account it bills is not otherwise
+  # visible anywhere
+  local prof; if [ $# -gt 0 ]; then prof="$1"; else prof=$(resolve_profile); fi
+  [ -n "$prof" ] && title="[$prof] $title"
   printf '\033]0;%s\007' "$title"
 }
 
 # run claude in foreground, keep state current around it
 run_claude() { # <uuid> <args...>
   local uuid="$1"; shift
-  state start "$uuid" "$(pwd)" "$TERMINAL_ID" >/dev/null
+  local prof; prof=$(resolve_profile "$uuid")
+  state start "$uuid" "$(pwd)" "$TERMINAL_ID" "${prof:-main}" >/dev/null
+  set_title "$prof"
   trap ':' INT
-  claude_cmd "$@"
+  claude_cmd "$prof" "$@"
   trap - INT
   state end "$uuid" >/dev/null
 }
@@ -364,7 +577,10 @@ lazy_resume() { # <uuid>
   prev=$(printf '%s' "$line" | cut -f3)
   [ -z "$prev" ] && prev="${u:0:8}"
   state hold "$u" "$TERMINAL_ID" >/dev/null
-  # sidebar still reads as the conversation; ◦ marks it as not running
+  # sidebar still reads as the conversation; ◦ marks it as not running, and the
+  # account it will resume on shows before you press Enter
+  local prof; prof=$(resolve_profile "$u")
+  [ -n "$prof" ] && prev="[$prof] $prev"
   printf '\033]0;◦ %s\007' "$prev"
   echo
   printf "  \033[2m◦\033[0m %s  \033[2m%s%s\033[0m\n" \
@@ -481,6 +697,7 @@ main_menu() { # $1="all" to show every session (default: 15 newest)
   sessions=$(list_sessions "$PROJ_DIR")
   archived=$(list_sessions "$ARCHIVE_DIR")
   running=$(state running)
+  local profiles; profiles=$(state profiles)
 
   echo
   echo "── claude sessions: $(pwd) ──"
@@ -490,9 +707,10 @@ main_menu() { # $1="all" to show every session (default: 15 newest)
     while IFS=$'\t' read -r mt uuid prev; do
       n=$((n+1))
       [ $n -gt $limit ] && break
-      local mark=" "
+      local mark=" " tag
       echo "$running" | grep -q "^$uuid$" && mark="●"
-      printf "  %2d)%s%-4s %s  \033[2m%s\033[0m\n" "$n" "$mark" "$(age "$mt")" "$prev" "${uuid:0:8}"
+      tag=$(printf '%s\n' "$profiles" | awk -F'\t' -v u="$uuid" '$1 == u {print "[" $2 "] "; exit}')
+      printf "  %2d)%s%-4s %s%s  \033[2m%s\033[0m\n" "$n" "$mark" "$(age "$mt")" "$tag" "$prev" "${uuid:0:8}"
       eval "S$n=\"\$uuid\""
     done <<< "$sessions"
     [ "$total" -gt "$limit" ] && echo "  … +$((total-limit)) older ('m'=show all)"
@@ -580,6 +798,15 @@ archive_menu() {
   esac
 }
 
+# ── account commands — before the Zed title probe, since they launch nothing ──
+case "${1:-}" in
+  profile) shift; profile_cmd "$@"; exit $? ;;
+  ask)     shift; ask_main "$@"; exit $? ;;
+  # `cld main …` — the main account here, even in a folder mapped to a profile
+  # and for a session that started on one; then carries on as plain `cld …`
+  main)    shift; export CLAUDE_PROFILE=main ;;
+esac
+
 # Resolved once, before any launch path: which Zed thread this shell is. The
 # nonce briefly replaces the tab title; the set_title calls below put it back.
 TERMINAL_ID="$(zed_terminal_id)"
@@ -609,11 +836,7 @@ if [ $# -gt 0 ]; then
   done
   if [ -n "$sid" ]; then
     # sc knows the session — passthrough, tracked
-    state start "$sid" "$(pwd)" "$TERMINAL_ID" >/dev/null
-    trap ':' INT
-    claude_cmd "$@"
-    trap - INT
-    state end "$sid" >/dev/null
+    run_claude "$sid" "$@"
     post_exit_menu
     exit 0
   fi
@@ -629,17 +852,22 @@ if [ $# -gt 0 ]; then
           [ $choice -eq 2 ] && new_session
           main_menu; exit 0
         fi
-        state start "$claimed" "$(pwd)" "$TERMINAL_ID" >/dev/null
-        trap ':' INT
-        claude_cmd --resume "$claimed"
-        trap - INT
-        state end "$claimed" >/dev/null
+        run_claude "$claimed" --resume "$claimed"
         post_exit_menu
         exit 0
       fi ;;
   esac
-  # nothing to recover — run what sc asked (plus the fixed flags)
-  claude_cmd "$@"
+  # nothing to recover — run what sc asked (plus the fixed flags). Which account:
+  # claude's own pickers can't be told, so a bare --resume opens ours instead
+  # (it routes each session to its account); --continue takes the newest
+  # session here and its recorded account; anything else, the folder's.
+  case " $* " in
+    *" --resume "*|*" -r "*) main_menu; exit 0 ;;
+    *" --continue "*|*" -c "*)
+      prof=$(resolve_profile "$(list_sessions "$PROJ_DIR" | head -1 | cut -f2)") ;;
+    *) prof=$(resolve_profile) ;;
+  esac
+  claude_cmd "$prof" "$@"
   exit $?
 fi
 
