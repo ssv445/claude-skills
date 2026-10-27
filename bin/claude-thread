@@ -664,7 +664,8 @@ spawn_cmd() { # <name> --brief <file> | --list | --cancel <name>
       for f in "$SPAWN_DIR"/*.json; do
         python3 -I -c 'import json,sys,os,time
 r = json.load(open(sys.argv[1])); m = int((time.time() - r["queued"]) / 60)
-print(f"  {r[\"name\"]:<20} {r[\"profile\"]:<14} {r[\"cwd\"].replace(os.path.expanduser(\"~\"), \"~\", 1)}  ({m}m ago)")' "$f"
+cwd = r["cwd"].replace(os.path.expanduser("~"), "~", 1)
+print("  %-20s %-14s %s  (%dm ago)" % (r["name"], r["profile"], cwd, m))' "$f"
       done
       return 0 ;;
     --cancel)

@@ -413,6 +413,8 @@ EOF
   check "Z8: its account is recorded, so a resume stays on it" "main" "$(state profile "$s")"
   (cd "$SB" && CLAUDE_BIN="$SB/bin/claude" bash "$WRAPPER" @dev spawn w9 --brief "$BRIEF" >/dev/null 2>&1)
   check "Z9: cld @dev spawn queues on dev" "dev" "$(req w9 profile)"
+  check "Z9b: cld spawn lists what's waiting" "w1 acme|w9 dev" \
+        "$(cd "$SB" && spawn_cmd 2>&1 | awk '{print $1, $2}' | sort | paste -sd'|' -)"
   (cd "$SB" && spawn_cmd --cancel w9 >/dev/null)
   check "Z10: --cancel removes it" "no" "$([ -e "$SPAWN_DIR/w9.json" ] && echo yes || echo no)"
   rm -rf "$SB"
