@@ -52,25 +52,24 @@ echo "repo-standards ship: PR #$pr ($head_ref)"
 git merge-base --is-ancestor "origin/$BASE_BRANCH" HEAD || { red "FAIL ship: branch is behind origin/$BASE_BRANCH — rebase and push"; exit 1; }
 green "PASS branch current and pushed"
 
+heavy_lock_warn
+
 fail=0
 "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate" "Pre-merge gate" || fail=1
 
-repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-# label_check <issue-or-pr number> <label>: stdout = time the label was last added;
-# messages go to stderr so callers can capture the time.
-label_check() {
-  local ev
-  # --slurp wraps all pages in one array, so "last" is the last event overall — gh's -q
-  # would run the filter per page (30 events each) and miss or misattribute the label.
-  ev="$(gh api "repos/$repo/issues/$1/events" --paginate --slurp \
-        | jq -r "[.[][] | select(.event==\"labeled\" and .label.name==\"$2\")] | last | \"\(.actor.login) \(.created_at)\"")"
-  gh "$3" view "$1" --json labels -q '.labels[].name' | grep -qx "$2" || ev=""
-  set -- "$1" "$2" "$3" $ev
-  if [ -z "$4" ] || [ "$4" = "null" ]; then red "  miss #$1 has no '$2' label" >&2; return 1; fi
-  if [ -n "$OWNER" ] && [ "$4" != "$OWNER" ]; then red "  miss '$2' on #$1 was added by $4, not $OWNER" >&2; return 1; fi
-  info "ok   '$2' on #$1 by $4 at $5" >&2
-  printf '%s\n' "$5"
-}
+# Maintenance mode: the owner's `maintenance` label (bin/approve --maintenance) skips the
+# test gates for a branch that touches only standards paths. Any other file: no skip, all
+# gates run. A maintenance merge needs the owner's approved label and one reviewer PASS
+# (below). The label lives on the PR, so the mode ends when the PR merges.
+maint=""
+if gh pr view "$pr" --json labels -q '.labels[].name' | grep -qx maintenance; then
+  other="$(nonstandard_files)"
+  if [ -n "$other" ]; then
+    red "  WARN maintenance label ignored: the branch changes non-standards files ($(printf '%s\n' "$other" | head -3 | tr '\n' ' ')) — all gates run"
+  elif label_check "$pr" maintenance pr >/dev/null; then
+    maint=1; info "ok   maintenance mode: only standards files changed — test gates skipped; merge needs the owner's approved label and one reviewer PASS"
+  fi
+fi
 
 # APPROVER comes from the base's config.sh (see approver_mode), never this branch's.
 mode="$(approver_mode)"
@@ -84,8 +83,13 @@ if [ -f "$spec" ] && grep -qiE "$(owner_flag_re approval)" "$spec"; then
   fi
 fi
 
-run_cmd e2e "$E2E_CMD" || fail=1
-run_cmd perf "$PERF_CMD" || fail=1
+if [ -n "$maint" ]; then info "SKIP e2e, perf and class e2e/perf (maintenance mode)"
+else
+  run_cmd e2e "$E2E_CMD" || fail=1
+  run_classes e2e || fail=1
+  run_cmd perf "$PERF_CMD" || fail=1
+  run_classes perf || fail=1
+fi
 
 [ $fail -eq 0 ] || { red "ship BLOCKED"; exit 1; }
 
@@ -99,6 +103,20 @@ if approved_at="$(label_check "$pr" approved pr 2>"$owner_log")"; then
   commit_at="$(TZ=UTC git log -1 --date=format-local:%Y-%m-%dT%H:%M:%SZ --format=%cd HEAD)"
   if [[ "$approved_at" < "$commit_at" ]]; then red "  miss approval ($approved_at) predates head commit ($commit_at) — re-approve" > "$owner_log"
   else approval=owner; fi
+fi
+# A maintenance merge skipped the tests, so the agent cannot approve it: the owner's label
+# above, plus one reviewer PASS at the pre-merge gate (not two plus an arbiter).
+if [ -n "$maint" ]; then
+  if [ "$approval" != owner ]; then
+    cat "$owner_log"
+    red "ship BLOCKED: a maintenance merge needs the owner's approved label after the head commit — ask the owner to run bin/approve $pr"; exit 1
+  fi
+  reviewer_pass=""
+  for p in "- Reviewer A:" "- Reviewer B:"; do
+    case "$(section_field "$(decisions_file)" "Pre-merge gate" "$p")" in PASS|PASS\ *|PASS—*) reviewer_pass=1 ;; esac
+  done
+  [ -n "$reviewer_pass" ] || { red "ship BLOCKED: a maintenance merge needs one reviewer PASS in the Pre-merge gate"; exit 1; }
+  info "ok   maintenance merge: owner approved, one reviewer PASS"
 fi
 if [ -z "$approval" ]; then
   check="$(base_copy .standards/checks/agent-approval.sh)"

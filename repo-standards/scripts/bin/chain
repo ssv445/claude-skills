@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# bin/chain <pr>: the pre-push checks, then bin/ship (its gates, and the merge when they
+# pass), back to back, so no stage sits idle waiting for someone to notice the last one
+# ended. The exit code and a one-line summary go to .standards/state/chain-<pr>.txt: read
+# that file, never wait on a message. Push the branch first; bin/ship refuses an unpushed head.
+. "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+pr="$1"
+[ -n "$pr" ] || { echo "usage: bin/chain <pr>"; exit 1; }
+out="$ROOT/.standards/state/chain-$pr.txt"
+mkdir -p "${out%/*}" || exit 1
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; sha="$(git rev-parse --short HEAD)"
+summary="interrupted during pre-push"
+# Written on every exit, an interrupted run included, so the file never says "running" forever.
+record() { local rc=$?; printf 'exit=%s\n%s PR #%s at %s: %s\n' "$rc" "$started" "$pr" "$sha" "$summary" > "$out"; }
+trap record EXIT
+trap 'exit 130' INT TERM
+printf 'exit=running\n%s PR #%s at %s: running\n' "$started" "$pr" "$sha" > "$out"
+
+if ! "$ROOT/.standards/hooks/pre-push" </dev/null; then summary="pre-push FAILED, ship not run"; exit 1; fi
+summary="pre-push PASS, interrupted during ship"
+if "$ROOT/bin/ship" "$pr"; then summary="pre-push PASS, ship PASS (merged)"; exit 0; fi
+summary="pre-push PASS, ship BLOCKED"; exit 1

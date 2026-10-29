@@ -33,5 +33,29 @@ ARCH_DOC="docs/guidelines/architecture.md"   # the architecture doc checked by c
 E2E_CMD=""
 PERF_CMD=""              # must exit non-zero when a budget from a spec's Expectations is exceeded
 
+# --- test classes (optional; a monorepo's app, site, …) ---
+# Empty TEST_CLASSES: nothing changes. The plain *_CMD above always run; class commands run
+# besides them. Per class: CLASS_<name>_PATHS — globs as above, listing everything its tests
+# depend on (sources, test files, runner, lockfile); then any of CLASS_<name>_UNIT_CMD
+# (pre-push), CLASS_<name>_E2E_CMD and CLASS_<name>_PERF_CMD (bin/ship), and
+# CLASS_<name>_TIMEOUT (seconds, overrides CMD_TIMEOUT). A class runs only when the branch
+# changes one of its paths (minus IGNORE_PATHS), and is skipped when the same content and
+# command already passed here (.standards/state/results). Required alongside: a full run on
+# the base branch nightly and before each release (rulebook, "Tests and releases").
+TEST_CLASSES=""          # e.g. "app site"
+# CLASS_app_PATHS="apps/mac/* packages/core/*"
+# CLASS_app_UNIT_CMD="pnpm --filter mac test"
+IGNORE_PATHS=""          # never trigger a class, e.g. "VERSION */version.ts"
+
+# --- every command ---
+CMD_TIMEOUT=1800         # seconds; a command still running is stopped, with all it started, and fails its gate
+HEAVY_LOCK=""            # optional: lock file or dir the repo's heavy jobs hold; pre-push and bin/ship warn when
+HEAVY_LOCK_MAX_AGE=3600  # …it is older than this many seconds
+
+# --- release ---
+# bin/preflight runs each line as one command (blank and # lines skipped): PASS/FAIL per
+# line, non-zero exit on any FAIL. Its output, not a "ready" claim, says a release can go.
+PREFLIGHT_CHECKS=""
+
 # --- intake ---
 AGENT_ISSUES_PER_NIGHT=1

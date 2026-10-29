@@ -22,14 +22,35 @@ fi
 
 start=$(date +%s); failed=""
 step() { "$@" || failed="$failed\n  - $1 ${2:-}"; }
+# tgate <name> <command...>: a test gate — maintenance mode skips it.
+tgate() { local n="$1"; shift; if [ -n "$maint" ]; then info "SKIP $n (maintenance mode)"; else step "$@"; fi; }
 
 echo "repo-standards pre-push on $(git rev-parse --abbrev-ref HEAD) vs $BASE_BRANCH ($(changed_files | wc -l | tr -d ' ') changed file(s))"
+heavy_lock_warn
+
+# Maintenance mode — the owner's `maintenance` label on the PR (bin/approve --maintenance) —
+# skips the test gates, but only when every file the branch touches is a standards path.
+# Only then is GitHub asked, so other pushes stay offline; no gh, no PR, an error or a
+# timeout all mean no skip.
+maint=""
+other="$(nonstandard_files)"
+if [ -n "$other" ]; then
+  [ "$(branch_files | grep -c .)" -gt "$(printf '%s\n' "$other" | grep -c .)" ] \
+    && info "maintenance: not checked — the branch also changes non-standards files ($(printf '%s\n' "$other" | head -3 | tr '\n' ' ')), so all gates run"
+elif maint_pr="$(run_timed 30 gh pr view --json number -q .number 2>/dev/null)" && [ -n "$maint_pr" ] \
+     && run_timed 30 label_check "$maint_pr" maintenance pr >/dev/null; then
+  maint=1; info "maintenance: owner's label on PR #$maint_pr and only standards files changed — test gates skipped"
+else
+  info "maintenance: no owner 'maintenance' label found (or gh failed) — all gates run"
+fi
+
 step run_cmd lint "$LINT_CMD"
 step run_cmd typecheck "$TYPECHECK_CMD"
-step run_cmd unit "$UNIT_CMD"
-step run_cmd diff-coverage "$DIFF_COVERAGE_CMD"
+tgate unit run_cmd unit "$UNIT_CMD"
+tgate "class unit tests" run_classes unit
+tgate diff-coverage run_cmd diff-coverage "$DIFF_COVERAGE_CMD"
 step "$ROOT/.standards/checks/coverage-baseline.sh"
-step "$ROOT/.standards/checks/tdd.sh"
+tgate tdd "$ROOT/.standards/checks/tdd.sh"
 step "$ROOT/.standards/checks/doc-map.sh"
 step "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate"
 step "$ROOT/.standards/checks/architecture.sh"
