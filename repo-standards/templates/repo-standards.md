@@ -16,6 +16,8 @@ The cases:
 - **`owner-review: required — <reason>`** in `decisions.md` — any agent or reviewer adds it to hand a taste or product call to the owner. Fails closed: any line naming `owner-review` with `required` later on it counts, in any case or markdown, unless indented 4+ spaces (an example). Removing it, or `owner-approval: required` from a spec, on the branch also needs the owner.
 - **Blast-radius spec** (`owner-approval: required`) — in owner mode, the owner's `spec-approved` label at the spec stage. That is enough: no final approval when every later gate passes.
 
+**Maintenance mode** — for work on the standards themselves. The owner turns it on for one PR with `bin/approve --maintenance <pr>`, which adds the `maintenance` label (owner only, like `approved`). While every file the branch touches is a standards path (the gate files above, or `docs/`), pre-push and `bin/ship` skip the test gates: unit, class tests, diff coverage, TDD, e2e and perf. The other checks still run. If the branch touches any other file, nothing is skipped and the output says why. A maintenance merge needs the owner's `approved` label after the head commit and one reviewer `PASS` at the pre-merge gate, not two plus an arbiter; the agent cannot approve it. The label lives on the PR, so the mode ends when the PR merges. Pre-push asks GitHub for the label only when the branch is standards-only; if `gh` fails or times out, nothing is skipped.
+
 The owner's `approved` label (`bin/approve <pr>`, owner only) replaces the agent's approval only: every other gate still applies. `bin/ship` runs the base branch's copy of itself and of `agent-approval.sh`, so a branch cannot loosen them by accident. That stops honest drift, not a hostile branch: the branch's own `bin/ship`, `common.sh` and `config.sh` run first. Like the `.claude` guard, it is a speed bump, not a security boundary; real enforcement needs a server-side required check or branch protection.
 
 ## Your steps (owner)
@@ -29,6 +31,8 @@ With `APPROVER="owner"` (default):
 - **PR that `bin/ship` refuses** (gate file changed, `owner-review` flag): validate the evidence table, then `bin/approve <pr>`; the agent re-runs `bin/ship`. A review out of date with the code is the agent's to redo, not yours.
 - **`owner-review: required` flags**: answer the question in the PR or issue.
 - **Repos without `bin/ship`**: say "merge" and the agent merges; nothing to type.
+
+In either mode, when a PR only changes the standards and you want it to skip the test gates: `bin/approve --maintenance <pr>`, then `bin/approve <pr>` once a reviewer has passed it (see Maintenance mode above).
 
 When an agent asks you for one of these, it names the rule that requires you and gives the one command to run. It keeps working on everything that does not depend on your answer, and stops only when the next step needs you.
 
@@ -155,6 +159,18 @@ Code is read by search. Optimise for that:
 - **Seams for the outside world.** Time, randomness, hardware, network and file locations reach logic through an injected interface that has a fake, so every behaviour can be tested without them. Durations come from the injected clock, never from counting events or loop passes. Tests never touch real data, real environments or production accounts.
 - **Rationale in comments**: the why, and the what when the code is opaque.
 
+## Tests and releases
+
+- **A test depends only on what it tests.** A speed test may depend on speed. Any other test must not depend on timing, load, frame rate, or anything else it does not test. A test that fails for those reasons has a defect: fix the test.
+- **Re-run only the flaky check**, never the whole suite. Then fix it or file it as a test defect.
+- **Test classes** (`TEST_CLASSES` in `.standards/config.sh`): in a repo with parts, such as an app and a site, each class lists the paths its tests depend on. A class runs only when the branch changes one of those paths (minus `IGNORE_PATHS`, such as a version string). A result is cached locally by content: the class's files at HEAD plus its command. An unrelated rebase, or a standards change on the base, does not re-run it. A change to its files, its tests or its command does.
+- **Full suite on the base branch, nightly and before each release — required.** Path scoping and the cache skip tests on purpose. This full run is what makes that safe: it catches a bug already on the base before it blocks every PR on release day. Schedule it (for example with the dispatcher), and read its result before a release.
+- **Every command has a timeout** (`CMD_TIMEOUT`, or per class). A hung test fails its gate, and the timeout stops only what that gate started. When the repo serializes heavy jobs with a lock file (`HEAVY_LOCK`), pre-push and `bin/ship` warn when the lock is older than `HEAVY_LOCK_MAX_AGE`.
+- **Run the stages back to back** with `bin/chain <pr>`: the pre-push checks, then `bin/ship`. It writes the exit code and a one-line summary to `.standards/state/chain-<pr>.txt`. Read that file; do not wait for a message.
+- **Check release and site claims against the code when the words are approved**, not on release day. Every claim names the code or test that proves it.
+- **Release order: the app first, then the site to match it, then deploy.** The site and the app need not match at every moment.
+- **Pre-flight before a release:** `bin/preflight` runs every check in `PREFLIGHT_CHECKS` and prints PASS or FAIL for each. Ask for its output, never for a "ready" claim.
+
 ## Stored data
 
 Anything persisted — files, databases, caches, settings — outlives the code that wrote it.
@@ -174,8 +190,10 @@ Seeds are code, reviewed like code. `docs/seed-profile.md` holds production's *s
 
 | Hook | Checks |
 |---|---|
-| pre-push (≤ 2 min) | lint, typecheck, unit tests, diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, spec's architecture impact filled and its architecture review PASS (a structure change carries the architecture doc and a new ADR), seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
-| `bin/ship` (pre-merge) | branch current with base, pushed, e2e, perf budgets, decision log pre-merge gate PASS, `spec-approved` when required; then approval — the agent's own (`agent-approval.sh`: reviewers PASS or split with arbiter PASS, review covers HEAD, no `owner-review: required` present or removed, gate files changed only under `APPROVER="agent"` with a passing gate-change review) or the owner's `approved` label; then squash merge, and label a gate-file change `rules-changed` |
-| `.claude` guard | blocks raw merges, hook bypass, and agents touching owner labels |
+| pre-push (≤ 2 min) | lint, typecheck, unit tests (plus each test class whose paths changed, unless cached), diff coverage + baseline, TDD red→green, doc map, decision log has spec + plan gates PASS, spec's architecture impact filled and its architecture review PASS (a structure change carries the architecture doc and a new ADR), seeds match schema, file size, roadmap integrity (goals resolve, prerequisites exist, no cycles, nothing ready on an unshipped prerequisite) |
+| `bin/ship` (pre-merge) | branch current with base, pushed, e2e, perf budgets (each with their test classes), maintenance mode (above), decision log pre-merge gate PASS, `spec-approved` when required; then approval — the agent's own (`agent-approval.sh`: reviewers PASS or split with arbiter PASS, review covers HEAD, no `owner-review: required` present or removed, gate files changed only under `APPROVER="agent"` with a passing gate-change review) or the owner's `approved` label; then squash merge, and label a gate-file change `rules-changed` |
+| `bin/chain <pr>` | pre-push checks, then `bin/ship`; result in `.standards/state/chain-<pr>.txt` |
+| `bin/preflight` | each `PREFLIGHT_CHECKS` command, PASS/FAIL; non-zero on any FAIL |
+| `.claude` guard | blocks raw merges, hook bypass, and agents touching owner labels (`approved`, `spec-approved`, `maintenance`) |
 
 A red hook means the work is not done. Fix the cause; never weaken a check in the same PR that it blocks.
