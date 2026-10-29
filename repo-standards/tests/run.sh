@@ -540,7 +540,7 @@ approve_run() { # approve_run <labels already on the PR> [VAR=value ...]: output
   printf '%s\n' "$1" > "$T/labels"; : > "$T/gh.log"; shift
   # Typed after a pause: input piped at once reaches the pty before approve's prompt reads it.
   { sleep 0.5; printf '%s\n' "${TYPED:-12}"; sleep 0.5; } | env "$@" GH_LOG="$T/gh.log" GH_LABELS="$T/labels" PATH="$T/fakebin:$PATH" \
-    script -q /dev/null bash .standards/bin/approve 12 > "$T/approve.out" 2>&1
+    script -q /dev/null bash .standards/bin/approve ${APPROVE_ARGS:-12} > "$T/approve.out" 2>&1
 }
 edits() { grep -E -- '--(add|remove)-label' "$T/gh.log" | tr '\n' ';'; }
 approve_run approved
@@ -557,6 +557,11 @@ expect pass "approve: prompt asks for the number" grep -q "Type the number 12 to
 TYPED=approved approve_run other
 expect pass "approve: wrong text typed → says what was expected, no edits" \
   bash -c "[ -z \"\$(grep -E -- '--(add|remove)-label' '$T/gh.log')\" ] && grep -q 'expected the number 12' '$T/approve.out'"
+APPROVE_ARGS="--maintenance 12" approve_run other
+expect pass "approve --maintenance: adds the maintenance label only" test "$(edits)" = "pr edit 12 --add-label maintenance;"
+APPROVE_ARGS="--maintenance 12" approve_run maintenance GH_FAIL="--add-label"
+expect pass "approve --maintenance: add fails after remove → re-run hint keeps the flag" \
+  grep -q "re-run bin/approve --maintenance 12" "$T/approve.out"
 
 echo "coverage-baseline"
 echo 85 > .standards/coverage-baseline
@@ -620,7 +625,7 @@ review "$ok" "$ok" "" "$(git rev-parse HEAD)"
 git add docs && git commit -qm "decision log"
 ship_run() { # ship_run [VAR=value ...]: bin/ship 12 against the fake gh; output in $T/ship.out
   : > "$T/gh.log"
-  env GH_LABELS="$T/nolabels" GH_PAGES="$T/nopages" "$@" GH_LOG="$T/gh.log" GH_BRANCH=feat/1-x GH_HEAD="$(git rev-parse HEAD)" \
+  env GH_LABELS="$T/nolabels" GH_PAGES="$T/nopages" "$@" GH_LOG="$T/gh.log" GH_BRANCH="$(git rev-parse --abbrev-ref HEAD)" GH_HEAD="$(git rev-parse HEAD)" \
     PATH="$T/fakebin:$PATH" bash bin/ship 12 > "$T/ship.out" 2>&1
 }
 writes() { grep -E '^pr (merge|comment)' "$T/gh.log" | awk '{ print $2 }' | tr '\n' ';'; }
@@ -705,6 +710,190 @@ expect fail "ship: gate change, label fails after merge → run fails" ship_run 
 echo "owner-review: required — tone" >> "$dec"; git commit -qam "flag"
 ship_run
 expect pass "ship: APPROVER=agent → owner-review flag still blocks" test "$(writes)" = ""
+
+echo "ship: maintenance"
+# The base's e2e always fails, so a skipped test gate shows as a merge.
+chmod +x .standards/hooks/*
+git checkout -q main
+cat "$SKILL/tests/speed-fixtures/e2e-fails.sh" >> .standards/config.sh; mkdir -p docs; : > docs/doc-map.txt
+git add .standards docs && git commit -qm "base: e2e fails, doc map" && git push -q origin main
+git checkout -q -b chore/2-maint
+mkdir -p docs/work/2-maint
+dec=docs/work/2-maint/decisions.md
+sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > "$dec"
+sed -e 's/^- Modules touched: .*/- Modules touched: none/' -e 's/^- New owners: .*/- New owners: none/' \
+    -e 's/^- New module or owner change: .*/- New module or owner change: no/' "$SKILL/templates/spec.md" > docs/work/2-maint/spec.md
+echo "# notes" > docs/notes.md
+git add docs && git commit -qm "standards-only change"
+review "$ok" "$ok" "" "$(git rev-parse HEAD)"; git commit -qam "pre-merge review"
+labm() { printf '{"event":"labeled","label":{"name":"%s"},"actor":{"login":"%s"},"created_at":"2999-01-01T00:00:00Z"}' "$1" "$2"; }
+echo maintenance > "$T/maint"; printf 'maintenance\napproved\n' > "$T/maint-approved"
+echo "[[$(labm maintenance owner),$(labm approved owner)]]" > "$T/maint-pages"
+echo "[[$(labm maintenance someone),$(labm approved owner)]]" > "$T/maint-pages-other"
+in_ship() { grep -qF -- "$1" "$T/ship.out"; }
+ship_run GH_LABELS="$T/approved" GH_PAGES="$T/maint-pages"
+expect pass "ship: no maintenance label → e2e runs and blocks" test "$(writes)" = ""
+expect pass "ship: ...the e2e gate failed" in_ship "FAIL e2e"
+ship_run GH_LABELS="$T/maint" GH_PAGES="$T/maint-pages"
+expect pass "ship: maintenance, no owner approved → refused (agent cannot approve)" test "$(writes)" = ""
+expect pass "ship: ...says the owner's approved label is needed" in_ship "maintenance merge needs the owner's approved label"
+expect pass "ship: ...e2e was skipped" in_ship "SKIP e2e, perf and class e2e/perf (maintenance mode)"
+review "$ok" "" "" "$(git rev-parse HEAD)"; git commit -qam "one reviewer"
+ship_run GH_LABELS="$T/maint-approved" GH_PAGES="$T/maint-pages"
+expect pass "ship: maintenance + owner approved + one reviewer PASS → merge, e2e skipped" test "$(writes)" = "merge;"
+review "$no" "$no" "" "$(git rev-parse HEAD)"; git commit -qam "no reviewer passes"
+ship_run GH_LABELS="$T/maint-approved" GH_PAGES="$T/maint-pages"
+expect pass "ship: maintenance + owner approved, no reviewer PASS → refused" test "$(writes)" = ""
+expect pass "ship: ...says one reviewer PASS is needed" in_ship "needs one reviewer PASS"
+git reset -q --hard HEAD~1
+ship_run GH_LABELS="$T/maint-approved" GH_PAGES="$T/maint-pages-other"
+expect pass "ship: maintenance label added by someone else → no skip, e2e blocks" test "$(writes)" = ""
+echo change2 > src/a.txt; git commit -qam "app code too"
+ship_run GH_LABELS="$T/maint-approved" GH_PAGES="$T/maint-pages"
+expect pass "ship: maintenance branch touching app code → no skip, e2e blocks" test "$(writes)" = ""
+expect pass "ship: ...output says why" in_ship "maintenance label ignored: the branch changes non-standards files (src/a.txt"
+git reset -q --hard HEAD~1
+
+echo "chain"
+chain_run() { # chain_run <labels file>: bin/chain 12 against the fake gh; result in .standards/state/chain-12.txt
+  : > "$T/gh.log"
+  env GH_LABELS="$1" GH_PAGES="$T/maint-pages" GH_LOG="$T/gh.log" GH_BRANCH="$(git rev-parse --abbrev-ref HEAD)" \
+    GH_HEAD="$(git rev-parse HEAD)" PATH="$T/fakebin:$PATH" bash .standards/bin/chain 12 > "$T/chain.out" 2>&1
+}
+res=.standards/state/chain-12.txt
+chain_run "$T/maint-approved"
+expect pass "chain: pre-push and ship pass → exit=0 recorded" test "$(head -1 "$res")" = "exit=0"
+expect pass "chain: ...one-line summary names both stages" grep -q "PR #12 at $(git rev-parse --short HEAD): pre-push PASS, ship PASS (merged)" "$res"
+chain_run "$T/nolabels"
+expect pass "chain: ship blocked (e2e) → exit=1 recorded" test "$(head -1 "$res")" = "exit=1"
+expect pass "chain: ...summary says ship BLOCKED" grep -q "pre-push PASS, ship BLOCKED" "$res"
+echo "src/* -> docs/missing.md" > docs/doc-map.txt; echo x > src/b.txt; git add docs src; git commit -qm "mapped code, no doc"
+chain_run "$T/nolabels"
+expect pass "chain: pre-push fails → exit=1, ship not run" \
+  bash -c "[ \"\$(head -1 '$res')\" = exit=1 ] && grep -q 'pre-push FAILED, ship not run' '$res' && ! grep -q '^pr merge' '$T/gh.log'"
+git reset -q --hard HEAD~1
+
+echo "classes"
+# Its own repo: two classes (app, site), app/VERSION ignored, and the fake gh on PATH so a
+# standards-only branch never reaches the real GitHub.
+C="$T/cls"; mkdir -p "$C"; cd "$C" || exit 1
+git init -q -b main
+git config user.email t@example.invalid; git config user.name test
+mkdir -p .standards app site docs
+cp -R "$SKILL/scripts/." .standards/
+cat "$SKILL/scripts/config.sh" "$SKILL/tests/speed-fixtures/classes.sh" > .standards/config.sh
+cp "$SKILL/tests/speed-fixtures/count.sh" "$SKILL/tests/speed-fixtures/hang.sh" .
+chmod +x count.sh hang.sh .standards/hooks/* .standards/checks/* .standards/bin/*
+echo a > app/a.txt; echo "test a" > app/a.test.txt; echo 1 > app/VERSION; echo s > site/s.txt; : > docs/doc-map.txt
+git add -A && git commit -qm base
+issue_docs() { # issue_docs <n-slug>: passing decision log and filled spec for the branch
+  mkdir -p "docs/work/$1"
+  sed 's/Verdict: PENDING/Verdict: PASS/' "$SKILL/templates/decisions.md" > "docs/work/$1/decisions.md"
+  sed -e 's/^- Modules touched: .*/- Modules touched: none/' -e 's/^- New owners: .*/- New owners: none/' \
+      -e 's/^- New module or owner change: .*/- New module or owner change: no/' "$SKILL/templates/spec.md" > "docs/work/$1/spec.md"
+  git add docs && git commit -qm "decision log"
+}
+git checkout -q -b feat/3-cls; issue_docs 3-cls
+pp() { # pp [VAR=value ...]: pre-push on HEAD against the fake gh; output in $T/pp.out
+  : > "$T/gh.log"
+  env GH_LABELS="$T/nolabels" GH_PAGES="$T/nopages" "$@" GH_LOG="$T/gh.log" PATH="$T/fakebin:$PATH" \
+    .standards/hooks/pre-push < /dev/null > "$T/pp.out" 2>&1
+}
+has() { grep -qF -- "$1" "$T/pp.out"; }
+echo s2 >> site/s.txt; echo 2 > app/VERSION; git commit -qam "site change, version bump"
+expect pass "classes: site + app/VERSION changed → pre-push passes" pp
+expect pass "classes: site changed → site unit runs" has "RUN  site unit: ./count.sh site"
+expect pass "classes: only app/VERSION (IGNORE_PATHS) changed → app skipped" has "SKIP app unit"
+echo b >> app/a.txt; git commit -qam "app change"
+expect pass "classes: app changed → pre-push passes" pp
+expect pass "classes: app changed → app unit runs" has "RUN  app unit: ./count.sh app"
+expect pass "cache: site content unchanged since its pass → cached" has "ok   site unit: cached — same content passed at"
+pp
+expect pass "cache: nothing changed → app cached" has "ok   app unit: cached — same content passed at"
+expect fail "cache: ...and not run again" has "RUN  app unit"
+git checkout -q main
+echo "# a base-only standards change" >> .standards/checks/file-size.sh; echo notes > docs/notes.md
+git add .standards docs && git commit -qm "main: standards + docs"
+git checkout -q feat/3-cls; git rebase -q main
+pp
+expect pass "cache: rebase onto base-only standards/docs change → app cached" has "ok   app unit: cached"
+expect pass "cache: ...site cached too" has "ok   site unit: cached"
+git checkout -q main; echo new > site/new.txt; git add site && git commit -qm "main: site"
+git checkout -q feat/3-cls; git rebase -q main
+pp
+expect pass "cache: rebase brings a site change → site re-runs" has "RUN  site unit"
+expect pass "cache: ...app (unrelated to it) still cached" has "ok   app unit: cached"
+echo "changed test" >> app/a.test.txt; git commit -qam "app test file changed"
+pp
+expect pass "cache: a test file under the class changed → app re-runs" has "RUN  app unit"
+cat "$SKILL/tests/speed-fixtures/cmd-change.sh" >> .standards/config.sh; git commit -qam "app command changed"
+pp
+expect pass "cache: class command changed, same files → app re-runs" has "RUN  app unit: ./count.sh app; true"
+git reset -q --hard HEAD~1
+: > app/fail; git add app && git commit -qm "app fails"
+expect fail "classes: failing class blocks pre-push" pp
+expect fail "cache: same failing content again still blocks (FAIL never cached)" pp
+expect pass "cache: ...it ran again" has "FAIL app unit"
+git reset -q --hard HEAD~1
+
+echo "timeout"
+git checkout -q -b feat/3-timeout
+cat "$SKILL/tests/speed-fixtures/timeout.sh" >> .standards/config.sh; git commit -qam "unit hangs"
+sleep 60 & bystander=$!
+rm -f hang.pids
+expect fail "timeout: a hung unit command fails pre-push" pp
+expect pass "timeout: ...output names the limit and the command" has "FAIL unit: timed out after 2s and was stopped — ./hang.sh"
+pids_gone() { # the hung command and its child, both recorded in hang.pids, are gone
+  local p; [ -s hang.pids ] || return 1
+  for p in $(cat hang.pids); do ! kill -0 "$p" 2>/dev/null || return 1; done
+}
+sleep 1
+expect pass "timeout: the command and its child process are stopped" pids_gone
+expect pass "timeout: a process the gate did not start keeps running" kill -0 "$bystander"
+{ kill "$bystander"; wait "$bystander"; } 2>/dev/null
+rm -f hang.pids
+git checkout -q feat/3-cls; git branch -q -D feat/3-timeout
+
+echo "heavy lock"
+git checkout -q -b feat/3-lock
+cat "$SKILL/tests/speed-fixtures/heavy-lock.sh" >> .standards/config.sh; git commit -qam "heavy lock configured"
+touch -t 202001010000 heavy.lock
+pp
+expect pass "heavy lock: older than HEAVY_LOCK_MAX_AGE → WARN with its age" has "WARN heavy lock heavy.lock held"
+touch heavy.lock
+pp
+expect fail "heavy lock: fresh → no WARN" has "WARN heavy lock"
+rm -f heavy.lock
+git checkout -q feat/3-cls; git branch -q -D feat/3-lock
+
+echo "preflight"
+cp .standards/config.sh "$T/cfg"
+cat "$SKILL/tests/speed-fixtures/preflight-pass.sh" >> .standards/config.sh
+expect pass "preflight: every check passes → exit 0" .standards/bin/preflight
+cp "$T/cfg" .standards/config.sh; cat "$SKILL/tests/speed-fixtures/preflight-fail.sh" >> .standards/config.sh
+expect fail "preflight: one check of three fails → non-zero" .standards/bin/preflight
+cp "$T/last.log" "$T/pf.log"
+expect pass "preflight: ...each item reported PASS or FAIL" \
+  bash -c "grep -q 'PASS preflight 1' '$T/pf.log' && grep -q 'FAIL preflight 2' '$T/pf.log' && grep -q 'PASS preflight 3' '$T/pf.log'"
+cp "$T/cfg" .standards/config.sh
+expect fail "preflight: no checks configured → non-zero" .standards/bin/preflight
+
+echo "pre-push: maintenance"
+git checkout -q -b chore/5-maint main; issue_docs 5-maint
+cat "$SKILL/tests/speed-fixtures/unit-fails.sh" >> .standards/config.sh; git commit -qam "standards-only: unit gate fails"
+echo "[[$(labm maintenance owner)]]" > "$T/pp-maint"; echo "[[$(labm maintenance someone)]]" > "$T/pp-maint-other"
+gh_quiet() { ! grep -q . "$T/gh.log"; }
+expect fail "maintenance: no label → unit gate runs and fails" pp
+expect pass "maintenance: ...says no label was found" has "no owner 'maintenance' label found"
+expect pass "maintenance: owner's label on a standards-only branch → test gates skipped, push passes" \
+  pp GH_LABELS="$T/maint" GH_PAGES="$T/pp-maint"
+expect pass "maintenance: ...unit and tdd skipped" bash -c "grep -qF 'SKIP unit (maintenance mode)' '$T/pp.out' && grep -qF 'SKIP tdd (maintenance mode)' '$T/pp.out'"
+expect fail "maintenance: gh fails → no skip (fail closed)" pp GH_LABELS="$T/maint" GH_PAGES="$T/pp-maint" GH_FAIL="pr view"
+expect fail "maintenance: label added by someone else → no skip" pp GH_LABELS="$T/maint" GH_PAGES="$T/pp-maint-other"
+echo c >> app/a.txt; git commit -qam "app code too"
+expect fail "maintenance: branch also changes app code → no skip" pp GH_LABELS="$T/maint" GH_PAGES="$T/pp-maint"
+expect pass "maintenance: ...output says why" has "also changes non-standards files (app/a.txt"
+expect pass "maintenance: ...and GitHub was not asked" gh_quiet
 
 echo
 echo "$pass passed, $fail wrong"

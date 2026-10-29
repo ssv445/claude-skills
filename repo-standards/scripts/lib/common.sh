@@ -137,7 +137,8 @@ run_timed() {
   trap - INT TERM
   # On a timeout let the watcher finish, so its KILL reaches anything that ignored TERM.
   if [ -e "$flag" ]; then wait "$watcher"; rm -f "$flag"; timed_out=1; return 124; fi
-  kill "$watcher" 2>/dev/null
+  # Reaped here, quietly: otherwise bash reports the killed watcher ("Terminated") later.
+  kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
   return $rc
 }
 
