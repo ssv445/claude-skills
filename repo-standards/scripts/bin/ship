@@ -60,14 +60,17 @@ fail=0
 # Maintenance mode: the owner's `maintenance` label (bin/approve --maintenance) skips the
 # test gates for a branch that touches only standards paths. Any other file: no skip, all
 # gates run. A maintenance merge needs the owner's approved label and one reviewer PASS
-# (below). The label lives on the PR, so the mode ends when the PR merges.
+# covering HEAD (below). The label lives on the PR, so the mode ends when the PR merges.
 maint=""
 if gh pr view "$pr" --json labels -q '.labels[].name' | grep -qx maintenance; then
-  other="$(nonstandard_files)"
-  if [ -n "$other" ]; then
-    red "  WARN maintenance label ignored: the branch changes non-standards files ($(printf '%s\n' "$other" | head -3 | tr '\n' ' ')) — all gates run"
+  standards_scan
+  if [ -n "$std_reason" ]; then
+    red "  WARN maintenance label ignored: $std_reason — all gates run"
+  elif [ -n "$std_other" ]; then
+    red "  WARN maintenance label ignored: the branch changes files outside the standards paths ($(file_list "$std_other")) — all gates run"
   elif label_check "$pr" maintenance pr >/dev/null; then
-    maint=1; info "ok   maintenance mode: only standards files changed — test gates skipped; merge needs the owner's approved label and one reviewer PASS"
+    maint=1; info "ok   maintenance mode: test gates skipped for these standards files: $(printf '%s\n' "$std_files" | grep . | tr '\n' ' ')"
+    info "     merge needs the owner's approved label and one reviewer PASS covering HEAD"
   fi
 fi
 
@@ -116,7 +119,9 @@ if [ -n "$maint" ]; then
     case "$(section_field "$(decisions_file)" "Pre-merge gate" "$p")" in PASS|PASS\ *|PASS—*) reviewer_pass=1 ;; esac
   done
   [ -n "$reviewer_pass" ] || { red "ship BLOCKED: a maintenance merge needs one reviewer PASS in the Pre-merge gate"; exit 1; }
-  info "ok   maintenance merge: owner approved, one reviewer PASS"
+  r="$(review_covers_head "$(decisions_file)" "Pre-merge gate")" \
+    || { red "ship BLOCKED: maintenance merge — ${r:-review_covers_head unavailable}; review again"; exit 1; }
+  info "ok   maintenance merge: owner approved, one reviewer PASS, $r"
 fi
 if [ -z "$approval" ]; then
   check="$(base_copy .standards/checks/agent-approval.sh)"

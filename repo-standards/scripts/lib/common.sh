@@ -115,7 +115,7 @@ section_count() {
 # watcher polls once a second; a command that ends sooner returns at once. stdin is
 # /dev/null: under job control the job would otherwise share the terminal's.
 run_timed() {
-  local secs="$1" pid watcher rc flag
+  local secs="$1" pid watcher rc flag old_int old_term
   shift
   timed_out=""
   flag="$(mktemp "${TMPDIR:-/tmp}/standards-timeout.XXXXXX")"; rm -f "$flag"
@@ -131,10 +131,13 @@ run_timed() {
       sleep 1; s=$((s + 1))
     done ) &
   watcher=$!
-  # Ctrl-C reaches only the terminal's foreground group, which the job is not in: pass it on.
+  # Ctrl-C reaches only the terminal's foreground group, which the job is not in: pass it
+  # on. The caller's own INT/TERM traps are put back afterwards, not reset.
+  old_int="$(trap -p INT)"; old_term="$(trap -p TERM)"
   trap 'kill -TERM -- "-$pid" 2>/dev/null; kill "$watcher" 2>/dev/null; exit 130' INT TERM
   wait "$pid"; rc=$?
   trap - INT TERM
+  eval "$old_int"; eval "$old_term"
   # On a timeout let the watcher finish, so its KILL reaches anything that ignored TERM.
   if [ -e "$flag" ]; then wait "$watcher"; rm -f "$flag"; timed_out=1; return 124; fi
   # Reaped here, quietly: otherwise bash reports the killed watcher ("Terminated") later.
@@ -142,15 +145,36 @@ run_timed() {
   return $rc
 }
 
+# bad_secs <label> <value>: a timeout must be empty (no limit) or a whole number of seconds
+# above zero. Anything else ("10m", "0", "1.5") is reported and returns 0, so the caller
+# fails its gate instead of running with no limit.
+bad_secs() {
+  case "$2" in
+    '') return 1 ;;
+    *[!0-9]*|0*) red "FAIL $1: timeout '$2' is not a whole number of seconds above zero (CMD_TIMEOUT / CLASS_<name>_TIMEOUT)"; return 0 ;;
+  esac
+  return 1
+}
+
+# run_limit <seconds or empty> <command...>: run_timed, or with no limit a plain subshell.
+run_limit() {
+  local secs="$1"; shift
+  timed_out=""
+  if [ -n "$secs" ]; then run_timed "$secs" "$@"; else ( "$@" ); fi
+}
+
 # run_cmd <label> <command string> [timeout seconds, default CMD_TIMEOUT]. Empty command =
-# N/A in config, reported as SKIP. A command still running at the timeout is stopped, with
-# everything it started, and fails the gate.
+# N/A in config, reported as SKIP. With a timeout, a command still running at it is
+# stopped, with everything it started, and fails the gate. No timeout set: the command
+# runs exactly as it always did.
 run_cmd() {
-  local label="$1" cmd="$2" secs="${3:-${CMD_TIMEOUT:-1800}}" start rc
+  local label="$1" cmd="$2" secs="${3:-${CMD_TIMEOUT:-}}" start rc
   if [ -z "$cmd" ]; then info "SKIP $label (N/A in config)"; return 0; fi
+  ! bad_secs "$label" "$secs" || return 1
   start=$(date +%s)
   info "RUN  $label: $cmd"
-  run_timed "$secs" eval "$cmd"
+  timed_out=""
+  if [ -n "$secs" ]; then run_timed "$secs" eval "$cmd"; else eval "$cmd"; fi
   rc=$?
   if [ -n "$timed_out" ]; then red "FAIL $label: timed out after ${secs}s and was stopped — $cmd"; return 1; fi
   if [ $rc -ne 0 ]; then red "FAIL $label (exit $rc)"; return 1; fi
@@ -193,27 +217,37 @@ class_key() {
   } | git hash-object --stdin
 }
 
+# state_dir: local run state (result cache, bin/chain results), in the git dir every
+# worktree of this clone shares — so a pass in one worktree counts in the others — and
+# never in the working tree.
+state_dir() { printf '%s/standards-state\n' "$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"; }
+
 # run_classes <stage>: each class in TEST_CLASSES with a CLASS_<name>_<STAGE>_CMD runs only
 # when the branch touches one of its paths (minus IGNORE_PATHS), and not again for content
-# that already passed here (.standards/state/results, keyed by class_key, PASS only). The
-# full runs on the base branch nightly and before each release are what make skipping safe.
+# that already passed in this clone (state_dir/results, keyed by class_key, PASS only).
+# With no base commit nothing can be compared, so every class runs. The full runs on the
+# base branch nightly and before each release are what make skipping safe.
 run_classes() {
-  local stage="$1" up c cmd paths f hit key prev rc=0 results="$ROOT/.standards/state/results"
+  local stage="$1" up c cmd paths f hit key prev secs nobase="" rc=0 results
+  results="$(state_dir)/results"
   up="$(printf '%s' "$stage" | tr '[:lower:]' '[:upper:]')"
+  [ -n "$TEST_CLASSES" ] && [ -z "$(base_commit)" ] && { nobase=1; info "classes: no base commit to compare against — every class runs"; }
   for c in $TEST_CLASSES; do
     case "$c" in *[!A-Za-z0-9_]*) red "FAIL class '$c': a name is letters, digits and _ only"; rc=1; continue ;; esac
     cmd="$(class_get "$c" "${up}_CMD")"
     [ -n "$cmd" ] || continue
+    secs="$(class_get "$c" TIMEOUT)"; secs="${secs:-${CMD_TIMEOUT:-}}"
+    if bad_secs "$c $stage" "$secs"; then rc=1; continue; fi
     paths="$(class_get "$c" PATHS)"
-    hit=""
-    while IFS= read -r f; do
+    hit="$nobase"
+    [ -n "$hit" ] || while IFS= read -r f; do
       [ -n "$f" ] && matches_any "$f" "$paths" && ! matches_any "$f" "$IGNORE_PATHS" && { hit="$f"; break; }
     done < <(branch_files)
     if [ -z "$hit" ]; then info "SKIP $c $stage (branch changes none of: $paths)"; continue; fi
     key="$(class_key "$c" "$stage" "$cmd")"
     prev="$(sed -n "s/^$key //p" "$results" 2>/dev/null | head -1)"
     if [ -n "$prev" ]; then info "ok   $c $stage: cached — same content passed at $prev"; continue; fi
-    if run_cmd "$c $stage" "$cmd" "$(class_get "$c" TIMEOUT)"; then
+    if run_cmd "$c $stage" "$cmd" "$secs"; then
       mkdir -p "${results%/*}" && printf '%s %s\n' "$key" "$(git rev-parse --short HEAD)" >> "$results"
     else rc=1
     fi
@@ -221,18 +255,60 @@ run_classes() {
   return $rc
 }
 
-# nonstandard_files: the files the branch touches that are not standards paths — the base's
-# GATE_FILES (from its agent-approval.sh, so a branch cannot widen the list) or docs/*. Empty
-# = a standards-only branch, the only kind maintenance mode skips tests for. Fails closed:
-# with no base or no GATE_FILES on it, it prints a reason, so nothing counts as standards-only.
-nonstandard_files() {
-  local base gates f
-  base="$(base_commit)"; [ -n "$base" ] || { echo "(no base commit)"; return; }
-  gates="$(git show "$base:.standards/checks/agent-approval.sh" 2>/dev/null | sed -n 's/^GATE_FILES="\(.*\)"$/\1/p')"
-  [ -n "$gates" ] || { echo "(no GATE_FILES on the base)"; return; }
-  branch_files | while IFS= read -r f; do
-    [ -n "$f" ] && ! matches_any "$f" "$gates docs/*" && printf '%s\n' "$f"
-  done
+# The files maintenance mode may skip tests for: the standards and their docs. Narrower
+# than GATE_FILES on purpose — repos keep product code in bin/ and docs sites in docs/.
+# Read from the base's copy of this file (standards_scan), so a branch cannot widen it.
+# docs/work/* holds the branch's own spec and decision log, which every branch must carry.
+STANDARDS_PATHS=".standards/* bin/ship bin/approve bin/chain bin/preflight .claude/settings.json CLAUDE.md */CLAUDE.md AGENTS.md */AGENTS.md docs/guidelines/* docs/templates/* docs/doc-map.txt docs/rule-changes.md docs/work/*"
+
+# standards_scan: is this a standards-only branch, the only kind maintenance mode skips
+# tests for? Sets std_files (every file the branch touches), std_other (those outside the
+# base's STANDARDS_PATHS) and std_reason (why it cannot tell, e.g. no base: then nothing
+# counts as standards-only — fail closed).
+standards_scan() {
+  local base paths
+  std_files=""; std_other=""; std_reason=""
+  base="$(base_commit)"; [ -n "$base" ] || { std_reason="no base commit to compare against"; return; }
+  paths="$(git show "$base:.standards/lib/common.sh" 2>/dev/null | sed -n 's/^STANDARDS_PATHS="\(.*\)"$/\1/p')"
+  [ -n "$paths" ] || { std_reason="the base's standards define no STANDARDS_PATHS (upgrade the base first)"; return; }
+  std_files="$(branch_files)"
+  std_other="$(printf '%s\n' "$std_files" | while IFS= read -r f; do
+    [ -n "$f" ] && ! matches_any "$f" "$paths" && printf '%s\n' "$f"; done)"
+}
+
+# file_list <newline-separated files>: one line, at most 5 names, then how many more.
+file_list() {
+  local n
+  n="$(printf '%s\n' "$1" | grep -c .)"
+  printf '%s' "$(printf '%s\n' "$1" | grep . | head -5 | tr '\n' ' ')"
+  [ "$n" -le 5 ] || printf '…and %s more' "$((n - 5))"
+}
+
+# review_covers_head <decisions file> <section>: the section's "Reviewed:" names a literal
+# hex commit present locally, and every file the branch changes (the decisions file aside)
+# has the same content there as at HEAD. A rebase onto unrelated base changes keeps the
+# review; a later change to a reviewed file does not. Never HEAD, a branch, or a ref that
+# merely looks like hex. Prints one line: the ok text, or the reason it fails (return 1).
+review_covers_head() {
+  local dec="$1" s="$2" sha full f later="" list
+  sha="$(section_field "$dec" "$s" "Reviewed:")"
+  full="$(git rev-parse -q --verify "$sha^{commit}" 2>/dev/null)"
+  if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{7,40}$'; then
+    printf "%s: 'Reviewed:' must be a commit sha, got '%s'\n" "$s" "${sha:-empty}"; return 1
+  elif [ -z "$full" ] || [ "${full#"$sha"}" = "$full" ]; then
+    printf '%s: reviewed commit %s is not present locally (fetch it, or review again)\n' "$s" "$sha"; return 1
+  fi
+  list="$(mktemp)"
+  if ! git -c core.quotePath=false diff -z --name-only --no-renames "$(base_commit)" HEAD > "$list" 2>/dev/null; then
+    rm -f "$list"; printf '%s: could not list the branch changes to compare with %s\n' "$s" "$sha"; return 1
+  fi
+  while IFS= read -r -d '' f; do
+    [ "$f" != "$dec" ] || continue
+    [ "$(git rev-parse -q --verify "$full:$f")" = "$(git rev-parse -q --verify "HEAD:$f")" ] || later="$later $f"
+  done < "$list"
+  rm -f "$list"
+  [ -z "$later" ] || { printf '%s: differs from the reviewed commit %s:%s\n' "$s" "$sha" "$later"; return 1; }
+  printf '%s: review covers HEAD (reviewed %s)\n' "$s" "$sha"
 }
 
 # label_check <issue-or-pr number> <label> <issue|pr>: stdout = time the label was last
