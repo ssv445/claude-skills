@@ -22,14 +22,40 @@ fi
 
 start=$(date +%s); failed=""
 step() { "$@" || failed="$failed\n  - $1 ${2:-}"; }
+# tgate <name> <command...>: a test gate — maintenance mode skips it.
+tgate() { local n="$1"; shift; if [ -n "$maint" ]; then info "SKIP $n (maintenance mode)"; else step "$@"; fi; }
 
 echo "repo-standards pre-push on $(git rev-parse --abbrev-ref HEAD) vs $BASE_BRANCH ($(changed_files | wc -l | tr -d ' ') changed file(s))"
+heavy_lock_warn
+
+# Maintenance mode — the owner's `maintenance` label on the PR (bin/approve --maintenance) —
+# skips the test gates, but only when every file the branch touches is a standards path.
+# Only then is GitHub asked, so other pushes stay offline. Only an OPEN PR whose head is
+# this branch counts — a merged or closed PR's label never does. No gh, no such PR, an
+# error or a 10 s timeout all mean no skip.
+maint=""
+standards_scan
+if [ -n "$std_reason" ]; then
+  info "maintenance: not available — $std_reason; all gates run"
+elif [ -n "$std_other" ]; then
+  info "maintenance: not checked — the branch changes files outside the standards paths: $(file_list "$std_other"); all gates run"
+elif maint_pr="$(run_timed 10 gh pr list --head "$(git rev-parse --abbrev-ref HEAD)" --state open --json number -q '.[0].number' 2>/dev/null)" \
+     && case "$maint_pr" in ''|*[!0-9]*) false ;; esac \
+     && run_timed 10 label_check "$maint_pr" maintenance pr >/dev/null; then
+  maint=1; info "maintenance: owner's label on open PR #$maint_pr — test gates skipped for these standards files: $(printf '%s\n' "$std_files" | grep . | tr '\n' ' ')"
+else
+  info "maintenance: no open PR for this branch with the owner's 'maintenance' label (or gh failed) — all gates run"
+fi
+
 step run_cmd lint "$LINT_CMD"
 step run_cmd typecheck "$TYPECHECK_CMD"
-step run_cmd unit "$UNIT_CMD"
-step run_cmd diff-coverage "$DIFF_COVERAGE_CMD"
-step "$ROOT/.standards/checks/coverage-baseline.sh"
-step "$ROOT/.standards/checks/tdd.sh"
+# DIFF_COVERAGE_CMD and COVERAGE_TOTAL_CMD may read a report the unit run writes, so they
+# skip with it in maintenance mode.
+tgate unit run_cmd unit "$UNIT_CMD"
+tgate "class unit tests" run_classes unit
+tgate diff-coverage run_cmd diff-coverage "$DIFF_COVERAGE_CMD"
+tgate coverage-baseline "$ROOT/.standards/checks/coverage-baseline.sh"
+tgate tdd "$ROOT/.standards/checks/tdd.sh"
 step "$ROOT/.standards/checks/doc-map.sh"
 step "$ROOT/.standards/checks/decision-log.sh" "Spec gate" "Plan gate"
 step "$ROOT/.standards/checks/architecture.sh"

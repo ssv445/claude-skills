@@ -8,7 +8,8 @@ Hard rules (the hooks back these up; treat a red hook as a stop, not an obstacle
 - Merge only through `bin/ship`. Hooks run on every push; bypassing them (`--no-verify`, changing `core.hooksPath`, disabling the hook manager) is never an option — fix the cause.
 - The gates are how you decide for yourself whether to approve and ship. When every gate passes, run `bin/ship` — it approves and merges without the owner. Owner needed only when `bin/ship` says so: the cases listed under "Approval and shipping" in the rulebook. `APPROVER` in `.standards/config.sh` (read from the base branch) sets who approves gate-file changes and blast-radius specs: `"owner"` (default) or `"agent"` — in agent mode you approve those too, and only `owner-review` flags go to the owner. Never change `APPROVER` on your own branch; it is the owner's setting.
 - In agent mode a gate-file change also needs a line appended to `docs/rule-changes.md` and `## Gate-change review` in `decisions.md`.
-- `approved` / `spec-approved` labels are the owner's alone, added via `bin/approve` at a terminal. Never edit gate files, or rephrase commands, to get past `bin/ship` or the guard.
+- `approved` / `spec-approved` / `maintenance` labels are the owner's alone, added via `bin/approve` at a terminal. Never edit gate files, or rephrase commands, to get past `bin/ship` or the guard.
+- Tests and releases: a test depends only on what it tests; re-run only the flaky check, never the whole suite; push and ship a PR with `bin/chain <pr>` and read the `chain-<pr>.txt` it names; before a release, show `bin/preflight` output, not a "ready" claim. The full suite on the base branch, nightly and before each release, is required: it is what makes the test classes and the result cache safe.
 - Asking the owner: name the exact rule that requires them (e.g. "this PR changes gate files"), and give the one command to run. Then keep working on everything that does not depend on the answer — prep, plans, other issues. Stop only when the next step needs their input.
 - One owner per fact: every fact, store, shared resource and outbound call has exactly one owning module, listed in `docs/guidelines/architecture.md`. Every spec gets an architecture review before the plan (`## Architecture review` in decisions.md) and is aligned with that doc and the rulebook's structure principles. A new module or owner change also needs a new ADR and that doc updated in the same branch; no owner approval.
 - An idea that is not today's work goes into the Inbox of `docs/product/roadmap.md` at once, then is checked against `docs/product/goals.md` before it becomes an item.
@@ -22,3 +23,5 @@ With `APPROVER="owner"` (default), only these need you; agents never do them:
 - `bin/approve <pr>` for a PR `bin/ship` refuses (gate-file change, `owner-review` flag).
 - Answer `owner-review: required` flags.
 - Say "merge" for PRs in repos without `bin/ship`; the agent merges.
+
+In either mode, for a PR that only changes the standards: `bin/approve --maintenance <pr>` skips its test gates; merging it then needs `bin/approve <pr>` and one reviewer PASS.

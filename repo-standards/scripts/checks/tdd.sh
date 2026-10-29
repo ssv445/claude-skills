@@ -36,10 +36,21 @@ for f in $tests; do
   git show "HEAD:$f" > "$scratch/$f"
 done
 
+# Both runs are under CMD_TIMEOUT (none when unset). A run that hangs is not "red": it
+# fails the gate.
+secs="${CMD_TIMEOUT:-}"
+! bad_secs tdd "$secs" || exit 1
+run_tests() { cd "$1" && eval "$TEST_FILES_CMD $tests"; }
+timeout_fail() { red "FAIL tdd: changed tests timed out after ${secs}s on $1 and were stopped — $TEST_FILES_CMD"; exit 1; }
+
 info "tdd: running new tests against base source (must fail)"
-if (cd "$scratch" && eval "$TEST_FILES_CMD $tests") >/dev/null 2>&1; then
+run_limit "$secs" run_tests "$scratch" >/dev/null 2>&1; rc=$?
+[ -z "$timed_out" ] || timeout_fail "the base code"
+if [ $rc -eq 0 ]; then
   red "FAIL tdd: changed tests pass on the base code — they do not catch this change"; exit 1
 fi
 info "tdd: running new tests against HEAD (must pass)"
-if ! eval "$TEST_FILES_CMD $tests"; then red "FAIL tdd: changed tests fail on HEAD"; exit 1; fi
+run_limit "$secs" run_tests "$ROOT"; rc=$?
+[ -z "$timed_out" ] || timeout_fail HEAD
+if [ $rc -ne 0 ]; then red "FAIL tdd: changed tests fail on HEAD"; exit 1; fi
 green "PASS tdd (red on base, green on HEAD)"

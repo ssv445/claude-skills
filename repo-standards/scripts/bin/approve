@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # bin/approve <pr>          owner validated the evidence → adds "approved" to the PR
 # bin/approve --spec <issue> owner approved a blast-radius spec → adds "spec-approved"
+# bin/approve --maintenance <pr>  standards-only PR → adds "maintenance": its test gates skip
+#                            while it changes only standards paths; merging still needs
+#                            bin/approve <pr>. Ends with the PR.
 # Owner only, at a real terminal: agents share the owner's gh login, so the TTY and the
 # typed confirmation are what separate a human approval from an agent one. Agents are
 # also blocked from running this by the .claude guard hook.
@@ -8,13 +11,17 @@
 
 [ -t 0 ] && [ -t 1 ] || { red "bin/approve runs only at the owner's terminal"; exit 1; }
 
-if [ "$1" = "--spec" ]; then kind=issue; n="$2"; label=spec-approved
-else kind=pr; n="$1"; label=approved
-fi
-[ -n "$n" ] || { echo "usage: bin/approve <pr> | bin/approve --spec <issue>"; exit 1; }
+flag=""
+case "$1" in
+  --spec)        flag="$1 "; kind=issue; n="$2"; label=spec-approved ;;
+  --maintenance) flag="$1 "; kind=pr; n="$2"; label=maintenance ;;
+  *)             kind=pr; n="$1"; label=approved ;;
+esac
+[ -n "$n" ] || { echo "usage: bin/approve <pr> | bin/approve --spec <issue> | bin/approve --maintenance <pr>"; exit 1; }
 
 gh "$kind" view "$n" || exit 1
 [ "$kind" = issue ] && ls docs/work/"$n"-*/spec.md 2>/dev/null
+[ "$label" = maintenance ] && printf '\nMaintenance mode: test gates skip while this PR changes only standards files; merging still needs bin/approve %s and one reviewer PASS.\n' "$n"
 printf '\nType the number %s to approve %s #%s: ' "$n" "$kind" "$n"
 read -r typed
 [ "$typed" = "$n" ] || { red "not approved: expected the number $n, got '$typed'"; exit 1; }
@@ -31,6 +38,6 @@ if printf '%s\n' "$labels" | grep -qx "$label"; then
 fi
 if gh "$kind" edit "$n" --add-label "$label"; then green "$label added to $kind #$n"
 else
-  [ -z "$removed" ] || red "label removed; re-run bin/approve $([ "$kind" = issue ] && printf -- '--spec ')$n"
+  [ -z "$removed" ] || red "label removed; re-run bin/approve $flag$n"
   exit 1
 fi

@@ -59,6 +59,6 @@ if printf '%s' "$cmd" | grep -Eq -- 'core\.hooksPath[[:space:]]*=|--unset(-all)?
 fi
 printf '%s' "$cmd" | grep -Eq "${at_cmd}([^;&|[:space:]]*/)?bin/approve([[:space:]]|$)" \
   && block "approval is the owner's — ask them to run bin/approve at their terminal."
-printf '%s' "$cmd" | grep -Eq -- '--(add|remove)-label[= ]+[^ ]*approved|gh[[:space:]]+(api|label)[^|;&]*approved' \
-  && block "approved / spec-approved labels are the owner's alone."
+printf '%s' "$cmd" | grep -Eq -- '--(add|remove)-label[= ]+[^ ]*(approved|maintenance)|gh[[:space:]]+(api|label)[^|;&]*(approved|maintenance)' \
+  && block "approved / spec-approved / maintenance labels are the owner's alone."
 exit 0
