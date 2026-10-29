@@ -158,6 +158,8 @@ Code is read by search. Optimise for that:
 - **Typed and validated at every boundary** — API, DB, external input — so a wrong shape fails loudly where it enters.
 - **Seams for the outside world.** Time, randomness, hardware, network and file locations reach logic through an injected interface that has a fake, so every behaviour can be tested without them. Durations come from the injected clock, never from counting events or loop passes. Tests never touch real data, real environments or production accounts.
 - **Rationale in comments**: the why, and the what when the code is opaque.
+- **Temp files never pile up.** A script that runs `mktemp` or `mktemp -d` removes what it made, with an EXIT trap (`trap 'rm -rf "$tmp"' EXIT`) or right after use. It may keep a folder only when the run failed, and then it prunes its own older leftovers. Gates run on every push, so one leak per run becomes tens of thousands of folders in `$TMPDIR`.
+- **Never mount a disk image or volume directly under `$TMPDIR`.** Mount it under a small dedicated folder instead. When a volume is removed, Finder re-lists its parent folder, so the parent must stay tiny.
 
 ## Tests and releases
 

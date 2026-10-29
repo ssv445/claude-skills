@@ -976,6 +976,41 @@ cat "$SKILL/tests/speed-fixtures/old-base.sh" >> .standards/config.sh; git commi
 pp GH_LABELS="$T/maint" GH_PAGES="$T/pp-maint"
 expect pass "maintenance: base without STANDARDS_PATHS → says so plainly" has "the base's standards define no STANDARDS_PATHS"
 
+echo "temp files"
+# Every gate script removes the temp files it makes: a leak per run piles up in $TMPDIR
+# (posture-watch reached 33,800 folders). Every temp file goes to a fresh empty folder —
+# TMPDIR, plus a mktemp on PATH for macOS, whose mktemp ignores TMPDIR without a template —
+# for a passing pre-push with TDD, agent-approval, a run_timed timeout, and bin/ship
+# re-running the base's copy of itself (base_copy) on a pass and on two blocked paths.
+TD="$T/tmpcheck"; mkdir -p "$TD" "$T/fakemk"
+cp "$SKILL/tests/speed-fixtures/mktemp" "$T/fakemk/mktemp"; chmod +x "$T/fakemk/mktemp"
+export PROBE_TMP="$TD"; path_before="$PATH"; PATH="$T/fakemk:$PATH"
+git checkout -q -b feat/3-tmp feat/3-cls
+cat "$SKILL/tests/speed-fixtures/timeout.sh" >> .standards/config.sh; git commit -qam "unit hangs"
+expect fail "temp: run_timed timeout ran (TMPDIR isolated)" pp TMPDIR="$TD"
+expect pass "temp: ...it timed out" has "timed out after 2s"
+rm -f hang.pids
+cd "$R" || exit 1
+git reset -q --hard HEAD~1   # undo "break a test": the branch passes again, TDD included
+expect pass "temp: pre-push passes with TDD red→green (TMPDIR isolated)" env TMPDIR="$TD" .standards/hooks/pre-push < "$T/refs-branch"
+expect pass "temp: ...TDD really ran both ways" grep -q "PASS tdd (red on base, green on HEAD)" "$T/last.log.prev"
+env TMPDIR="$TD" .standards/checks/agent-approval.sh > /dev/null 2>&1
+cd "$T/ship" || exit 1
+git checkout -q -b chore/2-tmp chore/2-maint
+echo "# a branch edit, so bin/ship runs the base's copy" >> bin/ship; git commit -qam "edit bin/ship"
+review "$ok" "" "" "$(git rev-parse HEAD)"; git commit -qam "review the edit"
+ship_run TMPDIR="$TD" GH_LABELS="$T/maint-approved" GH_PAGES="$T/maint-pages"
+expect pass "temp: ship via the base's copy passes and merges (TMPDIR isolated)" test "$(writes)" = "merge;"
+expect pass "temp: ...it ran the base's copy" in_ship "running origin/main's bin/ship"
+ship_run TMPDIR="$TD" GH_LABELS="$T/nolabels" GH_PAGES="$T/maint-pages"
+expect pass "temp: ship blocked at a gate (TMPDIR isolated)" in_ship "FAIL e2e"
+ship_run TMPDIR="$TD" GH_LABELS="$T/maint" GH_PAGES="$T/maint-pages"
+expect pass "temp: ship blocked at approval (TMPDIR isolated)" in_ship "maintenance merge needs the owner's approved label"
+PATH="$path_before"
+expect pass "temp: the probe saw the scripts' mktemp and mktemp -d calls" \
+  bash -c "grep -qx 'mktemp -d' '$TD.calls' && grep -c . '$TD.calls' | grep -qv '^[0-3]$'"
+expect pass "temp: no gate script left a temp file or folder behind" test -z "$(ls -A "$TD")"
+
 echo
 echo "$pass passed, $fail wrong"
 [ $fail -eq 0 ]

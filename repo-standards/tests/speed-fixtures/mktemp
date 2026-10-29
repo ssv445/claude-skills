@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fixture: mktemp that creates every file and folder under $PROBE_TMP, whatever template
+# the caller passes. macOS mktemp ignores TMPDIR when called with no template, so TMPDIR
+# alone cannot catch a leaked `mktemp -d`.
+echo "mktemp $*" >> "$PROBE_TMP.calls"   # beside the folder, so the test can see it was used
+d=""; t=""
+for a in "$@"; do
+  case "$a" in -d) d="-d" ;; -*) ;; *) t="$a" ;; esac
+done
+exec /usr/bin/mktemp $d "$PROBE_TMP/$(basename "${t:-tmp.XXXXXXXX}")"
