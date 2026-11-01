@@ -30,8 +30,7 @@ input=$(cat)
 # reset times only; tmp + mv so parallel sessions never leave a torn file.
 usage_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 if rl=$(printf '%s' "$input" | jq -ce 'select(.rate_limits) |
-      {updated_at: (now | floor), five_hour: .rate_limits.five_hour,
-       seven_day: .rate_limits.seven_day}' 2>/dev/null) && [ -d "$usage_dir" ]; then
+      {updated_at: (now | floor), seven_day: .rate_limits.seven_day}' 2>/dev/null) && [ -d "$usage_dir" ]; then
   printf '%s\n' "$rl" > "$usage_dir/usage.json.$$" \
     && mv -f "$usage_dir/usage.json.$$" "$usage_dir/usage.json"
 fi
