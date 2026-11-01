@@ -64,13 +64,13 @@ command, link or extension API that starts a terminal thread.
   `rate_limits` window Claude Code hands it into `<config dir>/usage.json` (percentage and
   reset time only; the 5-hour limit is gone, so it's ignored). A reading is as fresh as
   that account's last status-line render (background agents likely have none, so they may
-  not refresh it). A window past its `resets_at` counts as 0%. `--pick` prints the
-  logged-in profile with the most headroom (under 90%, `CLAUDE_QUOTA_LIMIT` to change),
-  else `main`, else `none`. A logged-in account with no reading at all gets **probed**:
+  not refresh it). `--pick` prints the logged-in profile with the most headroom (under
+  90%, `CLAUDE_QUOTA_LIMIT` to change), else `main`, else `none`. A logged-in account with
+  no reading, or a reading older than its window's `resets_at`, gets **probed**:
   one Haiku message with no tools (`-p --output-format stream-json`), whose
   `rate_limit_event` carries the 7-day utilization — about $0.01, or $0 when the account is
-  already at its limit. `--no-probe` skips it, and a failed probe leaves `?` (counted as
-  usable). Transcripts never record rate limits, so these two are the only sources. A
+  already at its limit. `--no-probe` skips it. If the probe fails, a missing reading
+  stays `?` and a reset window counts as 0% (both treated as usable). Transcripts never record rate limits, so these two are the only sources. A
   usage-limit error is still the backstop.
 - **Remote Control stays on main.** Profile launches drop `--remote-control` and pass
   `remoteControlAtStartup: false` through `--settings`, because the shared `settings.json` turns it on.
