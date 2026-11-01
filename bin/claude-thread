@@ -15,7 +15,7 @@
 #   cld main …                      force the main account
 #   cld profile new|login|map|unmap|list
 #   cld ask "<question>"            read-only answer from the main account
-#   cld quota [--pick]              each account's usage; --pick = account to use
+#   cld quota [--pick] [--no-probe] each account's usage; --pick = account to use
 
 set -u
 
@@ -233,9 +233,18 @@ ask_main() {
 # counts: the 5-hour limit is gone (Shyam, 2026-11-01). A window whose resets_at
 # has passed counts as 0%. --pick prints just the account to use: the
 # logged-in profile with the most headroom, else main, else "none".
+# A logged-in account with no reading gets probed: one Haiku message, no tools,
+# `-p --output-format stream-json`, whose rate_limit_event carries the 7-day
+# utilization (~$0.01; a rejected one at the limit costs $0). Transcripts never
+# record rate limits, so this and the statusline are the only sources
+# (checked 2026-11-01). --no-probe skips it.
 QUOTA_LIMIT="${CLAUDE_QUOTA_LIMIT:-90}"   # 7-day % that counts as full
 quota_cmd() {
-  local rows="" d name
+  local rows="" d name pick="" probe=1 a
+  for a in "$@"; do
+    case "$a" in --pick) pick=--pick ;; --no-probe) probe=0 ;;
+      *) echo "usage: cld quota [--pick] [--no-probe]"; return 1 ;; esac
+  done
   rows="main	$HOME/.claude	1"$'\n'
   for d in "$PROFILES_ROOT"/*/; do
     [ -d "$d" ] || continue
@@ -244,10 +253,41 @@ quota_cmd() {
     else rows+="$name	${d%/}	0"$'\n'; fi
   done
   # rows go in as an argument: stdin is the heredoc
-  python3 -I - "${1:-}" "$QUOTA_LIMIT" "$rows" <<'PY'
-import json, sys, time
+  python3 -I - "$pick" "$QUOTA_LIMIT" "$rows" "$probe" "$CLAUDE_BIN" <<'PY'
+import json, os, subprocess, sys, tempfile, time
 pick, limit = sys.argv[1] == "--pick", float(sys.argv[2])
+do_probe, claude_bin = sys.argv[4] == "1", sys.argv[5]
 now = time.time()
+
+def probe(name, d):
+    """One-message run on that account; cache its 7-day window like the statusline does."""
+    env = dict(os.environ)
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    if name != "main":
+        env["CLAUDE_CONFIG_DIR"] = d
+    try:
+        with tempfile.TemporaryDirectory() as cwd:   # no project CLAUDE.md, no repo
+            out = subprocess.run(
+                [claude_bin, "-p", "--model", "haiku", "--tools", "",
+                 "--output-format", "stream-json", "--verbose", "Reply with: ok"],
+                cwd=cwd, env=env, capture_output=True, text=True, timeout=120).stdout
+    except Exception:
+        return
+    for line in out.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        sd = ((ev.get("rate_limit_info") or {}).get("unifiedWindows") or {}).get("seven_day")
+        if ev.get("type") == "rate_limit_event" and sd and sd.get("utilization") is not None:
+            rec = {"updated_at": int(time.time()),
+                   "seven_day": {"used_percentage": round(float(sd["utilization"]) * 100, 1),
+                                 "resets_at": sd.get("resetsAt")}}
+            tmp = f"{d}/usage.json.{os.getpid()}"
+            with open(tmp, "w") as fh:
+                json.dump(rec, fh)
+            os.replace(tmp, f"{d}/usage.json")
+            return
 
 def window(w):
     if not isinstance(w, dict) or w.get("used_percentage") is None:
@@ -257,12 +297,14 @@ def window(w):
     return float(w["used_percentage"])
 
 def ago(t):
-    s = int(now - t)
+    s = max(0, int(now - t))   # a probe can finish after `now` was taken
     return f"{s//60}m ago" if s < 3600 else (f"{s//3600}h ago" if s < 86400 else f"{s//86400}d ago")
 
 accts = []
 for line in sys.argv[3].splitlines():
     name, d, logged = line.split("\t")
+    if do_probe and logged == "1" and not os.path.exists(f"{d}/usage.json"):
+        probe(name, d)
     try:
         u = json.load(open(f"{d}/usage.json"))
     except Exception:

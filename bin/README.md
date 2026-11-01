@@ -44,6 +44,7 @@ cld @sun --bg -n worker "<task>"                  # background agent on that acc
 cld @sun agents | attach <id> | logs <id> | stop <id>   # that account's background agents
 cld ask "where is the Q3 pricing artifact?"       # read-only answer from main
 cld quota                                         # each account's 7-day usage + next reset
+                                                  #   (probes an account with no reading; --no-probe)
 cld @"$(cld quota --pick)" --bg -n job "<task>"   # run on the account with headroom
 cld spawn reviewer --brief .tmp/briefs/reviewer.md     # queue a long-lived agent here
 cld @sun spawn reviewer --brief …                 # …on another account
@@ -65,8 +66,12 @@ command, link or extension API that starts a terminal thread.
   that account's last status-line render (background agents likely have none, so they may
   not refresh it). A window past its `resets_at` counts as 0%. `--pick` prints the
   logged-in profile with the most headroom (under 90%, `CLAUDE_QUOTA_LIMIT` to change),
-  else `main`, else `none`. A profile with no
-  reading yet counts as usable; a usage-limit error is still the backstop.
+  else `main`, else `none`. A logged-in account with no reading at all gets **probed**:
+  one Haiku message with no tools (`-p --output-format stream-json`), whose
+  `rate_limit_event` carries the 7-day utilization — about $0.01, or $0 when the account is
+  already at its limit. `--no-probe` skips it, and a failed probe leaves `?` (counted as
+  usable). Transcripts never record rate limits, so these two are the only sources. A
+  usage-limit error is still the backstop.
 - **Remote Control stays on main.** Profile launches drop `--remote-control` and pass
   `remoteControlAtStartup: false` through `--settings`, because the shared `settings.json` turns it on.
 - **MCP servers come from main.** Each launch passes main's user servers, plus main's
