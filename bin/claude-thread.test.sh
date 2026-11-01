@@ -429,6 +429,13 @@ quota_tests() {
 if [ "$1" = auth ] && [ "$2" = status ]; then
   if [ -z "${CLAUDE_CONFIG_DIR:-}" ] || [ -e "$CLAUDE_CONFIG_DIR/.loggedin" ]; then
     echo '{"loggedIn": true}'; else echo '{"loggedIn": false}'; fi
+  exit 0
+fi
+# the probe: log which account ran, answer with a rate_limit_event like the real one
+if [ "$1" = -p ]; then
+  echo "${CLAUDE_CONFIG_DIR:-main}" >> "$PROBE_LOG"
+  printf '{"type":"system"}\n{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"seven_day":{"utilization":%s,"resetsAt":%s}}}}\n{"type":"result"}\n' \
+    "${PROBE_UTIL:-0.3}" "$(( $(date +%s) + 7200 ))"
 fi
 EOF
   chmod +x "$SB/bin/claude"
@@ -436,6 +443,7 @@ EOF
   # shellcheck disable=SC1090
   . "$SB/lib.sh"
   CLAUDE_BIN="$SB/bin/claude"
+  export PROBE_LOG="$SB/probes"; : > "$PROBE_LOG"
   local SL; SL="$(dirname "$WRAPPER")/statusline.sh"
   local later=$(( $(date +%s) + 3600 )) past=$(( $(date +%s) - 60 ))
   mkdir -p "$PROFILES_ROOT/dev"; : > "$PROFILES_ROOT/dev/.loggedin"
@@ -466,13 +474,27 @@ EOF
   : > "$PROFILES_ROOT/dev/.loggedin"; usage "$PROFILES_ROOT/dev" 99; usage "$HOME/.claude" 97
   check "Q7: everything full → none" "none" "$(quota_cmd --pick)"
   rm "$PROFILES_ROOT/dev/usage.json"
-  check "Q8: a profile with no reading yet still beats main" "dev" "$(quota_cmd --pick)"
-  check "Q9: the table names every account" "2" "$(quota_cmd | grep -cE '^(main|dev) ')"
+  check "Q8: a profile with no reading yet still beats main" "dev" "$(quota_cmd --pick --no-probe)"
+  check "Q9: the table names every account" "2" "$(quota_cmd --no-probe | grep -cE '^(main|dev) ')"
   check "Q10: the table shows main's next reset with a countdown" "1" \
-        "$(quota_cmd | grep -E '^main ' | grep -cE '\(in 0h 5[0-9]m\)')"
+        "$(quota_cmd --no-probe | grep -E '^main ' | grep -cE '\(in 0h 5[0-9]m\)')"
   usage "$HOME/.claude" 50 "$past"
-  check "Q11: a passed reset says so" "1" "$(quota_cmd | grep -E '^main ' | grep -c 'already reset')"
-  rm -rf "$SB"; export HOME="$ORIG_HOME"
+  check "Q11: a passed reset says so" "1" "$(quota_cmd --no-probe | grep -E '^main ' | grep -c 'already reset')"
+  check "Q11b: --no-probe never runs an agent" "0" "$(wc -l < "$PROBE_LOG" | tr -d ' ')"
+
+  # dev has no reading here: the probe fills it
+  check "Q12: a missing reading is probed and picked" "dev" "$(quota_cmd --pick)"
+  check "Q13: the probe's 7-day utilization is cached as a %" "30.0" \
+        "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/dev/usage.json'))['seven_day']['used_percentage'])")"
+  check "Q14: the probe ran once, on that account's config dir" "$PROFILES_ROOT/dev" "$(cat "$PROBE_LOG")"
+  quota_cmd >/dev/null
+  check "Q15: an account with a reading is not probed again" "1" "$(wc -l < "$PROBE_LOG" | tr -d ' ')"
+  rm "$PROFILES_ROOT/dev/usage.json"
+  check "Q16: a probe that reports the limit hit is respected" "main" "$(PROBE_UTIL=1 quota_cmd --pick)"
+  rm "$PROFILES_ROOT/dev/usage.json" "$PROFILES_ROOT/dev/.loggedin"; : > "$PROBE_LOG"
+  quota_cmd >/dev/null
+  check "Q17: a logged-out profile is never probed" "0" "$(wc -l < "$PROBE_LOG" | tr -d ' ')"
+  rm -rf "$SB"; export HOME="$ORIG_HOME"; unset PROBE_LOG
 }
 
 echo "── $WRAPPER ──"
