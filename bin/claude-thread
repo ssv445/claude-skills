@@ -230,10 +230,10 @@ ask_main() {
 # 2026-11-01). No CLI reports usage; the statusline (bin/statusline.sh) caches
 # the rate_limits it is handed into <config dir>/usage.json, so a reading is only
 # as fresh as that account's last interactive reply. Only the 7-day window
-# counts: the 5-hour limit is gone (Shyam, 2026-11-01). A window whose resets_at
-# has passed counts as 0%. --pick prints just the account to use: the
-# logged-in profile with the most headroom, else main, else "none".
-# A logged-in account with no reading gets probed: one Haiku message, no tools,
+# counts: the 5-hour limit is gone (Shyam, 2026-11-01). --pick prints just the
+# account to use: the logged-in profile with the most headroom, else main, else
+# "none". A logged-in account with no reading, or a reading older than its
+# window's reset, gets probed (if the probe fails, a reset window counts as 0%): one Haiku message, no tools,
 # `-p --output-format stream-json`, whose rate_limit_event carries the 7-day
 # utilization (~$0.01; a rejected one at the limit costs $0). Transcripts never
 # record rate limits, so this and the statusline are the only sources
@@ -289,11 +289,20 @@ def probe(name, d):
             os.replace(tmp, f"{d}/usage.json")
             return
 
+def stale(path):
+    """No reading, or one from a window that has since reset: its % says nothing
+    about the new window, so fetch a fresh one (Shyam, 2026-11-01)."""
+    try:
+        sd = json.load(open(path)).get("seven_day") or {}
+    except Exception:
+        return True
+    return (sd.get("resets_at") or 0) <= now
+
 def window(w):
     if not isinstance(w, dict) or w.get("used_percentage") is None:
         return None
     if (w.get("resets_at") or 0) <= now:
-        return 0.0          # window rolled over since the reading
+        return 0.0          # rolled over and the re-probe failed (or --no-probe)
     return float(w["used_percentage"])
 
 def ago(t):
@@ -303,7 +312,7 @@ def ago(t):
 accts = []
 for line in sys.argv[3].splitlines():
     name, d, logged = line.split("\t")
-    if do_probe and logged == "1" and not os.path.exists(f"{d}/usage.json"):
+    if do_probe and logged == "1" and stale(f"{d}/usage.json"):
         probe(name, d)
     try:
         u = json.load(open(f"{d}/usage.json"))

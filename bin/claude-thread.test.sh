@@ -467,8 +467,18 @@ EOF
   check "Q3: a profile with headroom wins over main" "dev" "$(quota_cmd --pick)"
   usage "$PROFILES_ROOT/dev" 95
   check "Q4: a profile past the limit loses to main" "main" "$(quota_cmd --pick)"
+  check "Q4b: fresh readings are not re-probed" "0" "$(wc -l < "$PROBE_LOG" | tr -d ' ')"
   usage "$PROFILES_ROOT/dev" 95 "$past"
-  check "Q5: a window past its resets_at counts as empty" "dev" "$(quota_cmd --pick)"
+  check "Q5: without a probe, a window past its resets_at counts as empty" "dev" \
+        "$(quota_cmd --pick --no-probe)"
+  check "Q5b: a reading older than its reset is re-probed, once" "$PROFILES_ROOT/dev" \
+        "$(quota_cmd --pick >/dev/null; cat "$PROBE_LOG")"
+  check "Q5c: and the fresh reading replaces it" "30.0" \
+        "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/dev/usage.json'))['seven_day']['used_percentage'])")"
+  usage "$PROFILES_ROOT/dev" 10 "$past"
+  check "Q5d: a re-probe that finds the new window full is respected" "main" \
+        "$(PROBE_UTIL=0.95 quota_cmd --pick)"
+  : > "$PROBE_LOG"
   rm "$PROFILES_ROOT/dev/.loggedin"
   check "Q6: a logged-out profile is never picked" "main" "$(quota_cmd --pick)"
   : > "$PROFILES_ROOT/dev/.loggedin"; usage "$PROFILES_ROOT/dev" 99; usage "$HOME/.claude" 97
@@ -481,6 +491,7 @@ EOF
   usage "$HOME/.claude" 50 "$past"
   check "Q11: a passed reset says so" "1" "$(quota_cmd --no-probe | grep -E '^main ' | grep -c 'already reset')"
   check "Q11b: --no-probe never runs an agent" "0" "$(wc -l < "$PROBE_LOG" | tr -d ' ')"
+  usage "$HOME/.claude" 50   # fresh again, so only dev's missing reading is probed below
 
   # dev has no reading here: the probe fills it
   check "Q12: a missing reading is probed and picked" "dev" "$(quota_cmd --pick)"
