@@ -229,10 +229,11 @@ ask_main() {
 # work to a profile with headroom and save main's quota (Shyam's call,
 # 2026-11-01). No CLI reports usage; the statusline (bin/statusline.sh) caches
 # the rate_limits it is handed into <config dir>/usage.json, so a reading is only
-# as fresh as that account's last interactive reply. A window whose resets_at
+# as fresh as that account's last interactive reply. Only the 7-day window
+# counts: the 5-hour limit is gone (Shyam, 2026-11-01). A window whose resets_at
 # has passed counts as 0%. --pick prints just the account to use: the
 # logged-in profile with the most headroom, else main, else "none".
-QUOTA_LIMIT="${CLAUDE_QUOTA_LIMIT:-90}"   # % of either window that counts as full
+QUOTA_LIMIT="${CLAUDE_QUOTA_LIMIT:-90}"   # 7-day % that counts as full
 quota_cmd() {
   local rows="" d name
   rows="main	$HOME/.claude	1"$'\n'
@@ -266,29 +267,38 @@ for line in sys.argv[3].splitlines():
         u = json.load(open(f"{d}/usage.json"))
     except Exception:
         u = None
-    five = window(u.get("five_hour")) if u else None
-    week = window(u.get("seven_day")) if u else None
-    known = [x for x in (five, week) if x is not None]
-    accts.append(dict(name=name, logged=logged == "1", five=five, week=week,
-                      worst=max(known) if known else None,
+    sd = (u or {}).get("seven_day") or {}
+    accts.append(dict(name=name, logged=logged == "1",
+                      week=window(sd) if u else None, resets=sd.get("resets_at"),
                       seen=ago(u["updated_at"]) if u and u.get("updated_at") else "never"))
 
 def usable(a):
-    return a["logged"] and (a["worst"] is None or a["worst"] < limit)
+    return a["logged"] and (a["week"] is None or a["week"] < limit)
 
-# known headroom first (lowest worst %), then profiles with no reading yet
+# known headroom first (lowest %), then profiles with no reading yet
 profiles = sorted((a for a in accts if a["name"] != "main" and usable(a)),
-                  key=lambda a: (a["worst"] is None, a["worst"] or 0))
+                  key=lambda a: (a["week"] is None, a["week"] or 0))
 main = next(a for a in accts if a["name"] == "main")
 choice = profiles[0]["name"] if profiles else ("main" if usable(main) else "none")
 
 if pick:
     print(choice); sys.exit(0)
 fmt = lambda x: "?" if x is None else f"{x:.0f}%"
-print(f"{'account':<16}{'5h':>6}{'7d':>6}  reading")
+def reset(t):
+    # next reset in local time + countdown; a passed one means the reading is from
+    # the previous window and the account is back to 0% (see window())
+    if not t:
+        return "?"
+    if t <= now:
+        return "already reset"
+    s = int(t - now)
+    left = f"{s//86400}d {s%86400//3600}h" if s >= 86400 else f"{s//3600}h {s%3600//60}m"
+    return f"{time.strftime('%a %d %b %H:%M', time.localtime(t))} (in {left})"
+
+print(f"{'account':<16}{'7d':>6}  {'resets':<30}reading")
 for a in accts:
     note = "" if a["logged"] else "  (logged out)"
-    print(f"{a['name']:<16}{fmt(a['five']):>6}{fmt(a['week']):>6}  {a['seen']}{note}")
+    print(f"{a['name']:<16}{fmt(a['week']):>6}  {reset(a['resets']):<30}{a['seen']}{note}")
 print(f"→ use: {choice}   (full at {limit:.0f}%; '?' = no reading yet)")
 PY
 }

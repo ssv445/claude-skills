@@ -440,31 +440,38 @@ EOF
   local later=$(( $(date +%s) + 3600 )) past=$(( $(date +%s) - 60 ))
   mkdir -p "$PROFILES_ROOT/dev"; : > "$PROFILES_ROOT/dev/.loggedin"
 
-  # usage <dir> <5h%> <7d%> [5h resets_at] — the statusline writes the cache
+  # usage <dir> <7d%> [resets_at] — the statusline writes the cache. A stray
+  # five_hour window in the input must not affect the pick (that limit is gone).
   usage() {
-    printf '{"rate_limits":{"five_hour":{"used_percentage":%s,"resets_at":%s},"seven_day":{"used_percentage":%s,"resets_at":%s}}}' \
-      "$2" "${4:-$later}" "$3" "$later" | CLAUDE_CONFIG_DIR="$1" "$SL" >/dev/null
+    printf '{"rate_limits":{"five_hour":{"used_percentage":99,"resets_at":%s},"seven_day":{"used_percentage":%s,"resets_at":%s}}}' \
+      "$later" "$2" "${3:-$later}" | CLAUDE_CONFIG_DIR="$1" "$SL" >/dev/null
   }
-  usage "$PROFILES_ROOT/dev" 23.5 41
-  check "Q1: statusline caches rate_limits in that account's folder" "23.5" \
-        "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/dev/usage.json'))['five_hour']['used_percentage'])")"
+  usage "$PROFILES_ROOT/dev" 41.5
+  check "Q1: statusline caches the 7-day window in that account's folder" "41.5" \
+        "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/dev/usage.json'))['seven_day']['used_percentage'])")"
+  check "Q1b: and drops the 5-hour window" "no" \
+        "$(python3 -c "import json;print('yes' if 'five_hour' in json.load(open('$PROFILES_ROOT/dev/usage.json')) else 'no')")"
   echo '{"model":{"display_name":"x"}}' | CLAUDE_CONFIG_DIR="$HOME/.claude" "$SL" >/dev/null
   check "Q2: no rate_limits in the input → no cache written" "no" \
         "$([ -e "$HOME/.claude/usage.json" ] && echo yes || echo no)"
 
-  usage "$HOME/.claude" 10 10
+  usage "$HOME/.claude" 10
   check "Q3: a profile with headroom wins over main" "dev" "$(quota_cmd --pick)"
-  usage "$PROFILES_ROOT/dev" 95 20
+  usage "$PROFILES_ROOT/dev" 95
   check "Q4: a profile past the limit loses to main" "main" "$(quota_cmd --pick)"
-  usage "$PROFILES_ROOT/dev" 95 20 "$past"
+  usage "$PROFILES_ROOT/dev" 95 "$past"
   check "Q5: a window past its resets_at counts as empty" "dev" "$(quota_cmd --pick)"
   rm "$PROFILES_ROOT/dev/.loggedin"
   check "Q6: a logged-out profile is never picked" "main" "$(quota_cmd --pick)"
-  : > "$PROFILES_ROOT/dev/.loggedin"; usage "$PROFILES_ROOT/dev" 99 99; usage "$HOME/.claude" 97 50
+  : > "$PROFILES_ROOT/dev/.loggedin"; usage "$PROFILES_ROOT/dev" 99; usage "$HOME/.claude" 97
   check "Q7: everything full → none" "none" "$(quota_cmd --pick)"
   rm "$PROFILES_ROOT/dev/usage.json"
   check "Q8: a profile with no reading yet still beats main" "dev" "$(quota_cmd --pick)"
   check "Q9: the table names every account" "2" "$(quota_cmd | grep -cE '^(main|dev) ')"
+  check "Q10: the table shows main's next reset with a countdown" "1" \
+        "$(quota_cmd | grep -E '^main ' | grep -cE '\(in 0h 5[0-9]m\)')"
+  usage "$HOME/.claude" 50 "$past"
+  check "Q11: a passed reset says so" "1" "$(quota_cmd | grep -E '^main ' | grep -c 'already reset')"
   rm -rf "$SB"; export HOME="$ORIG_HOME"
 }
 
