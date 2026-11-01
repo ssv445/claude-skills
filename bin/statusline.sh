@@ -23,6 +23,19 @@ fi
 
 input=$(cat)
 
+# ── quota cache for `cld quota` ──
+# rate_limits arrives only for claude.ai subscribers, after a session's first
+# reply. Cache it per account (CLAUDE_CONFIG_DIR tells profiles from main) so
+# agents can route heavy work to the account with headroom. Percentages and
+# reset times only; tmp + mv so parallel sessions never leave a torn file.
+usage_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+if rl=$(printf '%s' "$input" | jq -ce 'select(.rate_limits) |
+      {updated_at: (now | floor), five_hour: .rate_limits.five_hour,
+       seven_day: .rate_limits.seven_day}' 2>/dev/null) && [ -d "$usage_dir" ]; then
+  printf '%s\n' "$rl" > "$usage_dir/usage.json.$$" \
+    && mv -f "$usage_dir/usage.json.$$" "$usage_dir/usage.json"
+fi
+
 # One jq pass, tab-separated, null-safe.
 IFS=$'\t' read -r model dir pct cost duration_ms added removed < <(
   printf '%s' "$input" | jq -r '

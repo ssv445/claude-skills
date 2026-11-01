@@ -420,10 +420,59 @@ EOF
   rm -rf "$SB"
 }
 
+# ── quota (statusline cache → cld quota) ───────────────────────────────────
+quota_tests() {
+  local SB; SB=$(mktemp -d "$ORIG_HOME/.ct-test.XXXXXX"); export HOME="$SB/home"
+  mkdir -p "$HOME/.claude" "$SB/bin"
+  cat > "$SB/bin/claude" <<'EOF'
+#!/bin/bash
+if [ "$1" = auth ] && [ "$2" = status ]; then
+  if [ -z "${CLAUDE_CONFIG_DIR:-}" ] || [ -e "$CLAUDE_CONFIG_DIR/.loggedin" ]; then
+    echo '{"loggedIn": true}'; else echo '{"loggedIn": false}'; fi
+fi
+EOF
+  chmod +x "$SB/bin/claude"
+  awk '/^# ── account commands/{exit} {print}' "$WRAPPER" > "$SB/lib.sh"
+  # shellcheck disable=SC1090
+  . "$SB/lib.sh"
+  CLAUDE_BIN="$SB/bin/claude"
+  local SL; SL="$(dirname "$WRAPPER")/statusline.sh"
+  local later=$(( $(date +%s) + 3600 )) past=$(( $(date +%s) - 60 ))
+  mkdir -p "$PROFILES_ROOT/dev"; : > "$PROFILES_ROOT/dev/.loggedin"
+
+  # usage <dir> <5h%> <7d%> [5h resets_at] — the statusline writes the cache
+  usage() {
+    printf '{"rate_limits":{"five_hour":{"used_percentage":%s,"resets_at":%s},"seven_day":{"used_percentage":%s,"resets_at":%s}}}' \
+      "$2" "${4:-$later}" "$3" "$later" | CLAUDE_CONFIG_DIR="$1" "$SL" >/dev/null
+  }
+  usage "$PROFILES_ROOT/dev" 23.5 41
+  check "Q1: statusline caches rate_limits in that account's folder" "23.5" \
+        "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/dev/usage.json'))['five_hour']['used_percentage'])")"
+  echo '{"model":{"display_name":"x"}}' | CLAUDE_CONFIG_DIR="$HOME/.claude" "$SL" >/dev/null
+  check "Q2: no rate_limits in the input → no cache written" "no" \
+        "$([ -e "$HOME/.claude/usage.json" ] && echo yes || echo no)"
+
+  usage "$HOME/.claude" 10 10
+  check "Q3: a profile with headroom wins over main" "dev" "$(quota_cmd --pick)"
+  usage "$PROFILES_ROOT/dev" 95 20
+  check "Q4: a profile past the limit loses to main" "main" "$(quota_cmd --pick)"
+  usage "$PROFILES_ROOT/dev" 95 20 "$past"
+  check "Q5: a window past its resets_at counts as empty" "dev" "$(quota_cmd --pick)"
+  rm "$PROFILES_ROOT/dev/.loggedin"
+  check "Q6: a logged-out profile is never picked" "main" "$(quota_cmd --pick)"
+  : > "$PROFILES_ROOT/dev/.loggedin"; usage "$PROFILES_ROOT/dev" 99 99; usage "$HOME/.claude" 97 50
+  check "Q7: everything full → none" "none" "$(quota_cmd --pick)"
+  rm "$PROFILES_ROOT/dev/usage.json"
+  check "Q8: a profile with no reading yet still beats main" "dev" "$(quota_cmd --pick)"
+  check "Q9: the table names every account" "2" "$(quota_cmd | grep -cE '^(main|dev) ')"
+  rm -rf "$SB"; export HOME="$ORIG_HOME"
+}
+
 echo "── $WRAPPER ──"
 state_tests
 lazy_tests
 project_tests
 profile_tests
+quota_tests
 echo "  → $pass passed, $fail failed"
 exit $((fail > 0))
