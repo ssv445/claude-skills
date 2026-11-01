@@ -15,6 +15,7 @@
 #   cld main …                      force the main account
 #   cld profile new|login|map|unmap|list
 #   cld ask "<question>"            read-only answer from the main account
+#   cld quota [--pick]              each account's usage; --pick = account to use
 
 set -u
 
@@ -222,6 +223,74 @@ profile_cmd() { # new|login|map|unmap|list …
 ask_main() {
   [ -n "${1:-}" ] || { echo 'usage: cld ask "<question>"'; return 1; }
   env -u CLAUDE_CONFIG_DIR -u CLAUDE_PROFILE "$CLAUDE_BIN" -p --permission-mode plan "$*"
+}
+
+# `cld quota [--pick]` — each account's claude.ai usage, so agents can send heavy
+# work to a profile with headroom and save main's quota (Shyam's call,
+# 2026-11-01). No CLI reports usage; the statusline (bin/statusline.sh) caches
+# the rate_limits it is handed into <config dir>/usage.json, so a reading is only
+# as fresh as that account's last interactive reply. A window whose resets_at
+# has passed counts as 0%. --pick prints just the account to use: the
+# logged-in profile with the most headroom, else main, else "none".
+QUOTA_LIMIT="${CLAUDE_QUOTA_LIMIT:-90}"   # % of either window that counts as full
+quota_cmd() {
+  local rows="" d name
+  rows="main	$HOME/.claude	1"$'\n'
+  for d in "$PROFILES_ROOT"/*/; do
+    [ -d "$d" ] || continue
+    name=$(basename "$d")
+    if profile_logged_in "${d%/}"; then rows+="$name	${d%/}	1"$'\n'
+    else rows+="$name	${d%/}	0"$'\n'; fi
+  done
+  # rows go in as an argument: stdin is the heredoc
+  python3 -I - "${1:-}" "$QUOTA_LIMIT" "$rows" <<'PY'
+import json, sys, time
+pick, limit = sys.argv[1] == "--pick", float(sys.argv[2])
+now = time.time()
+
+def window(w):
+    if not isinstance(w, dict) or w.get("used_percentage") is None:
+        return None
+    if (w.get("resets_at") or 0) <= now:
+        return 0.0          # window rolled over since the reading
+    return float(w["used_percentage"])
+
+def ago(t):
+    s = int(now - t)
+    return f"{s//60}m ago" if s < 3600 else (f"{s//3600}h ago" if s < 86400 else f"{s//86400}d ago")
+
+accts = []
+for line in sys.argv[3].splitlines():
+    name, d, logged = line.split("\t")
+    try:
+        u = json.load(open(f"{d}/usage.json"))
+    except Exception:
+        u = None
+    five = window(u.get("five_hour")) if u else None
+    week = window(u.get("seven_day")) if u else None
+    known = [x for x in (five, week) if x is not None]
+    accts.append(dict(name=name, logged=logged == "1", five=five, week=week,
+                      worst=max(known) if known else None,
+                      seen=ago(u["updated_at"]) if u and u.get("updated_at") else "never"))
+
+def usable(a):
+    return a["logged"] and (a["worst"] is None or a["worst"] < limit)
+
+# known headroom first (lowest worst %), then profiles with no reading yet
+profiles = sorted((a for a in accts if a["name"] != "main" and usable(a)),
+                  key=lambda a: (a["worst"] is None, a["worst"] or 0))
+main = next(a for a in accts if a["name"] == "main")
+choice = profiles[0]["name"] if profiles else ("main" if usable(main) else "none")
+
+if pick:
+    print(choice); sys.exit(0)
+fmt = lambda x: "?" if x is None else f"{x:.0f}%"
+print(f"{'account':<16}{'5h':>6}{'7d':>6}  reading")
+for a in accts:
+    note = "" if a["logged"] else "  (logged out)"
+    print(f"{a['name']:<16}{fmt(a['five']):>6}{fmt(a['week']):>6}  {a['seen']}{note}")
+print(f"→ use: {choice}   (full at {limit:.0f}%; '?' = no reading yet)")
+PY
 }
 
 profile_email() { # <dir, or "" for main> — the account's email; nothing if logged out
@@ -923,6 +992,7 @@ archive_menu() {
 case "${1:-}" in
   profile) shift; profile_cmd "$@"; exit $? ;;
   ask)     shift; ask_main "$@"; exit $? ;;
+  quota)   shift; quota_cmd "$@"; exit $? ;;
   # `cld main …` — the main account here, even in a folder mapped to a profile
   # and for a session that started on one; then carries on as plain `cld …`
   main)    shift; export CLAUDE_PROFILE=main ;;

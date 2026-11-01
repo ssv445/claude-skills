@@ -43,6 +43,8 @@ cld @                                             # pick the account from a list
 cld @sun --bg -n worker "<task>"                  # background agent on that account
 cld @sun agents | attach <id> | logs <id> | stop <id>   # that account's background agents
 cld ask "where is the Q3 pricing artifact?"       # read-only answer from main
+cld quota                                         # each account's 5h / 7d usage
+cld @"$(cld quota --pick)" --bg -n job "<task>"   # run on the account with headroom
 cld spawn reviewer --brief .tmp/briefs/reviewer.md     # queue a long-lived agent here
 cld @sun spawn reviewer --brief …                 # …on another account
 cld spawn                                         # what's waiting (--cancel <name>)
@@ -57,6 +59,13 @@ command, link or extension API that starts a terminal thread.
 - **New sessions** take the profile their folder maps to. **Resumed sessions** keep the
   account they started on, recorded in `state.json`. A remap never moves old sessions.
   `cld main`, `cld @<name>` or `CLAUDE_PROFILE=<name|main>` overrides both.
+- **Quota.** No CLI reports claude.ai usage, so `statusline.sh` caches the `rate_limits`
+  Claude Code hands it into `<config dir>/usage.json` (percentages and reset times only).
+  A reading is as fresh as that account's last status-line render (background agents
+  likely have none, so they may not refresh it). A window past its `resets_at` counts as 0%.
+  `--pick` prints the logged-in profile with the most headroom (under 90% on both
+  windows, `CLAUDE_QUOTA_LIMIT` to change), else `main`, else `none`. A profile with no
+  reading yet counts as usable; a usage-limit error is still the backstop.
 - **Remote Control stays on main.** Profile launches drop `--remote-control` and pass
   `remoteControlAtStartup: false` through `--settings`, because the shared `settings.json` turns it on.
 - **MCP servers come from main.** Each launch passes main's user servers, plus main's
