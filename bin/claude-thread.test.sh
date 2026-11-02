@@ -508,11 +508,89 @@ EOF
   rm -rf "$SB"; export HOME="$ORIG_HOME"; unset PROBE_LOG
 }
 
+# ── usage (transcripts → cld usage) ────────────────────────────────────────
+usage_tests() {
+  local SB; SB=$(mktemp -d "$ORIG_HOME/.ct-test.XXXXXX"); export HOME="$SB/home"
+  local P="$HOME/.claude/projects"
+  mkdir -p "$P/-x-main" "$P/-x-main/sub/subagents" "$HOME/www/myrepo" "$HOME/www/my" \
+           "$HOME/other" "$HOME/.claude-thread"
+  awk '/^# ── account commands/{exit} {print}' "$WRAPPER" > "$SB/lib.sh"
+  # shellcheck disable=SC1090
+  . "$SB/lib.sh"
+  # a profile whose projects/ is the same folder must not double the count
+  mkdir -p "$PROFILES_ROOT/dev"; ln -s "$P" "$PROFILES_ROOT/dev/projects"
+  # session S1 started by cld on the dev profile; S2 started by cld on main;
+  # S3 never went through cld
+  printf '{"sessions":{"s1":{"profile":"dev"},"s2":{}}}' > "$HOME/.claude-thread/state.json"
+  # line <file> <id> <ts> <cwd> <session> <model> <out> [in cw1h cr speed]
+  line() {
+    python3 - "$@" <<'EOF'
+import json, sys
+f, mid, ts, cwd, sid, model, out = sys.argv[1:8]
+extra = (sys.argv[8:] + ["0", "0", "0", "standard"])[:4]
+inp, cw, cr, speed = int(extra[0]), int(extra[1]), int(extra[2]), extra[3]
+u = {"input_tokens": inp, "output_tokens": int(out), "cache_creation_input_tokens": cw,
+     "cache_read_input_tokens": cr, "speed": speed,
+     "cache_creation": {"ephemeral_1h_input_tokens": cw, "ephemeral_5m_input_tokens": 0}}
+e = {"type": "assistant", "timestamp": ts, "cwd": cwd, "sessionId": sid,
+     "requestId": "r-" + mid, "message": {"id": mid, "model": model, "usage": u}}
+open(f, "a").write(json.dumps(e) + "\n")
+EOF
+  }
+  local F="$P/-x-main/a.jsonl" W="$HOME/www" T=2026-11-02T05:00:00Z
+  line "$F" m1 $T "$W/myrepo" s1 claude-opus-5-5 100
+  line "$F" m1 $T "$W/myrepo" s1 claude-opus-5-5 100      # streamed duplicate
+  line "$F" m2 $T "$W/worktrees/myrepo-feat-x" s2 claude-opus-5-5 50
+  line "$F" m3 $T "$W/myrepo/.claude/worktrees/agent-1" s3 claude-opus-5-5 25
+  line "$P/-x-main/sub/subagents/agent.jsonl" m4 $T placeholder s3 claude-sonnet-5-5 5
+  line "$F" m5 $T "$W/my" s3 claude-opus-5-5 3              # a repo whose name prefixes myrepo
+  line "$F" m6 $T "$HOME/other" s3 claude-opus-5-5 7
+  line "$F" m7 2026-11-01T19:00:00Z "$HOME/other" s3 claude-opus-5-5 1   # 00:30 IST on the 2nd
+  line "$F" m8 2026-11-01T18:00:00Z "$HOME/other" s3 claude-opus-5-5 1   # 23:30 IST on the 1st
+  line "$F" m9 $T "$HOME/costly" s3 claude-opus-5-5 1000000 0 1000000 1000000
+  line "$F" m10 $T "$HOME/costly" s3 claude-opus-5-5 1000000 0 0 0 fast
+  line "$F" m11 $T "$HOME/odd" s3 claude-weird-9 10
+  line "$F" m12 $T /private/var/folders/xx/T/tmpabc s3 claude-haiku-5-5 2   # a quota probe
+  # the scratchpad slug is built from the real path, so fix the fixture to match
+  python3 - "$P/-x-main/sub/subagents/agent.jsonl" "$W" <<'EOF'
+import json, re, sys
+f, w = sys.argv[1:]
+e = json.loads(open(f).read())
+e["cwd"] = "/private/tmp/claude-501/" + re.sub(r"[^a-zA-Z0-9]", "-", w + "/myrepo") + "/u-1/scratchpad"
+open(f, "w").write(json.dumps(e) + "\n")
+EOF
+  local out; out=$(TZ=Asia/Kolkata usage_cmd 2026-11-02)
+  col() { echo "$out" | awk -v p="$1" -v c="$2" '$1==p {print $c}'; }
+  check "K1: a streamed duplicate counts once; worktrees, .claude/worktrees and scratchpads fold into the repo" \
+        "4 180" "$(col myrepo 2) $(col myrepo 3)"
+  check "K2: a repo whose name prefixes another stays separate" "3" "$(col my 3)"
+  check "K12: temp folders fold into one temp row" "2" "$(col temp 3)"
+  check "K3: days are cut in local time (00:30 IST counts on the 2nd)" "2" "$(col other 2)"
+  check "K4: and 23:30 IST on the 1st counts on the 1st" "1" \
+        "$(TZ=Asia/Kolkata usage_cmd 2026-11-01 | awk '$1=="other" {print $2}')"
+  check "K5: a range sums both days" "3" \
+        "$(TZ=Asia/Kolkata usage_cmd 2026-11-01..2026-11-02 | awk '$1=="other" {print $2}')"
+  # opus 5.5: 1M out $20 + 1M 1h cache write $8 + 1M cache read $0.20; fast = 2x → 1M out $40
+  check "K6: API cost uses list prices, 1h cache writes and fast mode" '$68.20' "$(col costly 7)"
+  check "K7: a model with no price is named, not guessed" "1" \
+        "$(echo "$out" | grep -c 'no price for: claude-weird-9')"
+  check "K8: --by account splits cld-started sessions by account" "dev:100 main:50" \
+        "$(TZ=Asia/Kolkata usage_cmd 2026-11-02 --by account | awk '$1=="myrepo" && ($2=="dev"||$2=="main") {printf "%s%s:%s", s, $2, $4; s=" "}')"
+  check "K9: sessions cld never started are labelled so" "1" \
+        "$(TZ=Asia/Kolkata usage_cmd 2026-11-02 --by account | awk '$1=="myrepo" && $2=="not-cld"' | wc -l | tr -d ' ')"
+  check "K10: --by model splits by model" "5" \
+        "$(TZ=Asia/Kolkata usage_cmd 2026-11-02 --by model | awk '$1=="myrepo" && $2=="sonnet-5-5" {print $4}')"
+  check "K11: a bad argument prints usage and fails" "1" \
+        "$(usage_cmd --nope >/dev/null; echo $?)"
+  rm -rf "$SB"; export HOME="$ORIG_HOME"
+}
+
 echo "── $WRAPPER ──"
 state_tests
 lazy_tests
 project_tests
 profile_tests
 quota_tests
+usage_tests
 echo "  → $pass passed, $fail failed"
 exit $((fail > 0))
