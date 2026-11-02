@@ -43,6 +43,8 @@ cld @                                             # pick the account from a list
 cld @sun --bg -n worker "<task>"                  # background agent on that account
 cld @sun agents | attach <id> | logs <id> | stop <id>   # that account's background agents
 cld ask "where is the Q3 pricing artifact?"       # read-only answer from main
+cld usage                                         # tokens + API-$ per project, today
+cld usage 7d --by account                         # or yesterday | 2026-11-01 | FROM..TO; --by model
 cld quota                                         # each account's 7-day usage + next reset
                                                   #   (probes an account with no reading; --no-probe)
 cld @"$(cld quota --pick)" --bg -n job "<task>"   # run on the account with headroom
