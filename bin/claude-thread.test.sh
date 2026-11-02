@@ -517,11 +517,15 @@ usage_tests() {
   awk '/^# ── account commands/{exit} {print}' "$WRAPPER" > "$SB/lib.sh"
   # shellcheck disable=SC1090
   . "$SB/lib.sh"
+  CLD_PRICES="$(dirname "$WRAPPER")/prices.json"
   # a profile whose projects/ is the same folder must not double the count
-  mkdir -p "$PROFILES_ROOT/dev"; ln -s "$P" "$PROFILES_ROOT/dev/projects"
-  # session S1 started by cld on the dev profile; S2 started by cld on main;
-  # S3 never went through cld
-  printf '{"sessions":{"s1":{"profile":"dev"},"s2":{}}}' > "$HOME/.claude-thread/state.json"
+  mkdir -p "$PROFILES_ROOT/dev/jobs/j1"; ln -s "$P" "$PROFILES_ROOT/dev/projects"
+  # s1: an interactive session on the dev profile (its own history.jsonl);
+  # s4: a background agent on dev (its jobs/); s2: started by cld on main;
+  # s3: named nowhere
+  printf '{"display":"hi","sessionId":"s1"}\n' > "$PROFILES_ROOT/dev/history.jsonl"
+  printf '{"state":"done","sessionId":"s4"}' > "$PROFILES_ROOT/dev/jobs/j1/state.json"
+  printf '{"sessions":{"s2":{}}}' > "$HOME/.claude-thread/state.json"
   # line <file> <id> <ts> <cwd> <session> <model> <out> [in cw1h cr speed]
   line() {
     python3 - "$@" <<'EOF'
@@ -551,6 +555,7 @@ EOF
   line "$F" m10 $T "$HOME/costly" s3 claude-opus-5-5 1000000 0 0 0 fast
   line "$F" m11 $T "$HOME/odd" s3 claude-weird-9 10
   line "$F" m12 $T /private/var/folders/xx/T/tmpabc s3 claude-haiku-5-5 2   # a quota probe
+  line "$F" m13 $T "$HOME/jobsy" s4 claude-opus-5-5 9
   # the scratchpad slug is built from the real path, so fix the fixture to match
   python3 - "$P/-x-main/sub/subagents/agent.jsonl" "$W" <<'EOF'
 import json, re, sys
@@ -574,14 +579,32 @@ EOF
   check "K6: API cost uses list prices, 1h cache writes and fast mode" '$68.20' "$(col costly 7)"
   check "K7: a model with no price is named, not guessed" "1" \
         "$(echo "$out" | grep -c 'no price for: claude-weird-9')"
-  check "K8: --by account splits cld-started sessions by account" "dev:100 main:50" \
-        "$(TZ=Asia/Kolkata usage_cmd 2026-11-02 --by account | awk '$1=="myrepo" && ($2=="dev"||$2=="main") {printf "%s%s:%s", s, $2, $4; s=" "}')"
-  check "K9: sessions cld never started are labelled so" "1" \
-        "$(TZ=Asia/Kolkata usage_cmd 2026-11-02 --by account | awk '$1=="myrepo" && $2=="not-cld"' | wc -l | tr -d ' ')"
+  local acc; acc=$(TZ=Asia/Kolkata usage_cmd 2026-11-02 --by account)
+  check "K8: --by account: a profile's history and cld's state name the account" "dev:100 main:50" \
+        "$(echo "$acc" | awk '$1=="myrepo" && ($2=="dev"||$2=="main") {printf "%s%s:%s", s, $2, $4; s=" "}')"
+  check "K9: sessions nothing names are unknown" "1" \
+        "$(echo "$acc" | awk '$1=="myrepo" && $2=="unknown"' | wc -l | tr -d ' ')"
+  check "K13: a profile's background agent (jobs/) counts on that profile" "dev" \
+        "$(echo "$acc" | awk '$1=="jobsy" {print $2}')"
   check "K10: --by model splits by model" "5" \
         "$(TZ=Asia/Kolkata usage_cmd 2026-11-02 --by model | awk '$1=="myrepo" && $2=="sonnet-5-5" {print $4}')"
   check "K11: a bad argument prints usage and fails" "1" \
         "$(usage_cmd --nope >/dev/null; echo $?)"
+
+  # calibrate: main read 20% at 06:00Z on the 2nd, week resets a day later, so
+  # its week began 2026-10-27T06:00Z and every fixture line falls inside it.
+  # main's spend = s2 + the unknown s3 lines ≈ $68.2018 → $3.41 per 1%.
+  # dev is at 5%: too early, so its earlier rate (9) must survive.
+  local at; at=$(python3 -c 'import datetime;print(int(datetime.datetime(2026,11,2,6,tzinfo=datetime.timezone.utc).timestamp()))')
+  printf '{"updated_at":%s,"seven_day":{"used_percentage":20,"resets_at":%s}}' "$at" $((at + 86400)) > "$HOME/.claude/usage.json"
+  printf '{"updated_at":%s,"seven_day":{"used_percentage":5,"resets_at":%s}}' "$at" $((at + 86400)) > "$PROFILES_ROOT/dev/usage.json"
+  printf '{"dev":{"usd_per_pct":9}}' > "$HOME/.claude-thread/quota-rates.json"
+  usage_cmd --calibrate >/dev/null
+  rate() { python3 -c "import json,sys;print(f\"{json.load(open(sys.argv[1]))[sys.argv[2]]['usd_per_pct']:.2f}\")" "$HOME/.claude-thread/quota-rates.json" "$1"; }
+  check "K14: calibrate: \$ per 1% = the week's API-\$ on that account ÷ % used" "3.41" "$(rate main)"
+  check "K15: under 10% used, the earlier rate is kept" "9.00" "$(rate dev)"
+  check "K16: missing prices fail loudly" "1" \
+        "$(CLD_PRICES=/nonexistent/prices.json usage_cmd >/dev/null 2>&1; echo $?)"
   rm -rf "$SB"; export HOME="$ORIG_HOME"
 }
 

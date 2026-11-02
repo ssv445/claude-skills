@@ -364,23 +364,39 @@ PY
 # - Days are cut in local time.
 # - Worktrees, .claude/worktrees and scratchpads fold into their repo.
 # - Profiles symlink projects/ to ~/.claude/projects, so the lines don't say
-#   which account ran them. --by account uses cld's own state.json, which
-#   records the account of every session cld started. Anything else
-#   (claude -p jobs, sc tabs) shows as not-cld.
+#   which account ran them. account() below finds out from files each account
+#   keeps for itself: history.jsonl (interactive sessions) and
+#   jobs/*/state.json (background agents), then cld's state.json. Sessions
+#   none of them name (mostly `claude -p` jobs) show as unknown.
 # - codex and agy don't write these logs.
+# - Prices come from bin/prices.json, shared with agent-top.
+#
+# `cld usage --calibrate` turns API-$ into % of the subscription's 7-day limit.
+# For each account, the statusline caches the week's used % and its reset time
+# (see quota_cmd). The week started 7 days before that reset, so
+#   $ per 1% = API-$ the account spent since the week started ÷ % used.
+# The result goes to ~/.claude-thread/quota-rates.json, which agent-top reads.
+# Under 10% used, the reading's whole-number rounding is too coarse, so the
+# previous rate is kept. unknown sessions count as main's: `claude -p` jobs run
+# on main unless started with `cld @<profile>`.
+CLD_PRICES="${CLD_PRICES:-$HOME/www/claude-skills/bin/prices.json}"
 usage_cmd() {
-  python3 -I - "$PROFILES_ROOT" "$@" <<'PY'
-import glob, json, os, re, sys
+  python3 -I - "$PROFILES_ROOT" "$CLD_PRICES" "$@" <<'PY'
+import glob, json, os, re, sys, time
 from datetime import date, datetime, timedelta
 
-USAGE = "usage: cld usage [today|yesterday|<N>d|YYYY-MM-DD|FROM..TO] [--by model|account]"
-profiles_root, args = sys.argv[1], sys.argv[2:]
+USAGE = ("usage: cld usage [today|yesterday|<N>d|YYYY-MM-DD|FROM..TO] [--by model|account]\n"
+         "       cld usage --calibrate")
+profiles_root, prices_path, args = sys.argv[1], sys.argv[2], sys.argv[3:]
 period = by = None
+calibrate = False
 i = 0
 while i < len(args):
     a = args[i]
     if a in ("-h", "--help"):
         print(USAGE); sys.exit(0)
+    if a == "--calibrate" and len(args) == 1:
+        calibrate = True; i += 1; continue
     if a == "--by" and i + 1 < len(args) and args[i + 1] in ("model", "account"):
         by = args[i + 1]; i += 2; continue
     if period is None and not a.startswith("-"):
@@ -405,29 +421,44 @@ try:
         raise ValueError
 except ValueError:
     print(USAGE, file=sys.stderr); sys.exit(1)
-# a file last written before the range starts can't hold a line inside it; the
-# store is many GB, so this skip is what keeps a run to seconds
-start_ts = datetime.combine(d0, datetime.min.time()).astimezone().timestamp()
 
-# $ per million tokens: (input, output, cache read), API list prices from the
-# claude-api skill's model table (cached 2026-10-06). Where it names no cache-read
-# price, the standard 0.1x input is used. Cache writes bill 1.25x input (5-minute)
-# or 2x (1-hour), and fast mode bills 2x. Not modelled: Haiku 5.5's higher price
-# past 100K-token prompts. Update this table when prices change.
-PRICES = {
-    "claude-fable-5-1": (10, 50, 0.25), "claude-fable-5": (10, 50, 1.00),
-    "claude-opus-5-5": (4, 20, 0.20), "claude-opus-5": (5, 25, 0.50),
-    "claude-opus-4-8": (5, 25, 0.50), "claude-opus-4-7": (5, 25, 0.50),
-    "claude-opus-4-6": (5, 25, 0.50), "claude-sonnet-5-5": (2, 10, 0.20),
-    "claude-sonnet-5": (2, 10, 0.20), "claude-sonnet-4-6": (3, 15, 0.30),
-    "claude-haiku-5-5": (0.10, 0.50, 0.01), "claude-haiku-4-5": (1, 5, 0.10),
-}
+try:
+    P = json.load(open(prices_path))
+    PRICES = P["models"]
+except Exception:
+    print(f"cld usage: can't read prices from {prices_path} (set CLD_PRICES)", file=sys.stderr)
+    sys.exit(1)
 def price(model):
     # longest id the model equals or extends ("claude-haiku-4-5-20251001")
     hits = [k for k in PRICES if model == k or model.startswith(k + "-")]
     return PRICES[max(hits, key=len)] if hits else None
 
 home = os.path.expanduser("~")
+accounts = {"main": os.path.join(home, ".claude")}
+for d in sorted(glob.glob(os.path.join(profiles_root, "*", ""))):
+    accounts[os.path.basename(d.rstrip("/"))] = d.rstrip("/")
+
+if calibrate:
+    # one window per account: from 7 days before its reset to its reading
+    readings = {}
+    for name, d in accounts.items():
+        try:
+            u = json.load(open(os.path.join(d, "usage.json")))
+            sd = u["seven_day"]
+            pct, resets, at = float(sd["used_percentage"]), float(sd["resets_at"]), float(u["updated_at"])
+        except Exception:
+            continue
+        if resets > at:                       # a reading from a week that hasn't reset
+            readings[name] = (pct, resets - 7 * 86400, at)
+    if not readings:
+        print("cld usage: no quota readings yet (the statusline writes them)", file=sys.stderr)
+        sys.exit(1)
+    start_ts = min(r[1] for r in readings.values())
+    d0, d1 = datetime.fromtimestamp(start_ts).date(), date.today()
+else:
+    # a file last written before the range starts can't hold a line inside it;
+    # the store is many GB, so this skip is what keeps a run to seconds
+    start_ts = datetime.combine(d0, datetime.min.time()).astimezone().timestamp()
 www = os.path.join(home, "www")
 def slug(path):               # Claude Code's folder naming: every non-alphanumeric → "-"
     return re.sub(r"[^a-zA-Z0-9]", "-", path)
@@ -479,14 +510,33 @@ def _project(cwd):
         return cwd[len(home) + 1:].split("/")[0]
     return cwd
 
+owner = {}                    # session id → account
+def claim(sid, name):
+    if sid and sid not in owner:
+        owner[sid] = name
+# profiles first: a session id found in both was resumed onto the profile
+for name in sorted(accounts, key=lambda n: n == "main"):
+    d = accounts[name]
+    for f in glob.glob(os.path.join(d, "jobs", "*", "state.json")):
+        try:
+            claim(json.load(open(f)).get("sessionId"), name)
+        except Exception:
+            pass
+    try:
+        with open(os.path.join(d, "history.jsonl"), errors="ignore") as fh:
+            for line in fh:
+                m = re.search(r'"sessionId"\s*:\s*"([^"]+)"', line)
+                if m:
+                    claim(m.group(1), name)
+    except OSError:
+        pass
 try:
-    sessions = json.load(open(os.path.join(home, ".claude-thread", "state.json"))).get("sessions", {})
+    for sid, s in json.load(open(os.path.join(home, ".claude-thread", "state.json"))).get("sessions", {}).items():
+        claim(sid, s.get("profile") or "main")
 except Exception:
-    sessions = {}
+    pass
 def account(sid):
-    if sid not in sessions:
-        return "not-cld"
-    return sessions[sid].get("profile") or "main"
+    return owner.get(sid, "unknown")
 
 # one root per real folder: profiles normally symlink projects/ to main's
 roots = {os.path.realpath(os.path.join(home, ".claude", "projects"))}
@@ -501,7 +551,7 @@ for r in roots:
         except OSError:
             pass
 
-seen, rows, unpriced = set(), {}, set()
+seen, rows, unpriced, spent = set(), {}, set(), {}
 for f, dir_slug in files:
     try:
         fh = open(f, errors="ignore")
@@ -522,10 +572,10 @@ for f, dir_slug in files:
             if model == "<synthetic>":           # local placeholder, no request made
                 continue
             try:
-                d = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().date()
+                t = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
             except ValueError:
                 continue
-            if not d0 <= d <= d1:
+            if not d0 <= t.date() <= d1:
                 continue
             key = (msg.get("id"), e.get("requestId"))
             if key in seen:
@@ -540,11 +590,18 @@ for f, dir_slug in files:
                 cc = u.get("cache_creation") or {}
                 cw1h = cc.get("ephemeral_1h_input_tokens") or 0
                 cost = (inp * pr[0] + out * pr[1] + cr * pr[2]
-                        + cw1h * pr[0] * 2 + (cw - cw1h) * pr[0] * 1.25) / 1e6
+                        + cw1h * pr[0] * P["cache_write_1h"]
+                        + (cw - cw1h) * pr[0] * P["cache_write_5m"]) / 1e6
                 if u.get("speed") == "fast":
-                    cost *= 2
+                    cost *= P["fast"]
             else:
                 unpriced.add(model)
+            if calibrate:
+                acct = account(e.get("sessionId"))
+                acct = "main" if acct == "unknown" else acct
+                if acct in readings and readings[acct][1] <= t.timestamp() <= readings[acct][2]:
+                    spent[acct] = spent.get(acct, 0.0) + cost
+                continue
             proj = project(e.get("cwd"), dir_slug)
             sub = None if by is None else (model.removeprefix("claude-") if by == "model"
                                            else account(e.get("sessionId")))
@@ -552,6 +609,30 @@ for f, dir_slug in files:
             for j, v in enumerate((1, out, cw, inp, cr, cost)):
                 r[j] += v
             r[6] = r[6] or pr is not None
+
+if calibrate:
+    path = os.path.join(home, ".claude-thread", "quota-rates.json")
+    try:
+        rates = json.load(open(path))
+    except Exception:
+        rates = {}
+    print(f"{'account':<16}{'7d used':>8}{'API-$ this week':>17}{'$ per 1%':>10}")
+    for name, (pct, start, at) in sorted(readings.items()):
+        usd = spent.get(name, 0.0)
+        if pct >= 10 and usd > 0:
+            rates[name] = {"usd_per_pct": round(usd / pct, 4), "pct": pct, "usd": round(usd, 2),
+                           "week_start": int(start), "measured_at": int(at)}
+            note = f"{usd / pct:>10.2f}"
+        else:
+            note = "  too early in the week; kept the last rate" if pct < 10 else "  no spend found"
+        print(f"{name:<16}{pct:>7.0f}%{'$' + format(usd, ',.2f'):>17}{note}")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}"
+    with open(tmp, "w") as fh:
+        json.dump(rates, fh, indent=1)
+    os.replace(tmp, path)
+    print(f"→ {path}")
+    sys.exit(0)
 
 def h(x):
     for unit, div in (("B", 1e9), ("M", 1e6), ("K", 1e3)):
@@ -579,7 +660,7 @@ for (p, s), r in order:
 show("TOTAL", "", total)
 if unpriced:
     print(f"no price for: {', '.join(sorted(unpriced))} (tokens counted, not costed)")
-print("api-$ = cost at API list prices (2026-10-06); a subscription isn't billed this way. "
+print(f"api-$ = cost at API list prices ({P.get('as_of', '?')}); a subscription isn't billed this way. "
       "Not included: codex, agy.")
 PY
 }
