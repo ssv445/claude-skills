@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# bin/preflight: the release pre-flight. Runs each line of PREFLIGHT_CHECKS in
+# .standards/config.sh as one command (blank and # lines skipped), prints PASS/FAIL per
+# line, and exits non-zero on any FAIL — so every precondition is found in one run, not one
+# at a time on release day. Its output, not a "ready" claim, says a release can go.
+. "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+n=0; failed=0
+while IFS= read -r -u 3 line; do
+  line="${line#"${line%%[![:space:]]*}"}"
+  case "$line" in ''|'#'*) continue ;; esac
+  n=$((n + 1))
+  run_cmd "preflight $n" "$line" || failed=$((failed + 1))
+done 3< <(printf '%s\n' "$PREFLIGHT_CHECKS")
+
+[ $n -gt 0 ] || { red "FAIL preflight: PREFLIGHT_CHECKS in .standards/config.sh lists no checks"; exit 1; }
+if [ $failed -gt 0 ]; then red "preflight FAILED: $failed of $n check(s)"; exit 1; fi
+green "preflight PASSED: $n check(s)"

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# bin/chain <pr>: `git push` (which fires the pre-push gates), then bin/ship (its gates, and
+# the merge when they pass), back to back, so no stage sits idle waiting for someone to
+# notice the last one ended. In the clone's shared state dir (printed at the end):
+#   chain-<pr>.log  the full output of both stages
+#   chain-<pr>.txt  exit=<code>, then one line: which stage failed, or that ship is waiting
+#                   for the owner's approval. Read that file; never wait on a message.
+. "$(git rev-parse --show-toplevel)/.standards/lib/common.sh"
+
+pr="$1"
+case "$pr" in ''|*[!0-9]*) echo "usage: bin/chain <pr number>"; exit 1 ;; esac
+dir="$(state_dir)"; mkdir -p "$dir" || exit 1
+out="$dir/chain-$pr.txt"; log="$dir/chain-$pr.log"
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; sha="$(git rev-parse --short HEAD)"
+summary="interrupted during push"
+# Written on every exit, an interrupted run included, so the file never says "running" forever.
+record() {
+  local rc=$?
+  printf 'exit=%s\n%s PR #%s at %s: %s\n' "$rc" "$started" "$pr" "$sha" "$summary" > "$out"
+  echo "chain result: $out (log: $log)"
+}
+trap record EXIT
+trap 'exit 130' INT TERM
+printf 'exit=running\n%s PR #%s at %s: running\n' "$started" "$pr" "$sha" > "$out"
+: > "$log"
+
+# stage <command...>: output to the terminal and the log; returns the command's exit code.
+stage() { "$@" 2>&1 | tee -a "$log"; return "${PIPESTATUS[0]}"; }
+
+if ! stage git push origin HEAD; then summary="push FAILED (pre-push gates or git push), ship not run"; exit 1; fi
+summary="push PASS, interrupted during ship"
+before="$(wc -l < "$log")"
+if stage "$ROOT/bin/ship" "$pr"; then summary="push PASS, ship PASS (merged)"; exit 0; fi
+# bin/ship names bin/approve only when it stopped at the approval step.
+if tail -n "+$((before + 1))" "$log" | grep -q "ask the owner to run bin/approve"; then
+  summary="push PASS, ship stopped at approval: waiting for owner approval (or a fix the log names)"
+else
+  summary="push PASS, ship BLOCKED: a gate failed"
+fi
+exit 1

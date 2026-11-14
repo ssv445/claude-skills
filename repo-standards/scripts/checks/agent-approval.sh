@@ -32,7 +32,7 @@ fi
 # each reviewer line, Verdict PASS, both reviewers PASS (or split with the arbiter PASS),
 # and a Reviewed sha that still covers HEAD. Each miss is printed.
 gate_review() {
-  local s="$1" n p c v a b arb sha full later f passes
+  local s="$1" n p c v a b arb r passes
   n="$(grep -c "^## $s\$" "$dec")"
   [ "$n" -le 1 ] || miss "'## $s' appears $n times in $dec"
   # Only the first of each line is read, so a second one would be silently ignored.
@@ -51,23 +51,10 @@ gate_review() {
   else miss "$s: need both reviewers PASS, or one PASS and the arbiter PASS (A: ${a:-empty}; B: ${b:-empty}; Arbiter: ${arb:-empty})"
   fi
 
-  # The review must cover HEAD: every file the branch changes (but decisions.md) has the
-  # same content at HEAD as at the reviewed commit. A rebase onto unrelated base changes
-  # keeps the review; a base change to a reviewed file needs a new one. Only a literal
-  # hex sha is accepted — never HEAD, a branch, or a ref that merely looks like hex.
-  sha="$(section_field "$dec" "$s" "Reviewed:")"
-  full="$(git rev-parse -q --verify "$sha^{commit}" 2>/dev/null)"
-  if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{7,40}$'; then
-    miss "$s: 'Reviewed:' must be a commit sha, got '${sha:-empty}'"
-  elif [ -z "$full" ] || [ "${full#"$sha"}" = "$full" ]; then
-    miss "$s: reviewed commit $sha is not present locally (fetch it, or review again)"
-  elif [ $diff_ok -eq 1 ]; then
-    later=""
-    while IFS= read -r -d '' f; do
-      [ "$f" != "$dec" ] || continue
-      [ "$(git rev-parse -q --verify "$full:$f")" = "$(git rev-parse -q --verify "HEAD:$f")" ] || later="$later $f"
-    done < "$changed"
-    [ -z "$later" ] && info "ok   $s: review covers HEAD (reviewed $sha)" || miss "$s: differs from the reviewed commit $sha:$later"
+  # The review must cover HEAD (review_covers_head in common.sh, shared with bin/ship's
+  # maintenance merge). Skipped when the diff failed: that is already a miss above.
+  if [ $diff_ok -eq 1 ] || [ -z "$base" ]; then
+    if r="$(review_covers_head "$dec" "$s")"; then info "ok   $r"; else miss "${r:-$s: review_covers_head unavailable}"; fi
   fi
 }
 
