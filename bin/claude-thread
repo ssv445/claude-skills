@@ -61,23 +61,24 @@ claude_cmd() {
       $CLAUDE_THREAD_ARGS "$@"
     return
   fi
-  local dir="$PROFILES_ROOT/$prof" mcp rc
+  local dir="$PROFILES_ROOT/$prof" mcp
   [ -d "$dir" ] || { echo "cld: no profile '$prof' (cld profile new $prof)"; return 1; }
   profile_logged_in "$dir" || {
     echo "cld: profile '$prof' is logged out — run: cld profile login $prof"; return 3; }
   profile_link "$dir"
-  # one MCP file per launch: it holds this folder's servers, and parallel tabs
-  # on one profile in different folders must not overwrite each other's
-  mcp=$(mktemp "$dir/launch-mcp.XXXXXX") || return 1
-  profile_compose "$dir" "$(pwd -P)" "$mcp" || { rm -f "$mcp"; return 1; }
+  # One MCP file per folder, kept after launch. It holds this folder's servers, so
+  # parallel tabs on one profile in different folders don't overwrite each other's;
+  # same-folder tabs write identical content, atomically (profile_compose).
+  # Never delete it: a --bg launch returns at once, and the daemon re-reads this
+  # path whenever it respawns the worker (e.g. after an auto-update). Deleting it
+  # crashed those respawns with "MCP config file not found" (2026-11-13).
+  mcp="$dir/launch-mcp.$(pwd -P | shasum | cut -c1-12).json"
+  profile_compose "$dir" "$(pwd -P)" "$mcp" || return 1
   # shellcheck disable=SC2086
   CLAUDE_CONFIG_DIR="$dir" "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" \
     --settings "$dir/launch-settings.json" --mcp-config "$mcp" \
     --append-system-prompt "This session runs on Claude profile '$prof', not Shyam's main account. Remote Control, claude.ai artifacts and claude.ai connectors (Gmail, Calendar, Claude Docs, Vercel) belong to the main account. For read-only help from it, run: claude-thread ask \"<question>\"" \
     $CLAUDE_THREAD_ARGS "$@"
-  rc=$?
-  rm -f "$mcp"
-  return $rc
 }
 
 # Link whatever is shared and not there yet. Run on every launch, not only at

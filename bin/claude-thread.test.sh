@@ -296,9 +296,16 @@ EOF
         "$(python3 -c "import json;print(json.load(open('$PROFILES_ROOT/acme/launch-settings.json'))['remoteControlAtStartup'])")"
   check "V6: it gets main's MCP servers plus main's for that folder" "gsc,pw" \
         "$(sed -n 's/^MCP=//p' <<<"$out" | python3 -c "import json,sys;print(','.join(sorted(json.load(sys.stdin)['mcpServers'])))")"
-  local mf; mf=$(sed -n 's/^MCPFILE=//p' <<<"$out")
-  check "V6b: each launch gets its own MCP file, removed after exit" "gone" \
-        "$([ -n "$mf" ] && [ ! -e "$mf" ] && echo gone || echo "left:$mf")"
+  local mf mf2 mf3; mf=$(sed -n 's/^MCPFILE=//p' <<<"$out")
+  # A --bg launch returns at once, and the daemon re-reads this path on every
+  # worker respawn (e.g. after an auto-update), so the file must outlive the launch.
+  check "V6b: the MCP file outlives the launch, so a --bg respawn can read it" "kept" \
+        "$([ -n "$mf" ] && [ -e "$mf" ] && echo kept || echo "gone:$mf")"
+  mf2=$(cd "$SB/www/acme" && claude_cmd acme --bg x | sed -n 's/^MCPFILE=//p')
+  check "V6b2: the same folder reuses one file, so files don't pile up" "$mf" "$mf2"
+  mf3=$(cd "$SB/www/acme/sub" && claude_cmd acme x | sed -n 's/^MCPFILE=//p')
+  check "V6b3: another folder gets its own file, so parallel tabs don't clash" "differ" \
+        "$([ -n "$mf3" ] && [ "$mf3" != "$mf" ] && echo differ || echo "same:$mf3")"
   out=$(cd "$SB" && CLAUDE_CONFIG_DIR="$PROFILES_ROOT/acme" claude_cmd "" x)
   check "V6c: main ignores a CLAUDE_CONFIG_DIR inherited from a profile shell" \
         "CFG=main" "$(head -1 <<<"$out")"
