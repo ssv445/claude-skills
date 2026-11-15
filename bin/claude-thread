@@ -56,8 +56,18 @@ claude_cmd() {
   if [ -z "$prof" ]; then
     # -u: a profile session's own shell carries CLAUDE_CONFIG_DIR, and `cld main`
     # run from it must still land on ~/.claude
+    # Remote Control only for foreground sessions (Shyam 2026-11-15): a --bg agent
+    # or a -p run gets neither the flag nor settings.json's remoteControlAtStartup,
+    # so only the threads Shyam drives show up in the phone/desktop app.
+    local main_args=("${CLAUDE_MAIN_ARGS[@]}") a
+    for a in "$@"; do
+      case "$a" in
+        --bg|--background|-p|--print)
+          main_args=(--settings '{"remoteControlAtStartup":false}'); break ;;
+      esac
+    done
     # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
-    env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" "${CLAUDE_MAIN_ARGS[@]}" \
+    env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" "${main_args[@]}" \
       $CLAUDE_THREAD_ARGS "$@"
     return
   fi
