@@ -1,7 +1,8 @@
 #!/bin/bash
 # statusline.sh — Claude Code statusline hook. Reads the session JSON on stdin
-# and prints a two-line status bar: model / project / git on line 1, context
-# usage / cost / duration / diff on line 2.
+# and prints a status bar: model / project / git on line 1, context usage /
+# cost / duration / diff on line 2, and quota / claude start time / running vs
+# installed version on line 3 (omitted when none of those are known).
 #
 # Install (~/.claude/settings.json):
 #   "statusLine": { "type": "command",
@@ -35,18 +36,25 @@ if rl=$(printf '%s' "$input" | jq -ce 'select(.rate_limits) |
     && mv -f "$usage_dir/usage.json.$$" "$usage_dir/usage.json"
 fi
 
-# One jq pass, tab-separated, null-safe.
-IFS=$'\t' read -r model dir pct cost duration_ms added removed < <(
+# One jq pass, tab-separated, null-safe. Missing values become "-", never "":
+# tab is IFS whitespace, so read would collapse an empty field and shift the rest.
+IFS=$'\t' read -r model dir pct cost duration_ms added removed \
+    session_id run_ver q7_pct q7_reset < <(
   printf '%s' "$input" | jq -r '
     [ (.model.display_name // "?"),
-      (.workspace.current_dir // ""),
+      (.workspace.current_dir // "-"),
       ((.context_window.used_percentage // 0) | floor),
       (.cost.total_cost_usd // 0),
       (.cost.total_duration_ms // 0),
       (.cost.total_lines_added // 0),
-      (.cost.total_lines_removed // 0)
-    ] | @tsv'
+      (.cost.total_lines_removed // 0),
+      (.session_id // "-"),
+      (.version // "-"),
+      ((.rate_limits.seven_day.used_percentage // "-") | if type == "number" then floor else . end),
+      (.rate_limits.seven_day.resets_at // "-")
+    ] | map(tostring) | @tsv'
 )
+[ "$dir" = "-" ] && dir=""
 dir_name="${dir##*/}"
 [[ "$pct" =~ ^[0-9]+$ ]] || pct=0
 
@@ -116,4 +124,57 @@ if [ "${added:-0}" -gt 0 ] || [ "${removed:-0}" -gt 0 ]; then
   line2="${line2} | ${GREEN}+${added}${NC}/${RED}-${removed}${NC}"
 fi
 
-printf '%b\n%b\n' "$line1" "$line2"
+# ── line 3: quota, claude start time, running vs installed version ──
+_pct_color() {
+  if   [ "$1" -ge 90 ]; then printf '%s' "$RED"
+  elif [ "$1" -ge 70 ]; then printf '%s' "$YELLOW"
+  else printf '%s' "$GREEN"; fi
+}
+# $1 pct, $2 reset epoch, $3 label, $4 date format for the reset time
+_quota() {
+  [[ "$1" =~ ^[0-9]+$ ]] || return
+  local out="$3 $(_pct_color "$1")$1%${NC}"
+  [[ "$2" =~ ^[0-9]+$ ]] && out="${out} ${DIM}↻$(date -r "$2" "$4" 2>/dev/null)${NC}"
+  printf '%s' "$out"
+}
+# 7-day window only: it is the one that actually runs out (matches `cld quota`).
+quota=$(_quota "$q7_pct" "$q7_reset" 7d '+%a %H:%M')
+
+# Start time of the claude process that spawned us. Walk up a few parents in
+# case a shell sits between us; cache per session (it never changes).
+start_cache="/tmp/statusline-start-${session_id}"
+if [ "$session_id" != "-" ] && [ -s "$start_cache" ]; then
+  started=$(cat "$start_cache")
+else
+  started=""; p=$PPID
+  for _ in 1 2 3 4; do
+    [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null || break
+    if [ "$(ps -o comm= -p "$p" 2>/dev/null | xargs basename 2>/dev/null)" = "claude" ]; then
+      lstart=$(ps -o lstart= -p "$p" 2>/dev/null)
+      started=$(date -j -f '%a %b %d %T %Y' "$lstart" '+%d %b %H:%M' 2>/dev/null)
+      break
+    fi
+    p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+  [ -n "$started" ] && [ "$session_id" != "-" ] && printf '%s' "$started" > "$start_cache"
+fi
+
+# Installed = what `claude` launches now (native installer symlinks the newest
+# version). Running = this session's version, from the statusline input.
+inst_ver=$(readlink "$HOME/.local/bin/claude" 2>/dev/null); inst_ver="${inst_ver##*/}"
+ver=""
+if [ "$run_ver" != "-" ]; then
+  ver="v${run_ver}"
+  [ -n "$inst_ver" ] && [ "$inst_ver" != "$run_ver" ] && ver="${YELLOW}v${run_ver} → ${inst_ver} installed${NC}"
+fi
+
+line3=""
+for part in "$quota" "${started:+started $started}" "$ver"; do
+  [ -n "$part" ] && line3="${line3:+$line3 | }$part"
+done
+
+if [ -n "$line3" ]; then
+  printf '%b\n%b\n%b\n' "$line1" "$line2" "$line3"
+else
+  printf '%b\n%b\n' "$line1" "$line2"
+fi
