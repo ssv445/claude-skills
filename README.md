@@ -37,6 +37,7 @@ Browse online: **[skills.sh/ssv445/claude-skills](https://skills.sh/ssv445/claud
 | [domain-rating](./domain-rating/) | Fetch Ahrefs Domain Rating (DR) for any domain via the free public API. No key. Single + batch lookup, caching, error codes, attribution rules. |
 | [theteam](./theteam/) | Spawn a panel of agents in parallel (Claude / Codex / Gemini CLIs) to review, critique, or decide. Three modes: `review` (balanced), `critic` (adversarial), `decide` (advocate-per-option or axis evaluation). Real-call CLI pre-flight, prompt-injection fencing, confidence labels lead synthesis, binary confirm. |
 | [detect-ai-writing](./detect-ai-writing/) | Sentence-level AI-generation detector. Flags suspicious spans only (verbatim quote + signal id + why + confidence + fix direction) so a fixer pass (e.g. `humanizer`) can act mechanically. 40+ signal catalog (Wikipedia WP:AISIGNS + 2025-26 practitioner tells), calibration rules against false positives, density verdict — never an "X% AI" score, never a rewrite. |
+| [usability-checklist](./usability-checklist/) | Usability audit for a website, page, app screen or flow, built from the principles in Steve Krug's *Don't Make Me Think*. 11 per-area checklists (clarity, scanning, clickability, forms, words, navigation, home page, goodwill, mobile, accessibility, user testing); the agent picks the 2-4 areas that fit the target, gives every item a pass/fail verdict with evidence, and reports the smallest fix per failure. |
 
 ## Scripts (`bin/`)
 
