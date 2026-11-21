@@ -287,6 +287,16 @@ EOF
   if grep -qx "ARG=--remote-control" <<<"$out"; then
     echo "  PASS  V2: main keeps Remote Control"; pass=$((pass+1))
   else echo "  FAIL  V2: main lost --remote-control"; fail=$((fail+1)); fi
+  local bgflag
+  for bgflag in --bg -p; do
+    out=$(cd "$SB" && claude_cmd "" "$bgflag" hi)
+    if grep -qx "ARG=--remote-control" <<<"$out"; then
+      echo "  FAIL  V2b: main $bgflag got --remote-control"; fail=$((fail+1))
+    else echo "  PASS  V2b: main $bgflag gets no --remote-control"; pass=$((pass+1)); fi
+    if grep -qx 'ARG={"remoteControlAtStartup":false}' <<<"$out"; then
+      echo "  PASS  V2c: and $bgflag overrides remoteControlAtStartup"; pass=$((pass+1))
+    else echo "  FAIL  V2c: $bgflag lacks the remoteControlAtStartup override"; fail=$((fail+1)); fi
+  done
   out=$(cd "$SB/www/acme" && claude_cmd acme --resume x)
   check "V3: a profile launches on its own folder" "CFG=$PROFILES_ROOT/acme" "$(head -1 <<<"$out")"
   if grep -qx "ARG=--remote-control" <<<"$out"; then

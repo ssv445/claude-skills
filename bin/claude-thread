@@ -54,10 +54,21 @@ PROFILE_SHARED=(CLAUDE.md settings.json keybindings.json skills agents commands
 claude_cmd() {
   local prof="$1"; shift
   if [ -z "$prof" ]; then
+    # Background (--bg) and headless (-p) launches stay off Remote Control, so
+    # agents don't crowd the phone/desktop app (Shyam, 2026-11-21). Dropping
+    # --remote-control isn't enough: settings.json has remoteControlAtStartup,
+    # and only --settings beats it (same trick as profile launches).
+    local main_args=("${CLAUDE_MAIN_ARGS[@]}") a
+    for a in "$@"; do
+      case "$a" in
+        --bg|--background|-p|--print)
+          main_args=(--settings '{"remoteControlAtStartup":false}'); break ;;
+      esac
+    done
     # -u: a profile session's own shell carries CLAUDE_CONFIG_DIR, and `cld main`
     # run from it must still land on ~/.claude
     # shellcheck disable=SC2086 — CLAUDE_THREAD_ARGS is intentionally word-split
-    env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" "${CLAUDE_MAIN_ARGS[@]}" \
+    env -u CLAUDE_CONFIG_DIR "$CLAUDE_BIN" "${CLAUDE_FIXED_ARGS[@]}" "${main_args[@]}" \
       $CLAUDE_THREAD_ARGS "$@"
     return
   fi
