@@ -39,7 +39,7 @@ fi
 # One jq pass, tab-separated, null-safe. Missing values become "-", never "":
 # tab is IFS whitespace, so read would collapse an empty field and shift the rest.
 IFS=$'\t' read -r model dir pct cost duration_ms added removed \
-    session_id run_ver q5_pct q5_reset q7_pct q7_reset < <(
+    session_id run_ver q7_pct q7_reset < <(
   printf '%s' "$input" | jq -r '
     [ (.model.display_name // "?"),
       (.workspace.current_dir // "-"),
@@ -50,8 +50,6 @@ IFS=$'\t' read -r model dir pct cost duration_ms added removed \
       (.cost.total_lines_removed // 0),
       (.session_id // "-"),
       (.version // "-"),
-      ((.rate_limits.five_hour.used_percentage // "-") | if type == "number" then floor else . end),
-      (.rate_limits.five_hour.resets_at // "-"),
       ((.rate_limits.seven_day.used_percentage // "-") | if type == "number" then floor else . end),
       (.rate_limits.seven_day.resets_at // "-")
     ] | map(tostring) | @tsv'
@@ -139,11 +137,8 @@ _quota() {
   [[ "$2" =~ ^[0-9]+$ ]] && out="${out} ${DIM}↻$(date -r "$2" "$4" 2>/dev/null)${NC}"
   printf '%s' "$out"
 }
-q5=$(_quota "$q5_pct" "$q5_reset" 5h '+%H:%M')
-q7=$(_quota "$q7_pct" "$q7_reset" 7d '+%a %H:%M')
-quota=""
-[ -n "$q5" ] && quota="$q5"
-[ -n "$q7" ] && quota="${quota:+$quota · }$q7"
+# 7-day window only: it is the one that actually runs out (matches `cld quota`).
+quota=$(_quota "$q7_pct" "$q7_reset" 7d '+%a %H:%M')
 
 # Start time of the claude process that spawned us. Walk up a few parents in
 # case a shell sits between us; cache per session (it never changes).
