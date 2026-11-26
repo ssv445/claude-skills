@@ -217,10 +217,15 @@ profile_cmd() { # new|login|map|unmap|list …
         && mv "$PROFILE_MAP.tmp" "$PROFILE_MAP"
       echo "unmapped $route" ;;
     list)
-      echo "main  ~/.claude  — default, Remote Control on"
+      local main_email email
+      main_email=$(profile_email "")
+      echo "main  ~/.claude  — ${main_email:-NOT logged in}, default, Remote Control on"
       for d in "$PROFILES_ROOT"/*/; do
         [ -d "$d" ] || continue
-        if profile_logged_in "${d%/}"; then item="logged in"; else item="NOT logged in"; fi
+        email=$(profile_email "${d%/}")
+        if [ -z "$email" ]; then item="NOT logged in"
+        elif [ "$email" = "$main_email" ]; then item="$email — SAME ACCOUNT AS MAIN, fix: cld profile login $(basename "$d")"
+        else item="$email"; fi
         echo "$(basename "$d")  ${d%/}  — $item"
       done
       [ -s "$PROFILE_MAP" ] && { echo; echo "routes:"; awk -F'\t' '{printf "  %s → %s\n", $1, $2}' "$PROFILE_MAP"; }
@@ -258,12 +263,14 @@ quota_cmd() {
     case "$a" in --pick) pick=--pick ;; --no-probe) probe=0 ;;
       *) echo "usage: cld quota [--pick] [--no-probe]"; return 1 ;; esac
   done
-  rows="main	$HOME/.claude	1"$'\n'
+  # third column = the signed-in email, empty when logged out. A profile signed
+  # in to main's own account reads main's quota, so --pick would send work back
+  # to main while looking like it saved it (2026-11-27: sunder-verma was).
+  rows="main	$HOME/.claude	$(profile_email "")"$'\n'
   for d in "$PROFILES_ROOT"/*/; do
     [ -d "$d" ] || continue
     name=$(basename "$d")
-    if profile_logged_in "${d%/}"; then rows+="$name	${d%/}	1"$'\n'
-    else rows+="$name	${d%/}	0"$'\n'; fi
+    rows+="$name	${d%/}	$(profile_email "${d%/}")"$'\n'
   done
   # rows go in as an argument: stdin is the heredoc
   python3 -I - "$pick" "$QUOTA_LIMIT" "$rows" "$probe" "$CLAUDE_BIN" <<'PY'
@@ -324,7 +331,8 @@ def ago(t):
 
 accts = []
 for line in sys.argv[3].splitlines():
-    name, d, logged = line.split("\t")
+    name, d, email = line.split("\t")
+    logged = "1" if email else "0"
     if do_probe and logged == "1" and stale(f"{d}/usage.json"):
         probe(name, d)
     try:
@@ -332,17 +340,20 @@ for line in sys.argv[3].splitlines():
     except Exception:
         u = None
     sd = (u or {}).get("seven_day") or {}
-    accts.append(dict(name=name, logged=logged == "1",
+    accts.append(dict(name=name, logged=logged == "1", email=email,
                       week=window(sd) if u else None, resets=sd.get("resets_at"),
                       seen=ago(u["updated_at"]) if u and u.get("updated_at") else "never"))
 
+main = next(a for a in accts if a["name"] == "main")
+for a in accts:
+    a["dup"] = a["name"] != "main" and a["logged"] and a["email"] == main["email"]
+
 def usable(a):
-    return a["logged"] and (a["week"] is None or a["week"] < limit)
+    return a["logged"] and not a["dup"] and (a["week"] is None or a["week"] < limit)
 
 # known headroom first (lowest %), then profiles with no reading yet
 profiles = sorted((a for a in accts if a["name"] != "main" and usable(a)),
                   key=lambda a: (a["week"] is None, a["week"] or 0))
-main = next(a for a in accts if a["name"] == "main")
 choice = profiles[0]["name"] if profiles else ("main" if usable(main) else "none")
 
 if pick:
@@ -359,10 +370,12 @@ def reset(t):
     left = f"{s//86400}d {s%86400//3600}h" if s >= 86400 else f"{s//3600}h {s%3600//60}m"
     return f"{time.strftime('%a %d %b %H:%M', time.localtime(t))} (in {left})"
 
-print(f"{'account':<16}{'7d':>6}  {'resets':<30}reading")
+ew = max([len("email")] + [len(a["email"]) for a in accts]) + 2
+print(f"{'account':<16}{'email':<{ew}}{'7d':>6}  {'resets':<30}reading")
 for a in accts:
-    note = "" if a["logged"] else "  (logged out)"
-    print(f"{a['name']:<16}{fmt(a['week']):>6}  {reset(a['resets']):<30}{a['seen']}{note}")
+    note = ("  (logged out)" if not a["logged"] else
+            f"  (SAME ACCOUNT AS MAIN: skipped; fix with: cld profile login {a['name']})" if a["dup"] else "")
+    print(f"{a['name']:<16}{a['email'] or '-':<{ew}}{fmt(a['week']):>6}  {reset(a['resets']):<30}{a['seen']}{note}")
 print(f"→ use: {choice}   (full at {limit:.0f}%; '?' = no reading yet)")
 PY
 }
